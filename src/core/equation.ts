@@ -1,7 +1,8 @@
 import { add, div, equals, frac, sub, type Fraction } from "./fraction";
 
 // Parses a typed linear equation in one variable x, such as "4x − 2x − 3 = 7".
-// No brackets yet. Never throws: a line it cannot read gives a child-friendly reason instead.
+// No brackets yet. Never throws: a line it cannot read gives a child-friendly reason instead,
+// in English (error) and as a message key for translation (errorKey, errorParams; see src/i18n).
 
 export type Term = { coef: Fraction; hasX: boolean };
 /** A simplified linear expression: xCoef·x + constant. */
@@ -9,11 +10,51 @@ export type Linear = { xCoef: Fraction; constant: Fraction };
 export type Side = { terms: Term[]; expr: Linear };
 export type Equation = { left: Side; right: Side };
 
-export type ParseResult = { ok: true; equation: Equation } | { ok: false; error: string };
+export type MessageParams = Record<string, string | number>;
+export type ParseResult =
+  | { ok: true; equation: Equation }
+  | { ok: false; error: string; errorKey: ParseErrorKey; errorParams?: MessageParams };
+
+/** English text for each parse error; src/i18n/en.ts reuses these. */
+export const PARSE_MESSAGES = {
+  "parse.empty": "Type a line first.",
+  "parse.noEquals": "An equation needs an equals sign (=).",
+  "parse.manyEquals": "Use only one equals sign (=).",
+  "parse.sideMissing": "Something is missing on one side of the = sign.",
+  "parse.needSign": "Put a + or − sign between two terms.",
+  "parse.signNeedsTerm": "A + or − sign needs a number or x after it.",
+  "parse.decimals": "Use whole numbers only, without decimals.",
+  "parse.brackets": "Brackets are not needed here. Write the line without them.",
+  "parse.fractions": "Use whole numbers only, without fractions.",
+  "parse.unreadable": 'I cannot read "{ch}". Use only numbers, x, +, − and =.',
+  "parse.tooBig": "That number is too big. Check the line again.",
+  "parse.generic": "I could not read that line. Check it and try again.",
+} as const;
+export type ParseErrorKey = keyof typeof PARSE_MESSAGES;
+
+/** Fills {name} placeholders. */
+export const fill = (text: string, params?: MessageParams) =>
+  text.replace(/\{(\w+)\}/g, (m, name: string) => (params && name in params ? String(params[name]) : m));
 
 const MAX_DIGITS = 6;
 
-class ParseError extends Error {}
+// (No constructor parameter properties: Node's type stripping, used by scripts/, does not support them.)
+class ParseError extends Error {
+  key: ParseErrorKey;
+  params?: MessageParams;
+  constructor(key: ParseErrorKey, params?: MessageParams) {
+    super(fill(PARSE_MESSAGES[key], params));
+    this.key = key;
+    this.params = params;
+  }
+}
+
+const failure = (key: ParseErrorKey, params?: MessageParams): ParseResult => ({
+  ok: false,
+  error: fill(PARSE_MESSAGES[key], params),
+  errorKey: key,
+  ...(params ? { errorParams: params } : {}),
+});
 
 function simplify(terms: Term[]): Linear {
   let xCoef = frac(0);
@@ -25,11 +66,11 @@ function simplify(terms: Term[]): Linear {
   return { xCoef, constant };
 }
 
-function unreadable(ch: string): string {
-  if (ch === "." || ch === ",") return "Use whole numbers only, without decimals.";
-  if (ch === "(" || ch === ")") return "Brackets are not needed here. Write the line without them.";
-  if (ch === "/") return "Use whole numbers only, without fractions.";
-  return `I cannot read "${ch}". Use only numbers, x, +, − and =.`;
+function unreadable(ch: string): ParseError {
+  if (ch === "." || ch === ",") return new ParseError("parse.decimals");
+  if (ch === "(" || ch === ")") return new ParseError("parse.brackets");
+  if (ch === "/") return new ParseError("parse.fractions");
+  return new ParseError("parse.unreadable", { ch });
 }
 
 function parseSide(text: string): Side {
@@ -53,8 +94,8 @@ function parseSide(text: string): Side {
     }
     if (terms.length > 0 && !sawSign) {
       const ch = text[i];
-      if (/[0-9x]/.test(ch)) throw new ParseError("Put a + or − sign between two terms.");
-      throw new ParseError(unreadable(ch));
+      if (/[0-9x]/.test(ch)) throw new ParseError("parse.needSign");
+      throw unreadable(ch);
     }
 
     let digits = "";
@@ -67,15 +108,15 @@ function parseSide(text: string): Side {
     }
 
     if (!digits && !hasX) {
-      if (i >= text.length) throw new ParseError("A + or − sign needs a number or x after it.");
-      throw new ParseError(unreadable(text[i]));
+      if (i >= text.length) throw new ParseError("parse.signNeedsTerm");
+      throw unreadable(text[i]);
     }
-    if (digits.length > MAX_DIGITS) throw new ParseError("That number is too big. Check the line again.");
+    if (digits.length > MAX_DIGITS) throw new ParseError("parse.tooBig");
 
     terms.push({ coef: frac(sign * (digits ? Number(digits) : 1)), hasX });
   }
 
-  if (terms.length === 0) throw new ParseError("Something is missing on one side of the = sign.");
+  if (terms.length === 0) throw new ParseError("parse.sideMissing");
   return { terms, expr: simplify(terms) };
 }
 
@@ -86,14 +127,14 @@ export function parseEquation(text: string): ParseResult {
       .replace(/[−–—]/g, "-")
       .replace(/\s+/g, " ")
       .trim();
-    if (!clean) return { ok: false, error: "Type a line first." };
+    if (!clean) return failure("parse.empty");
     const parts = clean.split("=");
-    if (parts.length === 1) return { ok: false, error: "An equation needs an equals sign (=)." };
-    if (parts.length > 2) return { ok: false, error: "Use only one equals sign (=)." };
+    if (parts.length === 1) return failure("parse.noEquals");
+    if (parts.length > 2) return failure("parse.manyEquals");
     return { ok: true, equation: { left: parseSide(parts[0]), right: parseSide(parts[1]) } };
   } catch (e) {
-    if (e instanceof ParseError) return { ok: false, error: e.message };
-    return { ok: false, error: "I could not read that line. Check it and try again." };
+    if (e instanceof ParseError) return failure(e.key, e.params);
+    return failure("parse.generic");
   }
 }
 

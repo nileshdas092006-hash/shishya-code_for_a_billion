@@ -26,3 +26,10 @@ describe("parseAnswer", () => {
     },
   );
 });
+
+describe("answer errors carry a message key", () => {
+  it("uses answer.format and answer.zeroDen", () => {
+    expect(parseAnswer("abc")).toMatchObject({ ok: false, errorKey: "answer.format" });
+    expect(parseAnswer("5/0")).toMatchObject({ ok: false, errorKey: "answer.zeroDen" });
+  });
+});

@@ -68,3 +68,21 @@ describe("checkTeachStep: property over 1,000 seeds and every mistake", () => {
     }
   });
 });
+
+describe("teach feedback carries a message key", () => {
+  const inst = makeInstance({ a: 4, b: -3, c: 2, d: 7 }, 0);
+  const check = (tapped: number, typed: string) => checkTeachStep(inst, "kept-x-sign", tapped, typed);
+
+  it.each([
+    [2, "4x − 2x − 3 = 7", "teach.fix.ok", undefined],
+    [2, "4x + 2x − 3 = 7", "teach.fix.notEqual", undefined],
+    [2, "4x − 3 − 7 = 2x", "teach.fix.shape.2", undefined],
+    [2, "4x ==", "parse.manyEquals", undefined],
+    [1, "4x − 2x − 3 = 7", "teach.tap.tooEarly", { line: 1 }],
+    [3, "4x − 2x − 3 = 7", "teach.tap.tooLate", { line: 3 }],
+  ] as const)("tap %i, %j → %s", (tapped, typed, key, params) => {
+    const r = check(tapped, typed);
+    expect(r.feedbackKey).toBe(key);
+    expect(r.feedbackParams).toEqual(params);
+  });
+});

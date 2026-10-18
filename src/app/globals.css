@@ -1,26 +1,124 @@
 @import "tailwindcss";
 
+/* Built for KV lab PCs (1024×768), old phones and a classroom projector:
+   big text, big tap targets, high contrast, system fonts (nothing to download), no animation libraries. */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --ink: #111827;
+  --muted: #374151;
+  --paper: #ffffff;
+  --soft: #f3f4f6;
+  --line: #9ca3af;
+  --brand: #1d4ed8;
+  --brand-ink: #ffffff;
+  --good: #166534;
+  --good-bg: #dcfce7;
+  --bad: #991b1b;
+  --bad-bg: #fee2e2;
+  --note: #78350f;
+  --note-bg: #fef3c7;
+  --focus: #f59e0b;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  font-size: 20px;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Segoe UI", Roboto, "Noto Sans", "Noto Sans Devanagari", "Nirmala UI", Arial, sans-serif;
+  line-height: 1.5;
+}
+
+:focus-visible {
+  outline: 4px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 3rem;
+  padding: 0.6rem 1.2rem;
+  border-radius: 0.75rem;
+  border: 3px solid var(--brand);
+  background: var(--paper);
+  color: var(--brand);
+  font-weight: 700;
+  text-decoration: none;
+  cursor: pointer;
+}
+.btn:hover {
+  background: #eff6ff;
+}
+.btn-primary {
+  background: var(--brand);
+  color: var(--brand-ink);
+}
+.btn-primary:hover {
+  background: #1e40af;
+}
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.card {
+  border: 2px solid var(--line);
+  border-radius: 1rem;
+  padding: 1.25rem;
+  background: var(--paper);
+}
+
+.field {
+  width: 100%;
+  min-height: 3rem;
+  padding: 0.5rem 0.75rem;
+  border: 3px solid var(--muted);
+  border-radius: 0.75rem;
+  font-size: 1.2rem;
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.math {
+  font-family: "Cambria Math", "Segoe UI", "Noto Sans", Arial, sans-serif;
+  letter-spacing: 0.02em;
+}
+
+.msg-good {
+  background: var(--good-bg);
+  color: var(--good);
+  border: 2px solid var(--good);
+  border-radius: 0.75rem;
+  padding: 0.75rem 1rem;
+}
+.msg-bad {
+  background: var(--bad-bg);
+  color: var(--bad);
+  border: 2px solid var(--bad);
+  border-radius: 0.75rem;
+  padding: 0.75rem 1rem;
+}
+.msg-note {
+  background: var(--note-bg);
+  color: var(--note);
+  border: 2px solid var(--note);
+  border-radius: 0.75rem;
+  padding: 0.75rem 1rem;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  html {
+    font-size: 14px;
+  }
+  .print-codes {
+    break-inside: avoid;
+  }
 }

@@ -12,7 +12,7 @@ export type MasteryState = "LOCKED" | "OPEN" | "KEY1" | "NOT_YET" | "MASTERED";
 export type ItemKind = "practice" | "teach" | "proof";
 export type ItemFormat = "solve" | "apply";
 
-export type ClassRow = { id: string; code: string; grade: number; aiAllowed: boolean };
+export type ClassRow = { id: string; code: string; grade: number; section: string; aiAllowed: boolean };
 export type StudentRow = { id: string; classId: string; code: string };
 export type ItemRow = {
   id: string;
@@ -73,6 +73,15 @@ export type MasteryRow = {
   updatedAt: string;
 };
 export type UnknownErrorRow = { id: number; skillId: string; paramsJson: string; wrongAnswer: string; count: number };
+export type MinedMistakeRow = {
+  id: string;
+  skillId: string;
+  source: string;
+  testsJson: string;
+  status: "draft" | "approved" | "rejected";
+  approver: string | null;
+  createdAt: string;
+};
 export type EventRow = { id: number; studentId: string | null; type: string; payloadJson: string; createdAt: string };
 export type MistakeHitRow = { studentId: string; code: string; skillId: string; mistakeId: string; createdAt: string };
 export type ExportCounts = {
@@ -93,7 +102,10 @@ CREATE TABLE IF NOT EXISTS classes (
   id TEXT PRIMARY KEY,
   code TEXT NOT NULL UNIQUE,
   grade INTEGER NOT NULL CHECK (grade BETWEEN 1 AND 12),
-  aiAllowed INTEGER NOT NULL CHECK (aiAllowed IN (0, 1))
+  section TEXT NOT NULL DEFAULT '',
+  aiAllowed INTEGER NOT NULL CHECK (aiAllowed IN (0, 1)),
+  -- salted scrypt hash of the teacher PIN; the PIN itself is never stored
+  teacherPinHash TEXT
 );
 CREATE TABLE IF NOT EXISTS students (
   id TEXT PRIMARY KEY,
@@ -197,6 +209,13 @@ type Row = Record<string, SQLInputValue>;
 const bool = (v: unknown) => Number(v) === 1;
 const isUniqueViolation = (e: unknown) => e instanceof Error && /UNIQUE constraint failed/i.test(e.message);
 
+const toClass = (r: Row): ClassRow => ({
+  id: r.id as string,
+  code: r.code as string,
+  grade: Number(r.grade),
+  section: (r.section as string) ?? "",
+  aiAllowed: bool(r.aiAllowed),
+});
 const toItem = (r: Row): ItemRow => ({
   id: r.id as string,
   studentId: r.studentId as string,
@@ -288,18 +307,35 @@ export function openStore(file: string = DEFAULT_DB_FILE) {
     },
 
     // ----- classes and students -----
-    insertClass(c: ClassRow) {
-      run("INSERT INTO classes (id, code, grade, aiAllowed) VALUES (?, ?, ?, ?)", c.id, c.code, c.grade, c.aiAllowed ? 1 : 0);
+    /** False if the class code is already taken. */
+    insertClass(c: ClassRow, teacherPinHash: string | null = null): boolean {
+      return tryInsert(
+        "INSERT INTO classes (id, code, grade, section, aiAllowed, teacherPinHash) VALUES (?, ?, ?, ?, ?, ?)",
+        c.id, c.code, c.grade, c.section, c.aiAllowed ? 1 : 0, teacherPinHash,
+      );
     },
     getClass(id: string): ClassRow | undefined {
-      const r = one("SELECT * FROM classes WHERE id = ?", id);
-      return r && { id: r.id as string, code: r.code as string, grade: Number(r.grade), aiAllowed: bool(r.aiAllowed) };
+      const r = one("SELECT id, code, grade, section, aiAllowed FROM classes WHERE id = ?", id);
+      return r && toClass(r);
+    },
+    getClassByCode(code: string): ClassRow | undefined {
+      const r = one("SELECT id, code, grade, section, aiAllowed FROM classes WHERE code = ?", code);
+      return r && toClass(r);
+    },
+    getClassPinHash(id: string): string | null {
+      return (one("SELECT teacherPinHash FROM classes WHERE id = ?", id)?.teacherPinHash as string | null) ?? null;
     },
     insertStudent(s: StudentRow) {
       run("INSERT INTO students (id, classId, code) VALUES (?, ?, ?)", s.id, s.classId, s.code);
     },
     getStudent(id: string): StudentRow | undefined {
       return one("SELECT id, classId, code FROM students WHERE id = ?", id) as StudentRow | undefined;
+    },
+    findStudentByCode(classId: string, code: string): StudentRow | undefined {
+      return one("SELECT id, classId, code FROM students WHERE classId = ? AND code = ?", classId, code) as StudentRow | undefined;
+    },
+    listStudents(classId: string): StudentRow[] {
+      return all("SELECT id, classId, code FROM students WHERE classId = ? ORDER BY code", classId) as StudentRow[];
     },
     countStudents(classId: string): number {
       return Number(one("SELECT COUNT(*) AS n FROM students WHERE classId = ?", classId)!.n);
@@ -432,6 +468,21 @@ export function openStore(file: string = DEFAULT_DB_FILE) {
         wrongAnswer: r.wrongAnswer as string,
         count: Number(r.count),
       }));
+    },
+
+    // ----- mined mistakes (drafts from the Misconception Miner, decided by a teacher) -----
+    insertMinedMistake(m: MinedMistakeRow) {
+      run(
+        "INSERT INTO minedMistakes (id, skillId, source, testsJson, status, approver, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        m.id, m.skillId, m.source, m.testsJson, m.status, m.approver, m.createdAt,
+      );
+    },
+    listMinedMistakes(status: MinedMistakeRow["status"]): MinedMistakeRow[] {
+      return all("SELECT * FROM minedMistakes WHERE status = ? ORDER BY createdAt, id", status) as MinedMistakeRow[];
+    },
+    /** Approve or reject a draft. False if it was not a draft any more. */
+    decideMinedMistake(id: string, status: "approved" | "rejected", approver: string): boolean {
+      return Number(run("UPDATE minedMistakes SET status = ?, approver = ? WHERE id = ? AND status = 'draft'", status, approver, id).changes) === 1;
     },
 
     // ----- events (pilot metrics) -----

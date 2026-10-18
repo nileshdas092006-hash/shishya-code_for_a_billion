@@ -122,3 +122,26 @@ describe("property over 1,000 seeds: traces and the checker", () => {
     }
   });
 });
+
+describe("parse errors carry a message key for translation", () => {
+  it.each([
+    ["", "parse.empty", undefined],
+    ["4x + 3", "parse.noEquals", undefined],
+    ["4x ==", "parse.manyEquals", undefined],
+    ["= 7", "parse.sideMissing", undefined],
+    ["4 3x = 7", "parse.needSign", undefined],
+    ["4x - = 7", "parse.signNeedsTerm", undefined],
+    ["2.5x = 5", "parse.decimals", undefined],
+    ["2(x + 1) = 4", "parse.brackets", undefined],
+    ["x/2 = 3", "parse.fractions", undefined],
+    ["abc = 1", "parse.unreadable", { ch: "a" }],
+    ["99999999999999999999x = 1", "parse.tooBig", undefined],
+  ])("%j → %s", (text, key, params) => {
+    const r = parseEquation(text);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.errorKey).toBe(key);
+      expect(r.errorParams).toEqual(params);
+    }
+  });
+});

@@ -1,16 +1,13 @@
-import { createRng, type Rng } from "../core/rng";
-import { linearBothSides } from "../core/skills/linear-both-sides";
-import { generateApply, type ApplyItem } from "../core/skills/linear-both-sides-apply";
-import type { Instance, SkillSpec } from "../core/types";
+import { createRng } from "../core/rng";
+import { SKILLS, type SkillEntry } from "../core/skills";
+import type { Instance } from "../core/types";
 
-// Which skills the server knows about. A skill = its spec (questions, solver, mistakes) + its word-problem generator.
+// Which skills the server knows about: always built from the core registry (src/core/skills/index.ts).
 
-export type SkillEntry = { spec: SkillSpec; generateApply: (rng: Rng) => ApplyItem };
+export type { SkillEntry } from "../core/skills";
 export type Registry = Record<string, SkillEntry>;
 
-export const defaultRegistry: Registry = {
-  [linearBothSides.id]: { spec: linearBothSides, generateApply },
-};
+export const defaultRegistry: Registry = Object.fromEntries(SKILLS.map((s) => [s.spec.id, s]));
 
 /** Re-creates an item's question from its seed, so stored answers are never trusted blindly. */
 export function instanceFor(entry: SkillEntry, item: { seed: number; format: "solve" | "apply" }): Instance {

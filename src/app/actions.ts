@@ -1,0 +1,176 @@
+"use server";
+
+import { refresh } from "next/cache";
+import { redirect } from "next/navigation";
+import { getSkillEntry } from "@/core/skills";
+import type { MessageKey } from "@/i18n";
+import { getServices } from "@/server/instance";
+import {
+  addTeacherClass,
+  currentStudent,
+  endStudentSession,
+  startStudentSession,
+  teacherClass,
+} from "./_lib/auth";
+
+// Server actions: the ONLY way the screens reach the server. Every action works out who is calling from the
+// signed cookie (never from what the browser sends), checks the item belongs to that student, and then calls
+// src/server/services.ts. Mastery is decided inside the services by src/server/mastery.ts, never here.
+
+type NotAllowed = { ok: false; code: "auth" | "not_found" };
+const notAllowed = (code: NotAllowed["code"] = "auth"): NotAllowed => ({ ok: false, code });
+
+const str = (v: unknown, max = 200) => String(v ?? "").slice(0, max);
+const knownSkill = (skillId: unknown) => (getSkillEntry(str(skillId)) ? str(skillId) : null);
+
+async function studentOrNull() {
+  return currentStudent();
+}
+
+async function ownedItem(itemId: unknown) {
+  const student = await studentOrNull();
+  const id = str(itemId);
+  if (!student || getServices().getItemOwner(id) !== student.studentId) return null;
+  return id;
+}
+
+// ---------------- student: log in / out ----------------
+
+export async function loginStudent(_prev: { error?: MessageKey }, form: FormData): Promise<{ error?: MessageKey }> {
+  const result = getServices().studentLogin(str(form.get("classCode"), 20), str(form.get("studentCode"), 20));
+  if (!result.ok) return { error: "login.wrong" };
+  await startStudentSession(result.studentId);
+  redirect("/s/home");
+}
+
+export async function logoutStudent() {
+  await endStudentSession();
+  redirect("/s");
+}
+
+// ---------------- student: practise ----------------
+
+export async function servePractice(skillId: string) {
+  const student = await studentOrNull();
+  const skill = knownSkill(skillId);
+  if (!student) return notAllowed();
+  if (!skill) return notAllowed("not_found");
+  return getServices().servePracticeItem(student.studentId, skill);
+}
+
+export async function answerPractice(itemId: string, answer: string) {
+  const id = await ownedItem(itemId);
+  if (!id) return notAllowed();
+  return getServices().submitPracticeAnswer(id, str(answer, 40));
+}
+
+// ---------------- student: teach the Shishya ----------------
+
+export async function startTeachSession(skillId: string) {
+  const student = await studentOrNull();
+  const skill = knownSkill(skillId);
+  if (!student) return notAllowed();
+  if (!skill) return notAllowed("not_found");
+  return getServices().startTeach(student.studentId, skill);
+}
+
+export async function submitTeach(itemId: string, tappedLine: number, typedLine: string) {
+  const id = await ownedItem(itemId);
+  if (!id) return notAllowed();
+  const line = Number(tappedLine);
+  if (!Number.isInteger(line) || line < 1 || line > 10) return notAllowed("not_found");
+  return getServices().submitTeachStep(id, line, str(typedLine, 80));
+}
+
+// ---------------- student: prove it (AI off) ----------------
+
+export async function proofOverview(skillId: string) {
+  const student = await studentOrNull();
+  const skill = knownSkill(skillId);
+  if (!student) return notAllowed();
+  if (!skill) return notAllowed("not_found");
+  const svc = getServices();
+  const resume = svc.resumeProof(student.studentId, skill);
+  return { ok: true as const, resume: resume.ok ? resume : null, status: svc.proofStatus(student.studentId, skill) };
+}
+
+export async function startProofRun(skillId: string) {
+  const student = await studentOrNull();
+  const skill = knownSkill(skillId);
+  if (!student) return notAllowed();
+  if (!skill) return notAllowed("not_found");
+  return getServices().startProof(student.studentId, skill);
+}
+
+export async function submitProof(itemId: string, answer: string) {
+  const id = await ownedItem(itemId);
+  if (!id) return notAllowed();
+  return getServices().submitProofAnswer(id, str(answer, 40));
+}
+
+// ---------------- teacher ----------------
+
+export type CreateClassState =
+  | { status: "idle" }
+  | { status: "error"; message: string }
+  | { status: "created"; classCode: string; pin: string; studentCodes: string[]; grade: number; section: string };
+
+export async function createClassAction(_prev: CreateClassState, form: FormData): Promise<CreateClassState> {
+  try {
+    const grade = Number(form.get("grade"));
+    const section = str(form.get("section"), 2);
+    const studentCount = Number(form.get("studentCount"));
+    const room = getServices().createClassroom({ grade, section, studentCount });
+    await addTeacherClass(room.classId);
+    return { status: "created", classCode: room.classCode, pin: room.pin, studentCodes: room.studentCodes, grade, section: section.toUpperCase() };
+  } catch (e) {
+    return { status: "error", message: e instanceof Error ? e.message : "Could not create the class." };
+  }
+}
+
+export async function teacherLogin(_prev: { error?: string }, form: FormData): Promise<{ error?: string }> {
+  const classCode = str(form.get("classCode"), 20);
+  const result = getServices().verifyTeacherPin(classCode, str(form.get("pin"), 12));
+  if (!result.ok) return { error: result.reason };
+  await addTeacherClass(result.classId);
+  const cls = getServices().getClass(result.classId)!;
+  redirect(`/teacher/${encodeURIComponent(cls.code)}`);
+}
+
+export async function unlockSkillForClass(classCode: string, skillId: string) {
+  const cls = await teacherClass(str(classCode, 20));
+  const skill = knownSkill(skillId);
+  if (!cls || !skill) return;
+  getServices().teacherUnlockClass(cls.id, skill);
+  refresh();
+}
+
+export async function decideMined(classCode: string, id: string, decision: "approved" | "rejected") {
+  const cls = await teacherClass(str(classCode, 20));
+  if (!cls || (decision !== "approved" && decision !== "rejected")) return;
+  getServices().decideMinedMistake(cls.id, str(id, 64), decision);
+  refresh();
+}
+
+export async function projectorNew(classCode: string, skillId: string) {
+  const cls = await teacherClass(str(classCode, 20));
+  const skill = knownSkill(skillId);
+  if (!cls) return notAllowed();
+  if (!skill) return notAllowed("not_found");
+  return { ok: true as const, ...getServices().projectorTrace(cls.id, skill) };
+}
+
+export async function projectorCheckLine(
+  classCode: string,
+  skillId: string,
+  seed: number,
+  mistakeId: string,
+  tappedLine: number,
+  typedLine: string,
+) {
+  const cls = await teacherClass(str(classCode, 20));
+  const skill = knownSkill(skillId);
+  if (!cls) return notAllowed();
+  if (!skill) return notAllowed("not_found");
+  return { ok: true as const, ...getServices().projectorCheck(cls.id, skill, Number(seed), str(mistakeId, 64), Number(tappedLine), str(typedLine, 80)) };
+}

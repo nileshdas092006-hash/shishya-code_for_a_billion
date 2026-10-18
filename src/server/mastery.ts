@@ -135,7 +135,9 @@ export function evaluateTeach(store: Store, studentId: string, entry: SkillEntry
   return state;
 }
 
-export type Eligibility = { ok: true } | { ok: false; reason: string; retryAt?: string };
+export type Eligibility =
+  | { ok: true }
+  | { ok: false; code: "mastered" | "not_ready" | "cooldown"; reason: string; retryAt?: string };
 
 /** May this child start a proof now? (KEY1 held, and not cooling down after a failed proof.) */
 export function proofEligibility(
@@ -146,13 +148,18 @@ export function proofEligibility(
   cooldownHours: number,
 ): Eligibility {
   const state = getState(store, studentId, entry);
-  if (state === "MASTERED") return { ok: false, reason: "This skill is already mastered." };
-  if (state !== "KEY1" && state !== "NOT_YET") return { ok: false, reason: "Teach the Shishya first, then you can prove it." };
+  if (state === "MASTERED") return { ok: false, code: "mastered", reason: "This skill is already mastered." };
+  if (state !== "KEY1" && state !== "NOT_YET") return { ok: false, code: "not_ready", reason: "Teach the Shishya first, then you can prove it." };
   const last = store.getLastFinishedProofRun(studentId, entry.spec.id);
   if (last && last.passed === false && last.finishedAt) {
     const retryAt = new Date(Date.parse(last.finishedAt) + cooldownHours * 3600_000);
     if (now < retryAt) {
-      return { ok: false, reason: "Practise and teach a little more. Your next proof opens later.", retryAt: retryAt.toISOString() };
+      return {
+        ok: false,
+        code: "cooldown",
+        reason: "Practise and teach a little more. Your next proof opens later.",
+        retryAt: retryAt.toISOString(),
+      };
     }
   }
   return { ok: true };

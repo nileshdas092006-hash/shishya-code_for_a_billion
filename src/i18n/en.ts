@@ -1,0 +1,133 @@
+import { ANSWER_MESSAGES } from "../core/answer";
+import { PARSE_MESSAGES } from "../core/equation";
+import { SKILLS } from "../core/skills";
+import { TEACH_MESSAGES } from "../core/teach";
+
+// Every child-facing string, in English. src/i18n/hi.ts has the same keys in Hindi (a test checks this).
+// Words follow the NCERT textbook: "do the same operation on both sides", never "move it and change the sign".
+// Hints, mistake labels and checker messages come from src/core, so the maths and the words never drift apart.
+
+export const ui = {
+  "app.name": "Shishya",
+  "app.isProgram": "Shishya is a computer program, not a person.",
+  "app.demo": "DEMO: practice data only, not real pilot data",
+
+  "home.title": "Who is using Shishya?",
+  "home.student": "I am a student",
+  "home.teacher": "I am a teacher",
+
+  "login.title": "Hello! Type your codes",
+  "login.classCode": "Class code",
+  "login.classCodeHint": "Your teacher writes it on the board, like 8B-K7QM.",
+  "login.studentCode": "Your code",
+  "login.studentCodeHint": "Like 8B-17. Your teacher gives you this.",
+  "login.go": "Start",
+  "login.wrong": "We could not find these codes. Check them with your teacher.",
+  "login.logout": "Finish and log out",
+
+  "map.title": "Your skills",
+  "map.state.LOCKED": "Locked",
+  "map.state.OPEN": "Open",
+  "map.state.KEY1": "Key 1 earned",
+  "map.state.NOT_YET": "Not yet",
+  "map.state.MASTERED": "Mastered",
+  "map.locked": "Ask your teacher to open this skill.",
+  "map.practise": "Practise",
+  "map.teach": "Teach the Shishya",
+  "map.prove": "Prove it",
+
+  "practise.title": "Practise",
+  "practise.solve": "Solve for x.",
+  "practise.answerLabel": "x =",
+  "practise.answerHint": "You can type a fraction like 5/3 or a negative number like −4.",
+  "practise.check": "Check my answer",
+  "practise.next": "Next question",
+  "practise.correct": "Correct! Both sides are equal for your answer.",
+  "practise.wrongKnown": "Not quite. Look at this step:",
+  "practise.wrongUnknown": "Not quite. Let's look at this step by step.",
+  "practise.hint": "Show a hint",
+  "practise.hintLevel": "Hint {n} of 4",
+  "practise.noMoreHints": "That was the last hint.",
+  "practise.streak": "Correct in a row: {n}",
+  "practise.offerTeach": "Great work! 5 correct in a row. Ready to teach the Shishya?",
+  "practise.loading": "Getting a question…",
+
+  "teach.title": "Teach the Shishya",
+  "teach.start": "Start teaching",
+  "teach.intro": "The Shishya tried this question. Tap the FIRST line where the Shishya went wrong.",
+  "teach.question": "Question",
+  "teach.line": "Line {n}",
+  "teach.tapped": "You chose line {n}. Now type what line {n} should be.",
+  "teach.typeLabel": "Correct line {n}",
+  "teach.typeHint": "Use numbers, x, +, − and =.",
+  "teach.check": "Check my line",
+  "teach.triesLeft": "Tries left: {n}",
+  "teach.noTries": "No tries left for this one. Let's go on to the next one.",
+  "teach.next": "Next",
+  "teach.progress": "Fixed {n} of {total}",
+  "teach.done.key1": "You earned Key 1! Now you can prove it.",
+  "teach.done.again": "Good effort! Practise a little more, then teach the Shishya again.",
+  "teach.done.thanks": "Thank you for teaching the Shishya!",
+  "teach.shishya.confused": "Hmm… where did I go wrong?",
+  "teach.shishya.thinking": "Let me think about your line…",
+  "teach.shishya.happy": "Oh, now I understand! Thank you!",
+
+  "prove.title": "Prove it",
+  "prove.aiOff": "AI is off",
+  "prove.rules": "4 questions with your own numbers: 3 equations and 1 word problem. No hints. You have 30 minutes.",
+  "prove.start": "Start the proof",
+  "prove.continue": "Continue your proof",
+  "prove.question": "Question {n} of {total}",
+  "prove.wordProblem": "Word problem",
+  "prove.submit": "Save my answer",
+  "prove.timeLeft": "Time left: {min} min",
+  "prove.mastered": "Mastered! You have proved this skill.",
+  "prove.nextUnlocked": "Next skill unlocked: {skill}",
+  "prove.notYet": "Not yet. Here is what to practise:",
+  "prove.practiseStepByStep": "Solve equations step by step, and check each line.",
+  "prove.retryAt": "Your next proof opens at {time}.",
+  "prove.notReady": "First teach the Shishya to earn Key 1.",
+  "prove.alreadyMastered": "You have already mastered this skill.",
+  "prove.running": "Your proof is already open on another screen.",
+
+  "project.title": "Class mode: teach the Shishya together",
+  "project.instructions": "Class: which line is the FIRST mistake? Then, what should that line be?",
+  "project.typeFix": "The class's line",
+  "project.newTrace": "New question",
+  "project.check": "Check",
+
+  "common.back": "Back to your skills",
+  "common.error": "Something went wrong. Please try again.",
+  "common.locked": "This skill is locked. Ask your teacher.",
+  "common.notFound": "We could not find that page.",
+
+  "skill.alg.linear.both-sides.title": "x on both sides",
+  "skill.alg.linear.both-sides.example": "like 4x − 3 = 2x + 7",
+} as const;
+
+type SkillTextKey = `skill.${string}.${"title" | "example"}`;
+type HintKey = `hint.${string}.${1 | 2 | 3 | 4}`;
+type MistakeKey = `mistake.${string}.${string}`;
+export type MessageKey =
+  | keyof typeof ui
+  | keyof typeof TEACH_MESSAGES
+  | keyof typeof PARSE_MESSAGES
+  | keyof typeof ANSWER_MESSAGES
+  | SkillTextKey
+  | HintKey
+  | MistakeKey;
+
+const fromSkills = Object.fromEntries(
+  SKILLS.flatMap(({ spec }) => [
+    ...spec.hintLadder.map((h, i) => [`hint.${spec.id}.${i + 1}`, h]),
+    ...spec.mistakes.map((m) => [`mistake.${spec.id}.${m.id}`, m.childLabel]),
+  ]),
+);
+
+export const en: Record<string, string> = {
+  ...ui,
+  ...TEACH_MESSAGES,
+  ...PARSE_MESSAGES,
+  ...ANSWER_MESSAGES,
+  ...fromSkills,
+};

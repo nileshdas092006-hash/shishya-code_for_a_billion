@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "vitest run"
+    "test": "vitest run",
+    "seed:demo": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/register-ts.mjs scripts/seed-demo.ts",
+    "dev:demo": "node scripts/dev-demo.mjs"
   },
   "dependencies": {
     "next": "16.4.2",
