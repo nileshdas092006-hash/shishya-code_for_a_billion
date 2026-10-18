@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState, useTransition } from "react";
 import { hintKey, mistakeKey, t, type MessageKey } from "@/i18n";
 import { answerPractice, servePractice } from "../../../actions";
+import { Equation } from "../../../_components/Equation";
 import { Shishya } from "../../../_components/Shishya";
 
 const STREAK_FOR_TEACH = 5;
@@ -75,7 +76,7 @@ export function PractiseScreen({ skillId }: { skillId: string }) {
     <div className="flex flex-col gap-5">
       <div className="card flex flex-col gap-4">
         <p className="text-xl font-semibold">{t("practise.solve")}</p>
-        <p className="math text-4xl font-bold break-words">{item.text}</p>
+        <Equation text={item.text} size="lg" />
         <form onSubmit={check} className="flex flex-col gap-3">
           <label className="flex flex-wrap items-center gap-3 text-3xl font-bold math">
             {t("practise.answerLabel")}

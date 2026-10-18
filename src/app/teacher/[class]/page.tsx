@@ -7,6 +7,7 @@ import { getSkillEntry } from "@/core/skills";
 import { skillKey, t } from "@/i18n";
 import { getServices } from "@/server/instance";
 import { decideMined, unlockSkillForClass } from "../../actions";
+import { Equation } from "../../_components/Equation";
 import { teacherClass } from "../../_lib/auth";
 import { StudentCodeSheet } from "../CreateClassForm";
 import { PrintButton } from "../PrintButton";
@@ -172,11 +173,14 @@ function StuckGroup({ group }: { group: Group }) {
       {example && (
         <div>
           <p className="font-semibold">Example of this mistake:</p>
-          <ol className="math text-xl">
+          <ol className="flex flex-col gap-1">
             {example.trace.map((line, i) => (
-              <li key={i} className={i + 1 === example.firstWrongLine ? "font-bold text-red-800" : ""}>
-                L{i + 1}: {line.text}
-                {i + 1 === example.firstWrongLine && "  ← first wrong line"}
+              <li key={i} className={`flex items-baseline gap-3 ${i + 1 === example.firstWrongLine ? "text-red-800" : ""}`}>
+                <span className="shrink-0 font-semibold">L{i + 1}</span>
+                <span className="flex-1 min-w-0">
+                  <Equation text={line.text} size="sm" />
+                  {i + 1 === example.firstWrongLine && <span className="block text-base font-bold">← first wrong line</span>}
+                </span>
               </li>
             ))}
           </ol>

@@ -89,6 +89,26 @@ body {
   letter-spacing: 0.02em;
 }
 
+/* <Equation>: never wraps. The font shrinks to fit the box: (box width) / (characters × em per character),
+   kept between --eq-min and --eq-max. Older browsers without container units use the viewport width instead.
+   If even the minimum size does not fit, the box scrolls sideways (last resort). */
+.eq-box {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  container-type: inline-size;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.eq {
+  display: inline-block;
+  white-space: nowrap;
+  font-weight: 700;
+  line-height: 1.3;
+  font-size: clamp(var(--eq-min), calc((100vw - 8rem) / var(--eq-chars) / var(--eq-char-em)), var(--eq-max));
+  font-size: clamp(var(--eq-min), calc(100cqi / var(--eq-chars) / var(--eq-char-em)), var(--eq-max));
+}
+
 .msg-good {
   background: var(--good-bg);
   color: var(--good);

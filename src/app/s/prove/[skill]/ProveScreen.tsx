@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState, useTransition } from "react";
 import { mistakeKey, skillKey, t, type MessageKey } from "@/i18n";
 import { proofOverview, startProofRun, submitProof } from "../../../actions";
+import { Equation } from "../../../_components/Equation";
 import { Shishya } from "../../../_components/Shishya";
 
 type Item = { itemId: string; format: "solve" | "apply"; text: string; answered: boolean };
@@ -137,7 +138,7 @@ export function ProveScreen({ skillId }: { skillId: string }) {
           ) : (
             <>
               <p className="text-xl font-semibold">{t("practise.solve")}</p>
-              <p className="math text-4xl font-bold break-words">{current.text}</p>
+              <Equation text={current.text} size="lg" />
             </>
           )}
           <form onSubmit={save} className="flex flex-col gap-3">

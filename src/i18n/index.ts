@@ -8,9 +8,13 @@ export type { MessageKey } from "./en";
 
 const tables: Record<Lang, Record<string, string>> = { en, hi };
 
+/** Joins the parts of equations inside a sentence with non-breaking spaces, so a sentence never splits one. */
+export const keepMathTogether = (text: string) => text.replace(/ ([+=−-]) /g, " $1 ");
+
 export function t(key: MessageKey, params?: Record<string, string | number>, lang: Lang = "en"): string {
   const text = tables[lang][key] ?? en[key] ?? key;
-  return text.replace(/\{(\w+)\}/g, (m, name: string) => (params && name in params ? String(params[name]) : m));
+  const filled = text.replace(/\{(\w+)\}/g, (m, name: string) => (params && name in params ? String(params[name]) : m));
+  return keepMathTogether(filled);
 }
 
 export const skillKey = (skillId: string, part: "title" | "example") => `skill.${skillId}.${part}` as const;
