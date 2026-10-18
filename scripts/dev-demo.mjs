@@ -6,6 +6,8 @@ const require = createRequire(import.meta.url);
 const nextBin = require.resolve("next/dist/bin/next");
 const child = spawn(process.execPath, [nextBin, "dev", ...process.argv.slice(2)], {
   stdio: "inherit",
-  env: { ...process.env, SHISHYA_DB_FILE: "data/demo.db" },
+  env: { ...process.env, DATABASE_URL: "file:data/demo.db", DATABASE_AUTH_TOKEN: "" },
 });
 child.on("exit", (code) => process.exit(code ?? 0));
+// Stop the server too when this launcher is stopped.
+for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) process.on(signal, () => child.kill(signal));

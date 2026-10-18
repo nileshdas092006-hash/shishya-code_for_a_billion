@@ -1,26 +1,49 @@
-import { basename, dirname, join, resolve } from "node:path";
+import { join } from "node:path";
 import { createServices, type Services } from "./services";
 import { loadSessionSecret } from "./session";
-import { DEFAULT_DB_FILE, openStore } from "./store";
+import { DEFAULT_DATABASE_URL, openStore, type StoreConfig } from "./store";
 
-// One database connection and one services object for the running web app.
-// SHISHYA_DB_FILE picks the database (default data/shishya.db). The demo database is data/demo.db and is
-// always labelled DEMO on screen, so it is never mixed up with pilot data.
+// One database client and one services object for the running web app.
+//   DATABASE_URL         file:data/shishya.db on a laptop (the default), libsql://… for Turso in the cloud.
+//                        The demo uses file:data/demo.db and is always labelled DEMO on screen.
+//   DATABASE_AUTH_TOKEN  Turso only.
+//   SESSION_SECRET       required in production; on a laptop a random one is kept in data/.session-secret.
+// In production nothing here writes to the local disk: Vercel's disk is not kept between requests.
 
-export const DB_FILE = process.env.SHISHYA_DB_FILE ? resolve(process.env.SHISHYA_DB_FILE) : DEFAULT_DB_FILE;
-export const IS_DEMO = basename(DB_FILE) === "demo.db";
+const isProduction = () => process.env.NODE_ENV === "production";
 
-type Shared = { services: Services; secret: string };
-const holder = globalThis as typeof globalThis & { __shishya?: Shared };
-
-function shared(): Shared {
-  // Kept on globalThis so the dev server's hot reload does not open a new connection on every edit.
-  holder.__shishya ??= {
-    services: createServices(openStore(DB_FILE)),
-    secret: loadSessionSecret(join(dirname(DB_FILE), ".session-secret")),
-  };
-  return holder.__shishya;
+export function databaseConfig(env: Record<string, string | undefined> = process.env): Required<Pick<StoreConfig, "url">> & StoreConfig {
+  const url = env.DATABASE_URL?.trim() || (env.NODE_ENV === "production" ? "" : DEFAULT_DATABASE_URL);
+  if (!url) throw new Error("DATABASE_URL is not set. In production use your Turso URL (see .env.example and README).");
+  return { url, authToken: env.DATABASE_AUTH_TOKEN?.trim() || undefined };
 }
 
-export const getServices = () => shared().services;
-export const getSessionSecret = () => shared().secret;
+/** True when the app runs on the demo database (never mixed with pilot data). */
+export const IS_DEMO = /(^|[/\\:])demo\.db$/.test(process.env.DATABASE_URL?.trim() ?? "");
+
+type Shared = { services?: Promise<Services>; secret?: string };
+const holder = globalThis as typeof globalThis & { __shishya?: Shared };
+const shared = (): Shared => (holder.__shishya ??= {});
+
+/** Kept on globalThis so the dev server's hot reload does not open a new client on every edit. */
+export function getServices(): Promise<Services> {
+  const s = shared();
+  s.services ??= openStore(databaseConfig())
+    .then((store) => createServices(store))
+    .catch((e) => {
+      s.services = undefined; // try again on the next request
+      throw e;
+    });
+  return s.services;
+}
+
+export function getSessionSecret(): string {
+  const s = shared();
+  if (!s.secret) {
+    const fromEnv = process.env.SESSION_SECRET?.trim();
+    if (fromEnv && fromEnv.length >= 32) s.secret = fromEnv;
+    else if (isProduction()) throw new Error("SESSION_SECRET (32+ characters) must be set in production.");
+    else s.secret = loadSessionSecret(join(process.cwd(), "data", ".session-secret"));
+  }
+  return s.secret;
+}

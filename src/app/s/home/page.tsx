@@ -22,7 +22,7 @@ export default function StudentHome() {
 async function SkillMap() {
   const student = await currentStudent();
   if (!student) redirect("/s");
-  const skills = getServices().getSkillMap(student.studentId);
+  const skills = await (await getServices()).getSkillMap(student.studentId);
   return (
     <>
       <p className="text-lg text-gray-700">{student.code}</p>

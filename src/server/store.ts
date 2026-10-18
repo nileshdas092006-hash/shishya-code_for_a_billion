@@ -1,12 +1,16 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { DatabaseSync, type SQLInputValue } from "node:sqlite";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createClient, type Client, type InValue, type Transaction } from "@libsql/client";
 
-// The data store. ALL SQL lives in this file, behind plain functions, so it can move to Postgres later.
+// The data store. ALL SQL lives in this file, behind plain async functions.
+// It uses libSQL (SQLite-compatible): a local file on a laptop (DATABASE_URL=file:data/shishya.db) or Turso's
+// hosted database in the cloud (DATABASE_URL=libsql://…), which is what Vercel needs.
 // Pseudonymous only: there is no name column anywhere. The mastery table is written only via writeMastery(),
 // which only src/server/mastery.ts may call (a test enforces this).
 
-export const DEFAULT_DB_FILE = join(process.cwd(), "data", "shishya.db");
+export const DEFAULT_DATABASE_URL = "file:data/shishya.db";
 
 export type MasteryState = "LOCKED" | "OPEN" | "KEY1" | "NOT_YET" | "MASTERED";
 export type ItemKind = "practice" | "teach" | "proof";
@@ -205,7 +209,7 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS events_type_time ON events (type, createdAt);
 `;
 
-type Row = Record<string, SQLInputValue>;
+type Row = Record<string, unknown>;
 const bool = (v: unknown) => Number(v) === 1;
 const isUniqueViolation = (e: unknown) => e instanceof Error && /UNIQUE constraint failed/i.test(e.message);
 
@@ -263,20 +267,64 @@ const toRun = (r: Row): ProofRunRow => ({
   startedAt: r.startedAt as string,
   finishedAt: (r.finishedAt as string | null) ?? null,
 });
+const toStudent = (r: Row): StudentRow => ({ id: r.id as string, classId: r.classId as string, code: r.code as string });
 
-export function openStore(file: string = DEFAULT_DB_FILE) {
-  if (file !== ":memory:") mkdirSync(dirname(file), { recursive: true });
-  const db = new DatabaseSync(file);
-  db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;");
-  db.exec(SCHEMA);
+// ---------- connections, write lock and transactions ----------
 
-  const one = (sql: string, ...params: SQLInputValue[]) => db.prepare(sql).get(...params) as Row | undefined;
-  const all = (sql: string, ...params: SQLInputValue[]) => db.prepare(sql).all(...params) as Row[];
-  const run = (sql: string, ...params: SQLInputValue[]) => db.prepare(sql).run(...params);
+/** Runs async jobs one at a time, in order. */
+class Lock {
+  #tail: Promise<unknown> = Promise.resolve();
+  run<T>(job: () => Promise<T>): Promise<T> {
+    const result = this.#tail.then(job);
+    this.#tail = result.catch(() => undefined);
+    return result;
+  }
+}
+
+/**
+ * One write lock per database per process. Local libSQL connections are synchronous, so if two connections in
+ * one process wrote at the same moment, the second would block the whole process while waiting for the first,
+ * and the first could never finish. Taking turns inside the process avoids that; across processes and on Turso,
+ * SQLite's own locking (and our unique indexes) keep things safe.
+ */
+const writeLocks = new Map<string, Lock>();
+
+function localPath(url: string): string | null {
+  if (!url.startsWith("file:")) return null;
+  if (url.startsWith("file://")) return fileURLToPath(url);
+  return resolve(url.slice("file:".length));
+}
+
+export type StoreConfig = { url?: string; authToken?: string };
+
+/** Opens the database and creates the tables if they are missing (safe to run every start-up). */
+export async function openStore(config: StoreConfig | string = {}) {
+  const { url = DEFAULT_DATABASE_URL, authToken } = typeof config === "string" ? { url: config } : config;
+  const path = localPath(url);
+  if (path) mkdirSync(dirname(path), { recursive: true }); // local files only; never runs for a cloud database
+  const client: Client = createClient({ url, authToken, timeout: 5000 });
+  if (path) await client.execute("PRAGMA journal_mode = WAL"); // readers never wait for a writer
+  await client.executeMultiple(SCHEMA);
+
+  const lockKey = path ? path.toLowerCase() : url;
+  if (!writeLocks.has(lockKey)) writeLocks.set(lockKey, new Lock());
+  const lock = writeLocks.get(lockKey)!;
+  const inTx = new AsyncLocalStorage<Transaction>();
+
+  /** A read: inside a transaction it sees that transaction's own writes. */
+  const read = async (sql: string, ...args: InValue[]) => (inTx.getStore() ?? client).execute({ sql, args });
+  /** A write: joins the current transaction, or takes the write lock for a single statement. */
+  const write = async (sql: string, ...args: InValue[]) => {
+    const tx = inTx.getStore();
+    return tx ? tx.execute({ sql, args }) : lock.run(() => client.execute({ sql, args }));
+  };
+  const one = async (sql: string, ...args: InValue[]) => (await read(sql, ...args)).rows[0] as Row | undefined;
+  const all = async (sql: string, ...args: InValue[]) => (await read(sql, ...args)).rows as unknown as Row[];
+  const changed = async (sql: string, ...args: InValue[]) => (await write(sql, ...args)).rowsAffected === 1;
   /** Runs an INSERT; false if a unique rule refused it. */
-  const tryInsert = (sql: string, ...params: SQLInputValue[]) => {
+  const tryInsert = async (sql: string, ...args: InValue[]) => {
     try {
-      run(sql, ...params);
+      await write(sql, ...args);
       return true;
     } catch (e) {
       if (isUniqueViolation(e)) return false;
@@ -284,115 +332,126 @@ export function openStore(file: string = DEFAULT_DB_FILE) {
     }
   };
 
-  let depth = 0;
-
   return {
-    close: () => db.close(),
+    close: () => client.close(),
 
-    /** BEGIN IMMEDIATE ... COMMIT, rolled back on error. Nested calls join the outer transaction. */
-    transaction<T>(fn: () => T): T {
-      if (depth > 0) return fn();
-      db.exec("BEGIN IMMEDIATE");
-      depth++;
-      try {
-        const out = fn();
-        db.exec("COMMIT");
-        return out;
-      } catch (e) {
-        db.exec("ROLLBACK");
-        throw e;
-      } finally {
-        depth--;
-      }
+    /** BEGIN IMMEDIATE … COMMIT, rolled back on error. Nested calls join the outer transaction. */
+    async transaction<T>(fn: () => Promise<T>): Promise<T> {
+      if (inTx.getStore()) return fn();
+      return lock.run(async () => {
+        const tx = await client.transaction("write");
+        try {
+          const out = await inTx.run(tx, fn);
+          await tx.commit();
+          return out;
+        } catch (e) {
+          await tx.rollback().catch(() => undefined);
+          throw e;
+        } finally {
+          tx.close();
+        }
+      });
     },
 
     // ----- classes and students -----
     /** False if the class code is already taken. */
-    insertClass(c: ClassRow, teacherPinHash: string | null = null): boolean {
+    insertClass(c: ClassRow, teacherPinHash: string | null = null): Promise<boolean> {
       return tryInsert(
         "INSERT INTO classes (id, code, grade, section, aiAllowed, teacherPinHash) VALUES (?, ?, ?, ?, ?, ?)",
         c.id, c.code, c.grade, c.section, c.aiAllowed ? 1 : 0, teacherPinHash,
       );
     },
-    getClass(id: string): ClassRow | undefined {
-      const r = one("SELECT id, code, grade, section, aiAllowed FROM classes WHERE id = ?", id);
+    async getClass(id: string): Promise<ClassRow | undefined> {
+      const r = await one("SELECT id, code, grade, section, aiAllowed FROM classes WHERE id = ?", id);
       return r && toClass(r);
     },
-    getClassByCode(code: string): ClassRow | undefined {
-      const r = one("SELECT id, code, grade, section, aiAllowed FROM classes WHERE code = ?", code);
+    async getClassByCode(code: string): Promise<ClassRow | undefined> {
+      const r = await one("SELECT id, code, grade, section, aiAllowed FROM classes WHERE code = ?", code);
       return r && toClass(r);
     },
-    getClassPinHash(id: string): string | null {
-      return (one("SELECT teacherPinHash FROM classes WHERE id = ?", id)?.teacherPinHash as string | null) ?? null;
+    async getClassPinHash(id: string): Promise<string | null> {
+      return ((await one("SELECT teacherPinHash FROM classes WHERE id = ?", id))?.teacherPinHash as string | null) ?? null;
     },
-    insertStudent(s: StudentRow) {
-      run("INSERT INTO students (id, classId, code) VALUES (?, ?, ?)", s.id, s.classId, s.code);
+    async insertStudent(s: StudentRow) {
+      await write("INSERT INTO students (id, classId, code) VALUES (?, ?, ?)", s.id, s.classId, s.code);
     },
-    getStudent(id: string): StudentRow | undefined {
-      return one("SELECT id, classId, code FROM students WHERE id = ?", id) as StudentRow | undefined;
+    async getStudent(id: string): Promise<StudentRow | undefined> {
+      const r = await one("SELECT id, classId, code FROM students WHERE id = ?", id);
+      return r && toStudent(r);
     },
-    findStudentByCode(classId: string, code: string): StudentRow | undefined {
-      return one("SELECT id, classId, code FROM students WHERE classId = ? AND code = ?", classId, code) as StudentRow | undefined;
+    async findStudentByCode(classId: string, code: string): Promise<StudentRow | undefined> {
+      const r = await one("SELECT id, classId, code FROM students WHERE classId = ? AND code = ?", classId, code);
+      return r && toStudent(r);
     },
-    listStudents(classId: string): StudentRow[] {
-      return all("SELECT id, classId, code FROM students WHERE classId = ? ORDER BY code", classId) as StudentRow[];
+    async listStudents(classId: string): Promise<StudentRow[]> {
+      return (await all("SELECT id, classId, code FROM students WHERE classId = ? ORDER BY code", classId)).map(toStudent);
     },
-    countStudents(classId: string): number {
-      return Number(one("SELECT COUNT(*) AS n FROM students WHERE classId = ?", classId)!.n);
+    async countStudents(classId: string): Promise<number> {
+      return Number((await one("SELECT COUNT(*) AS n FROM students WHERE classId = ?", classId))!.n);
     },
 
     // ----- items -----
     /** False if the unique rules refuse it (for example a proof question that was already used). */
-    insertItem(i: Omit<ItemRow, "answeredAt">): boolean {
+    insertItem(i: Omit<ItemRow, "answeredAt">): Promise<boolean> {
       return tryInsert(
         `INSERT INTO items (id, studentId, skillId, version, seed, kind, format, runId, mistakeId, paramsJson, answer, servedAt)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         i.id, i.studentId, i.skillId, i.version, i.seed, i.kind, i.format, i.runId, i.mistakeId, i.paramsJson, i.answer, i.servedAt,
       );
     },
-    getItem(id: string): ItemRow | undefined {
-      const r = one("SELECT * FROM items WHERE id = ?", id);
+    async getItem(id: string): Promise<ItemRow | undefined> {
+      const r = await one("SELECT * FROM items WHERE id = ?", id);
       return r && toItem(r);
     },
-    listItems(f: { studentId: string; skillId: string; kind?: ItemKind; version?: string }): ItemRow[] {
-      return all(
-        `SELECT * FROM items WHERE studentId = ? AND skillId = ? AND (? IS NULL OR kind = ?) AND (? IS NULL OR version = ?)
-         ORDER BY servedAt, rowid`,
-        f.studentId, f.skillId, f.kind ?? null, f.kind ?? null, f.version ?? null, f.version ?? null,
+    async listItems(f: { studentId: string; skillId: string; kind?: ItemKind; version?: string }): Promise<ItemRow[]> {
+      return (
+        await all(
+          `SELECT * FROM items WHERE studentId = ? AND skillId = ? AND (? IS NULL OR kind = ?) AND (? IS NULL OR version = ?)
+           ORDER BY servedAt, rowid`,
+          f.studentId, f.skillId, f.kind ?? null, f.kind ?? null, f.version ?? null, f.version ?? null,
+        )
       ).map(toItem);
     },
-    listRunItems(runId: string): ItemRow[] {
-      return all("SELECT * FROM items WHERE runId = ? ORDER BY rowid", runId).map(toItem);
+    async listRunItems(runId: string): Promise<ItemRow[]> {
+      return (await all("SELECT * FROM items WHERE runId = ? ORDER BY rowid", runId)).map(toItem);
     },
     /** Marks an item answered. False if it was already answered (so two racing answers cannot both count). */
-    markItemAnswered(id: string, at: string): boolean {
-      return Number(run("UPDATE items SET answeredAt = ? WHERE id = ? AND answeredAt IS NULL", at, id).changes) === 1;
+    markItemAnswered(id: string, at: string): Promise<boolean> {
+      return changed("UPDATE items SET answeredAt = ? WHERE id = ? AND answeredAt IS NULL", at, id);
     },
 
     // ----- attempts -----
-    insertAttempt(a: AttemptRow): boolean {
+    insertAttempt(a: AttemptRow): Promise<boolean> {
       return tryInsert(
         "INSERT INTO attempts (id, studentId, itemId, answer, correct, mistakeId, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)",
         a.id, a.studentId, a.itemId, a.answer, a.correct ? 1 : 0, a.mistakeId, a.createdAt,
       );
     },
-    listAttemptsForItem(itemId: string): AttemptRow[] {
-      return all("SELECT * FROM attempts WHERE itemId = ? ORDER BY createdAt, rowid", itemId).map(toAttempt);
+    async listAttemptsForItem(itemId: string): Promise<AttemptRow[]> {
+      return (await all("SELECT * FROM attempts WHERE itemId = ? ORDER BY createdAt, rowid", itemId)).map(toAttempt);
     },
     /** Wrong answers (with a mistake id or "unknown") by students of one class since a time. */
-    listClassMistakesSince(classId: string, since: string): MistakeHitRow[] {
-      return all(
-        `SELECT a.studentId, s.code, i.skillId, a.mistakeId, a.createdAt
-         FROM attempts a JOIN students s ON s.id = a.studentId JOIN items i ON i.id = a.itemId
-         WHERE s.classId = ? AND a.correct = 0 AND a.mistakeId IS NOT NULL AND a.createdAt >= ?
-         ORDER BY a.createdAt, a.rowid`,
-        classId, since,
-      ) as MistakeHitRow[];
+    async listClassMistakesSince(classId: string, since: string): Promise<MistakeHitRow[]> {
+      return (
+        await all(
+          `SELECT a.studentId, s.code, i.skillId, a.mistakeId, a.createdAt
+           FROM attempts a JOIN students s ON s.id = a.studentId JOIN items i ON i.id = a.itemId
+           WHERE s.classId = ? AND a.correct = 0 AND a.mistakeId IS NOT NULL AND a.createdAt >= ?
+           ORDER BY a.createdAt, a.rowid`,
+          classId, since,
+        )
+      ).map((r) => ({
+        studentId: r.studentId as string,
+        code: r.code as string,
+        skillId: r.skillId as string,
+        mistakeId: r.mistakeId as string,
+        createdAt: r.createdAt as string,
+      }));
     },
 
     // ----- teach traces -----
     /** False if this try number was already used for the item. */
-    insertTeachTrace(t: TeachTraceRow): boolean {
+    insertTeachTrace(t: TeachTraceRow): Promise<boolean> {
       return tryInsert(
         `INSERT INTO teachTraces (id, studentId, itemId, mistakeId, tryNumber, tappedLine, typedLine, lineCorrect, fixAccepted, createdAt)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -400,31 +459,31 @@ export function openStore(file: string = DEFAULT_DB_FILE) {
         t.lineCorrect ? 1 : 0, t.fixAccepted ? 1 : 0, t.createdAt,
       );
     },
-    listTeachTraces(itemId: string): TeachTraceRow[] {
-      return all("SELECT * FROM teachTraces WHERE itemId = ? ORDER BY tryNumber", itemId).map(toTrace);
+    async listTeachTraces(itemId: string): Promise<TeachTraceRow[]> {
+      return (await all("SELECT * FROM teachTraces WHERE itemId = ? ORDER BY tryNumber", itemId)).map(toTrace);
     },
 
     // ----- proof runs -----
     /** False if the student already has an unfinished run for this skill. */
-    insertProofRun(r: Omit<ProofRunRow, "passed" | "finishedAt">): boolean {
+    insertProofRun(r: Omit<ProofRunRow, "passed" | "finishedAt">): Promise<boolean> {
       return tryInsert(
         "INSERT INTO proofRuns (id, studentId, skillId, version, itemIds, aiOff, startedAt) VALUES (?, ?, ?, ?, ?, ?, ?)",
         r.id, r.studentId, r.skillId, r.version, JSON.stringify(r.itemIds), r.aiOff ? 1 : 0, r.startedAt,
       );
     },
-    setProofRunItems(id: string, itemIds: string[]) {
-      run("UPDATE proofRuns SET itemIds = ? WHERE id = ? AND finishedAt IS NULL", JSON.stringify(itemIds), id);
+    async setProofRunItems(id: string, itemIds: string[]) {
+      await write("UPDATE proofRuns SET itemIds = ? WHERE id = ? AND finishedAt IS NULL", JSON.stringify(itemIds), id);
     },
-    getProofRun(id: string): ProofRunRow | undefined {
-      const r = one("SELECT * FROM proofRuns WHERE id = ?", id);
+    async getProofRun(id: string): Promise<ProofRunRow | undefined> {
+      const r = await one("SELECT * FROM proofRuns WHERE id = ?", id);
       return r && toRun(r);
     },
-    getOpenProofRun(studentId: string, skillId: string): ProofRunRow | undefined {
-      const r = one("SELECT * FROM proofRuns WHERE studentId = ? AND skillId = ? AND finishedAt IS NULL", studentId, skillId);
+    async getOpenProofRun(studentId: string, skillId: string): Promise<ProofRunRow | undefined> {
+      const r = await one("SELECT * FROM proofRuns WHERE studentId = ? AND skillId = ? AND finishedAt IS NULL", studentId, skillId);
       return r && toRun(r);
     },
-    getLastFinishedProofRun(studentId: string, skillId: string): ProofRunRow | undefined {
-      const r = one(
+    async getLastFinishedProofRun(studentId: string, skillId: string): Promise<ProofRunRow | undefined> {
+      const r = await one(
         `SELECT * FROM proofRuns WHERE studentId = ? AND skillId = ? AND finishedAt IS NOT NULL
          ORDER BY finishedAt DESC, rowid DESC LIMIT 1`,
         studentId, skillId,
@@ -432,19 +491,26 @@ export function openStore(file: string = DEFAULT_DB_FILE) {
       return r && toRun(r);
     },
     /** False if the run was already finished. */
-    finishProofRun(id: string, passed: boolean, at: string): boolean {
-      return (
-        Number(run("UPDATE proofRuns SET passed = ?, finishedAt = ? WHERE id = ? AND finishedAt IS NULL", passed ? 1 : 0, at, id)
-          .changes) === 1
-      );
+    finishProofRun(id: string, passed: boolean, at: string): Promise<boolean> {
+      return changed("UPDATE proofRuns SET passed = ?, finishedAt = ? WHERE id = ? AND finishedAt IS NULL", passed ? 1 : 0, at, id);
     },
 
     // ----- mastery (ONLY src/server/mastery.ts may call writeMastery) -----
-    getMastery(studentId: string, skillId: string): MasteryRow | undefined {
-      return one("SELECT * FROM mastery WHERE studentId = ? AND skillId = ?", studentId, skillId) as MasteryRow | undefined;
+    async getMastery(studentId: string, skillId: string): Promise<MasteryRow | undefined> {
+      const r = await one("SELECT * FROM mastery WHERE studentId = ? AND skillId = ?", studentId, skillId);
+      return (
+        r && {
+          studentId: r.studentId as string,
+          skillId: r.skillId as string,
+          state: r.state as MasteryState,
+          evidenceJson: r.evidenceJson as string,
+          version: r.version as string,
+          updatedAt: r.updatedAt as string,
+        }
+      );
     },
-    writeMastery(m: MasteryRow) {
-      run(
+    async writeMastery(m: MasteryRow) {
+      await write(
         `INSERT INTO mastery (studentId, skillId, state, evidenceJson, version, updatedAt) VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT (studentId, skillId) DO UPDATE SET
            state = excluded.state, evidenceJson = excluded.evidenceJson, version = excluded.version, updatedAt = excluded.updatedAt`,
@@ -453,15 +519,15 @@ export function openStore(file: string = DEFAULT_DB_FILE) {
     },
 
     // ----- unknown errors (input for the Misconception Miner) -----
-    recordUnknownError(skillId: string, paramsJson: string, wrongAnswer: string) {
-      run(
+    async recordUnknownError(skillId: string, paramsJson: string, wrongAnswer: string) {
+      await write(
         `INSERT INTO unknownErrors (skillId, paramsJson, wrongAnswer, count) VALUES (?, ?, ?, 1)
          ON CONFLICT (skillId, paramsJson, wrongAnswer) DO UPDATE SET count = count + 1`,
         skillId, paramsJson, wrongAnswer,
       );
     },
-    listUnknownErrors(skillId: string): UnknownErrorRow[] {
-      return all("SELECT * FROM unknownErrors WHERE skillId = ? ORDER BY count DESC, id", skillId).map((r) => ({
+    async listUnknownErrors(skillId: string): Promise<UnknownErrorRow[]> {
+      return (await all("SELECT * FROM unknownErrors WHERE skillId = ? ORDER BY count DESC, id", skillId)).map((r) => ({
         id: Number(r.id),
         skillId: r.skillId as string,
         paramsJson: r.paramsJson as string,
@@ -471,26 +537,37 @@ export function openStore(file: string = DEFAULT_DB_FILE) {
     },
 
     // ----- mined mistakes (drafts from the Misconception Miner, decided by a teacher) -----
-    insertMinedMistake(m: MinedMistakeRow) {
-      run(
+    async insertMinedMistake(m: MinedMistakeRow) {
+      await write(
         "INSERT INTO minedMistakes (id, skillId, source, testsJson, status, approver, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)",
         m.id, m.skillId, m.source, m.testsJson, m.status, m.approver, m.createdAt,
       );
     },
-    listMinedMistakes(status: MinedMistakeRow["status"]): MinedMistakeRow[] {
-      return all("SELECT * FROM minedMistakes WHERE status = ? ORDER BY createdAt, id", status) as MinedMistakeRow[];
+    async listMinedMistakes(status: MinedMistakeRow["status"]): Promise<MinedMistakeRow[]> {
+      return (await all("SELECT * FROM minedMistakes WHERE status = ? ORDER BY createdAt, id", status)).map((r) => ({
+        id: r.id as string,
+        skillId: r.skillId as string,
+        source: r.source as string,
+        testsJson: r.testsJson as string,
+        status: r.status as MinedMistakeRow["status"],
+        approver: (r.approver as string | null) ?? null,
+        createdAt: r.createdAt as string,
+      }));
     },
     /** Approve or reject a draft. False if it was not a draft any more. */
-    decideMinedMistake(id: string, status: "approved" | "rejected", approver: string): boolean {
-      return Number(run("UPDATE minedMistakes SET status = ?, approver = ? WHERE id = ? AND status = 'draft'", status, approver, id).changes) === 1;
+    decideMinedMistake(id: string, status: "approved" | "rejected", approver: string): Promise<boolean> {
+      return changed("UPDATE minedMistakes SET status = ?, approver = ? WHERE id = ? AND status = 'draft'", status, approver, id);
     },
 
     // ----- events (pilot metrics) -----
-    logEvent(studentId: string | null, type: string, payload: unknown, at: string) {
-      run("INSERT INTO events (studentId, type, payloadJson, createdAt) VALUES (?, ?, ?, ?)", studentId, type, JSON.stringify(payload ?? {}), at);
+    async logEvent(studentId: string | null, type: string, payload: unknown, at: string) {
+      await write(
+        "INSERT INTO events (studentId, type, payloadJson, createdAt) VALUES (?, ?, ?, ?)",
+        studentId, type, JSON.stringify(payload ?? {}), at,
+      );
     },
-    listEvents(): EventRow[] {
-      return all("SELECT * FROM events ORDER BY id").map((r) => ({
+    async listEvents(): Promise<EventRow[]> {
+      return (await all("SELECT * FROM events ORDER BY id")).map((r) => ({
         id: Number(r.id),
         studentId: (r.studentId as string | null) ?? null,
         type: r.type as string,
@@ -500,7 +577,7 @@ export function openStore(file: string = DEFAULT_DB_FILE) {
     },
 
     // ----- pilot export: counts only -----
-    exportCounts(classId: string): ExportCounts[] {
+    async exportCounts(classId: string): Promise<ExportCounts[]> {
       const bySkill = new Map<string, ExportCounts>();
       const get = (skillId: string) => {
         let c = bySkill.get(skillId);
@@ -521,25 +598,25 @@ export function openStore(file: string = DEFAULT_DB_FILE) {
         }
         return c;
       };
-      for (const r of all(
+      for (const r of await all(
         `SELECT i.skillId, COUNT(*) AS n, SUM(a.correct) AS ok, SUM(a.mistakeId = 'unknown') AS unk
          FROM attempts a JOIN items i ON i.id = a.itemId JOIN students s ON s.id = a.studentId
          WHERE s.classId = ? AND i.kind = 'practice' GROUP BY i.skillId`,
         classId,
       )) Object.assign(get(r.skillId as string), { practiceAnswers: Number(r.n), practiceCorrect: Number(r.ok), unknownWrongAnswers: Number(r.unk) });
-      for (const r of all(
+      for (const r of await all(
         `SELECT i.skillId, COUNT(*) AS n, SUM(t.lineCorrect AND t.fixAccepted) AS ok
          FROM teachTraces t JOIN items i ON i.id = t.itemId JOIN students s ON s.id = t.studentId
          WHERE s.classId = ? GROUP BY i.skillId`,
         classId,
       )) Object.assign(get(r.skillId as string), { teachTries: Number(r.n), teachFixes: Number(r.ok) });
-      for (const r of all(
+      for (const r of await all(
         `SELECT p.skillId, COUNT(*) AS n, SUM(p.passed) AS ok
          FROM proofRuns p JOIN students s ON s.id = p.studentId
          WHERE s.classId = ? AND p.finishedAt IS NOT NULL GROUP BY p.skillId`,
         classId,
       )) Object.assign(get(r.skillId as string), { proofRuns: Number(r.n), proofsPassed: Number(r.ok) });
-      for (const r of all(
+      for (const r of await all(
         `SELECT m.skillId, SUM(m.state IN ('KEY1', 'NOT_YET', 'MASTERED')) AS k, SUM(m.state = 'MASTERED') AS mm
          FROM mastery m JOIN students s ON s.id = m.studentId WHERE s.classId = ? GROUP BY m.skillId`,
         classId,
@@ -548,13 +625,15 @@ export function openStore(file: string = DEFAULT_DB_FILE) {
     },
 
     /** Every column of every table (used by the privacy test). */
-    listColumns(): { table: string; column: string }[] {
-      const tables = all("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'");
-      return tables.flatMap((t) =>
-        all(`PRAGMA table_info(${t.name as string})`).map((c) => ({ table: t.name as string, column: c.name as string })),
-      );
+    async listColumns(): Promise<{ table: string; column: string }[]> {
+      const tables = await all("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'");
+      const out: { table: string; column: string }[] = [];
+      for (const t of tables) {
+        for (const c of await all(`PRAGMA table_info(${t.name as string})`)) out.push({ table: t.name as string, column: c.name as string });
+      }
+      return out;
     },
   };
 }
 
-export type Store = ReturnType<typeof openStore>;
+export type Store = Awaited<ReturnType<typeof openStore>>;

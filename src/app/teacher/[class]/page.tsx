@@ -28,8 +28,8 @@ export default function ClassBoardPage({ params }: PageProps<"/teacher/[class]">
 async function ClassBoard({ params }: { params: Promise<{ class: string }> }) {
   const classCode = decodeURIComponent((await params).class).toUpperCase();
   await connection();
-  const svc = getServices();
-  if (!svc.getClassByCode(classCode)) notFound();
+  const svc = await getServices();
+  if (!(await svc.getClassByCode(classCode))) notFound();
   const cls = await teacherClass(classCode);
   if (!cls) {
     return (
@@ -40,10 +40,10 @@ async function ClassBoard({ params }: { params: Promise<{ class: string }> }) {
     );
   }
 
-  const stuck = svc.getStuckBoard(cls.id);
-  const progress = svc.getClassProgress(cls.id);
-  const mined = svc.listPendingMinedMistakes();
-  const codes = svc.listStudentCodes(cls.id);
+  const stuck = await svc.getStuckBoard(cls.id);
+  const progress = await svc.getClassProgress(cls.id);
+  const mined = await svc.listPendingMinedMistakes();
+  const codes = await svc.listStudentCodes(cls.id);
   const base = `/teacher/${encodeURIComponent(cls.code)}`;
 
   return (
@@ -156,7 +156,7 @@ async function ClassBoard({ params }: { params: Promise<{ class: string }> }) {
   );
 }
 
-type Group = ReturnType<ReturnType<typeof getServices>["getStuckBoard"]>[number];
+type Group = Awaited<ReturnType<Awaited<ReturnType<typeof getServices>>["getStuckBoard"]>>[number];
 
 function StuckGroup({ group }: { group: Group }) {
   const entry = getSkillEntry(group.skillId);

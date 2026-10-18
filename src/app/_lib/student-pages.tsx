@@ -13,7 +13,7 @@ export async function studentSkill(rawSkill: string) {
   if (!student) redirect("/s");
   const skillId = decodeURIComponent(rawSkill);
   if (!getSkillEntry(skillId)) notFound();
-  const state = getServices().getState(student.studentId, skillId);
+  const state = await (await getServices()).getState(student.studentId, skillId);
   return { student, skillId, state, aiChat: canShowAiChat(student, aiFlagsFromEnv()) };
 }
 

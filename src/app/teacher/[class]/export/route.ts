@@ -7,7 +7,7 @@ export async function GET(_request: Request, { params }: RouteContext<"/teacher/
   const classCode = decodeURIComponent((await params).class).toUpperCase();
   const cls = await teacherClass(classCode);
   if (!cls) return new Response("Enter the class PIN first.", { status: 403 });
-  const csv = getServices().exportPilotCsv(cls.id);
+  const csv = await (await getServices()).exportPilotCsv(cls.id);
   return new Response(csv, {
     headers: {
       "Content-Type": "text/csv; charset=utf-8",

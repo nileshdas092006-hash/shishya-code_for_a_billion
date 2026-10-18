@@ -4,7 +4,7 @@ Shishya finds the exact algebra step each child gets wrong, lets them fix it by 
 
 ## Run it
 
-Needs Node.js 20 or newer.
+Needs Node.js 22.18 or newer (24 recommended).
 
 ```bash
 npm install
@@ -19,7 +19,31 @@ npm run seed:demo   # creates a demo class (PIN 123456), 5 demo students and som
 npm run dev:demo    # runs the app on the demo data
 ```
 
-Pilot data lives in `data/shishya.db` (not in git). Set `SESSION_SECRET` (32+ characters) in production.
+On a laptop, pilot data lives in `data/shishya.db` (not in git). Settings are listed in [.env.example](.env.example);
+copy it to `.env.local` to change them (`.env.local` is never committed).
+
+## Deploy to Vercel
+
+Vercel does not keep files between requests, so in the cloud the data lives in a free hosted
+[Turso](https://turso.tech) database (libSQL, the same SQL as the local file).
+
+1. **Create the database.** Sign up at turso.tech (free plan) and create a database, for example `shishya`
+   (in the dashboard, or with the Turso CLI: `turso db create shishya`).
+2. **Copy its URL and a token.** The URL looks like `libsql://shishya-<your-org>.turso.io`
+   (`turso db show shishya --url`). Create an auth token (`turso db tokens create shishya`).
+   Treat the token like a password: never paste it into code, chat or git.
+3. **Make a session secret.** `node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))"`
+4. **Import the project in Vercel.** Push this repository to GitHub, then in Vercel choose *Add New → Project*,
+   pick the repository, and keep the detected Next.js settings.
+5. **Set the environment variables** (Vercel → Project → Settings → Environment Variables):
+   - `DATABASE_URL` = the Turso URL
+   - `DATABASE_AUTH_TOKEN` = the Turso token
+   - `SESSION_SECRET` = the secret from step 3
+   - `PROOF_COOLDOWN_HOURS` = `24`
+6. **Deploy.** The tables are created automatically on the first request. Open the Vercel link, go to
+   `/teacher` and create the real class there (the demo seed is only for laptops).
+
+If a token is ever exposed, revoke it in Turso, create a new one and update `DATABASE_AUTH_TOKEN` in Vercel.
 
 ## Licence
 

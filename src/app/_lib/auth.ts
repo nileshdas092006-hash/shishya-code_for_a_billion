@@ -25,7 +25,7 @@ export async function currentStudent() {
   const token = (await cookies()).get(STUDENT_COOKIE)?.value;
   const session = verifySession(token, getSessionSecret());
   if (!session || session.kind !== "student") return null;
-  return getServices().getStudentContext(session.studentId) ?? null;
+  return (await (await getServices()).getStudentContext(session.studentId)) ?? null;
 }
 
 export async function startStudentSession(studentId: string) {
@@ -52,7 +52,7 @@ export async function teacherClassIds(): Promise<string[]> {
 /** The class (by code) if this browser has its PIN, else null. */
 export async function teacherClass(classCode: string) {
   const allowed = await teacherClassIds();
-  const cls = getServices().getClassByCode(classCode);
+  const cls = await (await getServices()).getClassByCode(classCode);
   return cls && allowed.includes(cls.id) ? cls : null;
 }
 

@@ -22,7 +22,7 @@ export default function ProjectorPage({ params }: PageProps<"/teacher/[class]/pr
 async function Projector({ params }: { params: Promise<{ class: string }> }) {
   const classCode = decodeURIComponent((await params).class).toUpperCase();
   await connection();
-  if (!getServices().getClassByCode(classCode)) notFound();
+  if (!(await (await getServices()).getClassByCode(classCode))) notFound();
   const cls = await teacherClass(classCode);
   if (!cls) {
     return (

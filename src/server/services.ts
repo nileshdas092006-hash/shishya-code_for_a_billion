@@ -12,6 +12,7 @@ import type { ClassRow, ItemFormat, ItemKind, ItemRow, ProofRunRow, Store, Stude
 
 // Session services: what the student and teacher screens call. Correct answers and mistake answers come only
 // from src/core; mastery changes only through src/server/mastery.ts. Every action logs an event row.
+// Every function is async because the store is (libSQL: a local file or a cloud database).
 
 export type ServiceOptions = {
   registry?: Registry;
@@ -78,6 +79,8 @@ const normaliseCode = (code: string) =>
     .replace(/\s+/g, "");
 const MASTERY_STATES = ["LOCKED", "OPEN", "KEY1", "NOT_YET", "MASTERED"] as const;
 
+type ProofItemView = { itemId: string; format: ItemFormat; text: string; textHi?: string };
+
 export function createServices(store: Store, opts: ServiceOptions = {}) {
   const registry = opts.registry ?? defaultRegistry;
   const now = opts.now ?? (() => new Date());
@@ -87,27 +90,33 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
   const iso = () => now().toISOString();
   const log = (studentId: string | null, type: string, payload: unknown) => store.logEvent(studentId, type, payload, iso());
 
-  function requireStudent(studentId: string): StudentRow {
-    const s = store.getStudent(studentId);
+  async function requireStudent(studentId: string): Promise<StudentRow> {
+    const s = await store.getStudent(studentId);
     if (!s) throw new Error(`Unknown student: ${studentId}`);
     return s;
   }
 
-  function requireItem(itemId: string, kind: ItemKind): ItemRow {
-    const item = store.getItem(itemId);
+  async function requireItem(itemId: string, kind: ItemKind): Promise<ItemRow> {
+    const item = await store.getItem(itemId);
     if (!item || item.kind !== kind) throw new Error(`Unknown ${kind} item: ${itemId}`);
     return item;
   }
 
+  async function requireClass(classId: string): Promise<ClassRow> {
+    const cls = await store.getClass(classId);
+    if (!cls) throw new Error(`Unknown class: ${classId}`);
+    return cls;
+  }
+
   /** Stores a question this child has never seen (and, for proofs, one no child has had). Null if none found. */
-  function serveFresh(
+  async function serveFresh(
     studentId: string,
     entry: SkillEntry,
     kind: ItemKind,
     format: ItemFormat,
     extra: { runId?: string; mistakeId?: string } = {},
-  ): { item: ItemRow; instance: Instance; apply: ApplyItem | null } | null {
-    const seen = new Set(store.listItems({ studentId, skillId: entry.spec.id }).map((i) => i.paramsJson));
+  ): Promise<{ item: ItemRow; instance: Instance; apply: ApplyItem | null } | null> {
+    const seen = new Set((await store.listItems({ studentId, skillId: entry.spec.id })).map((i) => i.paramsJson));
     for (let i = 0; i < FRESH_TRIES; i++) {
       const seed = newSeed();
       const apply = format === "apply" ? entry.generateApply(createRng(seed)) : null;
@@ -129,7 +138,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         servedAt: iso(),
         answeredAt: null,
       };
-      if (store.insertItem(item)) return { item, instance, apply };
+      if (await store.insertItem(item)) return { item, instance, apply };
     }
     return null;
   }
@@ -144,11 +153,11 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
   }
 
   /** Closes a proof run, then lets the mastery engine decide. */
-  function finishRun(run: ProofRunRow, entry: SkillEntry) {
-    const verdict = mastery.verifyProofRun(store, entry, run);
-    if (!store.finishProofRun(run.id, verdict.passed, iso())) return null;
-    log(run.studentId, "proof_finished", { skillId: run.skillId, runId: run.id, passed: verdict.passed });
-    const state = mastery.recordProof(store, run.studentId, entry, run.id, now());
+  async function finishRun(run: ProofRunRow, entry: SkillEntry) {
+    const verdict = await mastery.verifyProofRun(store, entry, run);
+    if (!(await store.finishProofRun(run.id, verdict.passed, iso()))) return null;
+    await log(run.studentId, "proof_finished", { skillId: run.skillId, runId: run.id, passed: verdict.passed });
+    const state = await mastery.recordProof(store, run.studentId, entry, run.id, now());
     return { passed: verdict.passed, state };
   }
 
@@ -156,75 +165,77 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
   const pinFailures = new Map<string, number[]>();
 
   /** After a skill is MASTERED, open the skills that needed it. Returns the newly opened skill ids. */
-  function unlockAfter(studentId: string, skillId: string): string[] {
-    return Object.values(registry)
-      .filter((e) => e.spec.prerequisites.includes(skillId))
-      .filter((e) => {
-        const before = mastery.getState(store, studentId, e);
-        return before === "LOCKED" && mastery.refreshUnlock(store, studentId, e, now()) !== "LOCKED";
-      })
-      .map((e) => e.spec.id);
+  async function unlockAfter(studentId: string, skillId: string): Promise<string[]> {
+    const opened: string[] = [];
+    for (const e of Object.values(registry)) {
+      if (!e.spec.prerequisites.includes(skillId)) continue;
+      if ((await mastery.getState(store, studentId, e)) !== "LOCKED") continue;
+      if ((await mastery.refreshUnlock(store, studentId, e, now())) !== "LOCKED") opened.push(e.spec.id);
+    }
+    return opened;
   }
 
   const deadlineOf = (run: ProofRunRow) => Date.parse(run.startedAt) + mastery.PROOF_TIME_LIMIT_MINUTES * 60_000;
 
   return {
     // ----- set-up (pseudonymous codes only) -----
-    createClass(code: string, grade: number): ClassRow {
+    async createClass(code: string, grade: number): Promise<ClassRow> {
       if (!CLASS_CODE.test(code)) throw new Error("Class codes look like KV8B.");
       if (!Number.isInteger(grade) || grade < 1 || grade > 12) throw new Error("Grade must be 1 to 12.");
       const row: ClassRow = { id: randomUUID(), code, grade, section: "", aiAllowed: grade >= 8 };
-      if (!store.insertClass(row)) throw new Error(`Class code ${code} is already taken.`);
-      log(null, "class_created", { classId: row.id, grade, aiAllowed: row.aiAllowed });
+      if (!(await store.insertClass(row))) throw new Error(`Class code ${code} is already taken.`);
+      await log(null, "class_created", { classId: row.id, grade, aiAllowed: row.aiAllowed });
       return row;
     },
 
-    createStudent(classId: string, code: string): StudentRow {
+    async createStudent(classId: string, code: string): Promise<StudentRow> {
       if (!STUDENT_CODE.test(code)) throw new Error("Student codes look like 8B-17. Never use names.");
-      if (!store.getClass(classId)) throw new Error(`Unknown class: ${classId}`);
+      await requireClass(classId);
       const row: StudentRow = { id: randomUUID(), classId, code };
-      store.insertStudent(row);
-      log(row.id, "student_created", { classId });
+      await store.insertStudent(row);
+      await log(row.id, "student_created", { classId });
       return row;
     },
 
-    teacherUnlock(studentId: string, skillId: string) {
-      requireStudent(studentId);
-      const state = mastery.teacherUnlock(store, studentId, getEntry(registry, skillId), now());
-      log(studentId, "teacher_unlock", { skillId });
+    async teacherUnlock(studentId: string, skillId: string) {
+      await requireStudent(studentId);
+      const state = await mastery.teacherUnlock(store, studentId, getEntry(registry, skillId), now());
+      await log(studentId, "teacher_unlock", { skillId });
       return state;
     },
 
-    getState(studentId: string, skillId: string) {
-      requireStudent(studentId);
+    async getState(studentId: string, skillId: string) {
+      await requireStudent(studentId);
       return mastery.refreshUnlock(store, studentId, getEntry(registry, skillId), now());
     },
 
     // ----- practise -----
-    servePracticeItem(studentId: string, skillId: string): { ok: true; itemId: string; text: string } | Fail {
-      requireStudent(studentId);
+    async servePracticeItem(studentId: string, skillId: string): Promise<{ ok: true; itemId: string; text: string } | Fail> {
+      await requireStudent(studentId);
       const entry = getEntry(registry, skillId);
-      if (mastery.refreshUnlock(store, studentId, entry, now()) === "LOCKED") return fail("This skill is locked. Ask your teacher.", "locked");
-      const served = serveFresh(studentId, entry, "practice", "solve");
+      if ((await mastery.refreshUnlock(store, studentId, entry, now())) === "LOCKED") {
+        return fail("This skill is locked. Ask your teacher.", "locked");
+      }
+      const served = await serveFresh(studentId, entry, "practice", "solve");
       if (!served) return fail("Could not find a new question. Try again.", "no_fresh");
-      log(studentId, "practice_served", { skillId, itemId: served.item.id });
+      await log(studentId, "practice_served", { skillId, itemId: served.item.id });
       return { ok: true, itemId: served.item.id, text: served.instance.text };
     },
 
-    submitPracticeAnswer(
+    async submitPracticeAnswer(
       itemId: string,
       answerText: string,
-    ): { ok: true; correct: boolean; mistakeId: string | null; feedback: string } | Fail {
-      const item = requireItem(itemId, "practice");
+    ): Promise<{ ok: true; correct: boolean; mistakeId: string | null; feedback: string } | Fail> {
+      const item = await requireItem(itemId, "practice");
       const entry = getEntry(registry, item.skillId);
       const typed = parseAnswer(answerText);
       if (!typed.ok) return fail(typed.error, "bad_answer", { errorKey: typed.errorKey });
-      return store.transaction(() => {
-        if (!store.markItemAnswered(item.id, iso())) return fail("This question was already answered.", "already_answered");
+      return store.transaction(async () => {
+        if (!(await store.markItemAnswered(item.id, iso()))) return fail("This question was already answered.", "already_answered");
         const instance = instanceFor(entry, item);
         const correct = equals(typed.value, instance.answer);
         const mistakeId = correct ? null : diagnose(entry.spec, instance, typed.value);
-        store.insertAttempt({
+        await store.insertAttempt({
           id: randomUUID(),
           studentId: item.studentId,
           itemId: item.id,
@@ -233,8 +244,8 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
           mistakeId,
           createdAt: iso(),
         });
-        if (mistakeId === "unknown") store.recordUnknownError(item.skillId, item.paramsJson, toString(typed.value));
-        log(item.studentId, "practice_answered", { skillId: item.skillId, itemId: item.id, correct, mistakeId });
+        if (mistakeId === "unknown") await store.recordUnknownError(item.skillId, item.paramsJson, toString(typed.value));
+        await log(item.studentId, "practice_answered", { skillId: item.skillId, itemId: item.id, correct, mistakeId });
         const feedback = correct
           ? "Correct! Both sides are equal for your answer."
           : (entry.spec.mistakes.find((m) => m.id === mistakeId)?.childLabel ?? entry.spec.hintLadder[0]);
@@ -243,13 +254,15 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     },
 
     // ----- teach the Shishya -----
-    startTeach(
+    async startTeach(
       studentId: string,
       skillId: string,
-    ): { ok: true; sessionId: string; traces: { itemId: string; question: string; lines: string[] }[] } | Fail {
-      requireStudent(studentId);
+    ): Promise<{ ok: true; sessionId: string; traces: { itemId: string; question: string; lines: string[] }[] } | Fail> {
+      await requireStudent(studentId);
       const entry = getEntry(registry, skillId);
-      if (mastery.refreshUnlock(store, studentId, entry, now()) === "LOCKED") return fail("This skill is locked. Ask your teacher.", "locked");
+      if ((await mastery.refreshUnlock(store, studentId, entry, now())) === "LOCKED") {
+        return fail("This skill is locked. Ask your teacher.", "locked");
+      }
       const { traces, distinctMistakesMin } = entry.spec.teachRule;
       const mistakes = shuffled(entry.spec.mistakes);
       if (new Set(mistakes.slice(0, traces).map((m) => m.id)).size < distinctMistakesMin) {
@@ -257,20 +270,22 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       }
       const sessionId = randomUUID();
       try {
-        const out = store.transaction(() =>
-          Array.from({ length: traces }, (_, i) => {
+        const out = await store.transaction(async () => {
+          const list = [];
+          for (let i = 0; i < traces; i++) {
             const mistake = mistakes[i % mistakes.length];
-            const served = serveFresh(studentId, entry, "teach", "solve", { runId: sessionId, mistakeId: mistake.id });
+            const served = await serveFresh(studentId, entry, "teach", "solve", { runId: sessionId, mistakeId: mistake.id });
             if (!served) throw new NoFreshQuestion();
-            return {
+            list.push({
               itemId: served.item.id,
               question: served.instance.text,
               lines: mistake.apply(served.instance).trace.map((l) => l.text),
               mistakeId: mistake.id,
-            };
-          }),
-        );
-        log(studentId, "teach_started", { skillId, sessionId, mistakeIds: out.map((t) => t.mistakeId) });
+            });
+          }
+          return list;
+        });
+        await log(studentId, "teach_started", { skillId, sessionId, mistakeIds: out.map((t) => t.mistakeId) });
         return { ok: true, sessionId, traces: out.map(({ itemId, question, lines }) => ({ itemId, question, lines })) };
       } catch (e) {
         if (e instanceof NoFreshQuestion) return fail("Could not find new questions. Try again.", "no_fresh");
@@ -278,17 +293,17 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       }
     },
 
-    submitTeachStep(itemId: string, tappedLine: number, typedLine: string) {
-      const item = requireItem(itemId, "teach");
+    async submitTeachStep(itemId: string, tappedLine: number, typedLine: string) {
+      const item = await requireItem(itemId, "teach");
       const entry = getEntry(registry, item.skillId);
       const { triesMax } = entry.spec.teachRule;
-      return store.transaction(() => {
-        const tries = store.listTeachTraces(item.id);
+      return store.transaction(async () => {
+        const tries = await store.listTeachTraces(item.id);
         if (tries.some((t) => t.lineCorrect && t.fixAccepted)) return fail("You already fixed this one.", "already_fixed");
         if (tries.length >= triesMax) return fail("No tries left for this one.", "no_tries");
         const result = checkTeachStep(instanceFor(entry, item), item.mistakeId!, tappedLine, typedLine);
         const tryNumber = tries.length + 1;
-        const saved = store.insertTeachTrace({
+        const saved = await store.insertTeachTrace({
           id: randomUUID(),
           studentId: item.studentId,
           itemId: item.id,
@@ -301,55 +316,58 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
           createdAt: iso(),
         });
         if (!saved) return fail("That try was already recorded.", "already_answered");
-        log(item.studentId, "teach_step", {
+        await log(item.studentId, "teach_step", {
           skillId: item.skillId,
           itemId: item.id,
           tryNumber,
           lineCorrect: result.lineCorrect,
           fixAccepted: result.fixAccepted,
         });
-        const state = mastery.evaluateTeach(store, item.studentId, entry, now());
+        const state = await mastery.evaluateTeach(store, item.studentId, entry, now());
         return { ok: true as const, ...result, triesLeft: triesMax - tryNumber, state };
       });
     },
 
     // ----- prove it (AI off) -----
-    startProof(studentId: string, skillId: string):
-      | {
-          ok: true;
-          runId: string;
-          aiOff: true;
-          deadline: string;
-          items: { itemId: string; format: ItemFormat; text: string; textHi?: string }[];
-        }
-      | Fail {
-      requireStudent(studentId);
+    async startProof(
+      studentId: string,
+      skillId: string,
+    ): Promise<{ ok: true; runId: string; aiOff: true; deadline: string; items: ProofItemView[] } | Fail> {
+      await requireStudent(studentId);
       const entry = getEntry(registry, skillId);
       try {
-        return store.transaction(() => {
-          mastery.refreshUnlock(store, studentId, entry, now());
-          const open = store.getOpenProofRun(studentId, skillId);
+        return await store.transaction(async () => {
+          await mastery.refreshUnlock(store, studentId, entry, now());
+          const open = await store.getOpenProofRun(studentId, skillId);
           if (open) {
             if (now().getTime() <= deadlineOf(open)) return fail("A proof is already running.", "running");
-            finishRun(open, entry); // abandoned: closed as not passed
+            await finishRun(open, entry); // abandoned: closed as not passed
           }
-          const eligible = mastery.proofEligibility(store, studentId, entry, now(), cooldownHours);
+          const eligible = await mastery.proofEligibility(store, studentId, entry, now(), cooldownHours);
           if (!eligible.ok) return fail(eligible.reason, eligible.code, { retryAt: eligible.retryAt });
 
           const runId = randomUUID();
           const startedAt = iso();
-          if (!store.insertProofRun({ id: runId, studentId, skillId, version: entry.spec.version, itemIds: [], aiOff: true, startedAt })) {
-            return fail("A proof is already running.", "running");
-          }
+          const inserted = await store.insertProofRun({
+            id: runId,
+            studentId,
+            skillId,
+            version: entry.spec.version,
+            itemIds: [],
+            aiOff: true,
+            startedAt,
+          });
+          if (!inserted) return fail("A proof is already running.", "running");
           const { solve, apply } = entry.spec.proofRule;
           const formats: ItemFormat[] = [...Array<ItemFormat>(solve).fill("solve"), ...Array<ItemFormat>(apply).fill("apply")];
-          const served = formats.map((format) => {
-            const s = serveFresh(studentId, entry, "proof", format, { runId });
+          const served = [];
+          for (const format of formats) {
+            const s = await serveFresh(studentId, entry, "proof", format, { runId });
             if (!s) throw new NoFreshQuestion();
-            return s;
-          });
-          store.setProofRunItems(runId, served.map((s) => s.item.id));
-          log(studentId, "proof_started", { skillId, runId, aiOff: true });
+            served.push(s);
+          }
+          await store.setProofRunItems(runId, served.map((s) => s.item.id));
+          await log(studentId, "proof_started", { skillId, runId, aiOff: true });
           return {
             ok: true as const,
             runId,
@@ -369,25 +387,26 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       }
     },
 
-    submitProofAnswer(
+    async submitProofAnswer(
       itemId: string,
       answerText: string,
-    ):
+    ): Promise<
       | { ok: true; finished: false }
       | { ok: true; finished: true; passed: boolean; state: mastery.MasteryState; practise: string[]; unlocked: string[] }
-      | Fail {
-      const item = requireItem(itemId, "proof");
+      | Fail
+    > {
+      const item = await requireItem(itemId, "proof");
       const entry = getEntry(registry, item.skillId);
       const typed = parseAnswer(answerText);
       if (!typed.ok) return fail(typed.error, "bad_answer", { errorKey: typed.errorKey });
-      return store.transaction(() => {
-        const run = item.runId ? store.getProofRun(item.runId) : undefined;
+      return store.transaction(async () => {
+        const run = item.runId ? await store.getProofRun(item.runId) : undefined;
         if (!run || run.finishedAt) return fail("This proof is already finished.", "finished");
-        if (!store.markItemAnswered(item.id, iso())) return fail("This question was already answered.", "already_answered");
+        if (!(await store.markItemAnswered(item.id, iso()))) return fail("This question was already answered.", "already_answered");
         const instance = instanceFor(entry, item);
         const correct = equals(typed.value, instance.answer);
         const mistakeId = correct ? null : diagnose(entry.spec, instance, typed.value);
-        const saved = store.insertAttempt({
+        const saved = await store.insertAttempt({
           id: randomUUID(),
           studentId: item.studentId,
           itemId: item.id,
@@ -397,69 +416,59 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
           createdAt: iso(),
         });
         if (!saved) return fail("This question was already answered.", "already_answered");
-        if (mistakeId === "unknown") store.recordUnknownError(item.skillId, item.paramsJson, toString(typed.value));
-        log(item.studentId, "proof_answered", { skillId: item.skillId, runId: run.id, itemId: item.id, correct });
+        if (mistakeId === "unknown") await store.recordUnknownError(item.skillId, item.paramsJson, toString(typed.value));
+        await log(item.studentId, "proof_answered", { skillId: item.skillId, runId: run.id, itemId: item.id, correct });
 
-        const allAnswered = store.listRunItems(run.id).every((i) => i.answeredAt);
+        const runItems = await store.listRunItems(run.id);
+        const allAnswered = runItems.every((i) => i.answeredAt);
         if (!allAnswered && now().getTime() <= deadlineOf(run)) return { ok: true as const, finished: false as const };
-        const out = finishRun(store.getProofRun(run.id)!, entry);
+        const out = await finishRun((await store.getProofRun(run.id))!, entry);
         if (!out) return fail("This proof is already finished.", "finished");
-        const practise = [
-          ...new Set(
-            store
-              .listRunItems(run.id)
-              .flatMap((i) => store.listAttemptsForItem(i.id))
-              .filter((a) => !a.correct && a.mistakeId)
-              .map((a) => a.mistakeId!),
-          ),
-        ];
-        const unlocked = out.state === "MASTERED" ? unlockAfter(item.studentId, item.skillId) : [];
-        return { ok: true as const, finished: true as const, ...out, practise, unlocked };
+        const wrong: string[] = [];
+        for (const i of runItems) {
+          for (const a of await store.listAttemptsForItem(i.id)) if (!a.correct && a.mistakeId) wrong.push(a.mistakeId);
+        }
+        const unlocked = out.state === "MASTERED" ? await unlockAfter(item.studentId, item.skillId) : [];
+        return { ok: true as const, finished: true as const, ...out, practise: [...new Set(wrong)], unlocked };
       });
     },
 
     /** The open (not expired) proof, so a child who reloads the page can carry on. */
-    resumeProof(
+    async resumeProof(
       studentId: string,
       skillId: string,
-    ):
-      | {
-          ok: true;
-          runId: string;
-          deadline: string;
-          items: { itemId: string; format: ItemFormat; text: string; textHi?: string; answered: boolean }[];
-        }
-      | Fail {
-      requireStudent(studentId);
+    ): Promise<{ ok: true; runId: string; deadline: string; items: (ProofItemView & { answered: boolean })[] } | Fail> {
+      await requireStudent(studentId);
       const entry = getEntry(registry, skillId);
-      const open = store.getOpenProofRun(studentId, skillId);
+      const open = await store.getOpenProofRun(studentId, skillId);
       if (!open || now().getTime() > deadlineOf(open)) return fail("No proof is running.", "none");
-      const items = open.itemIds.map((id) => {
-        const item = store.getItem(id)!;
+      const items = [];
+      for (const id of open.itemIds) {
+        const item = (await store.getItem(id))!;
         const apply = item.format === "apply" ? entry.generateApply(createRng(item.seed)) : null;
-        return {
+        items.push({
           itemId: item.id,
           format: item.format,
           text: apply ? apply.text : instanceFor(entry, item).text,
           ...(apply ? { textHi: apply.textHi } : {}),
           answered: item.answeredAt !== null,
-        };
-      });
+        });
+      }
       return { ok: true, runId: open.id, deadline: new Date(deadlineOf(open)).toISOString(), items };
     },
 
     /** Can this child start a proof now? (An abandoned, expired proof is closed first.) */
-    proofStatus(studentId: string, skillId: string): { canStart: true } | { canStart: false; code: FailCode; retryAt?: string } {
-      requireStudent(studentId);
+    async proofStatus(studentId: string, skillId: string): Promise<{ canStart: true } | { canStart: false; code: FailCode; retryAt?: string }> {
+      await requireStudent(studentId);
       const entry = getEntry(registry, skillId);
-      return store.transaction(() => {
-        mastery.refreshUnlock(store, studentId, entry, now());
-        const open = store.getOpenProofRun(studentId, skillId);
+      return store.transaction(async () => {
+        await mastery.refreshUnlock(store, studentId, entry, now());
+        const open = await store.getOpenProofRun(studentId, skillId);
         if (open) {
           if (now().getTime() <= deadlineOf(open)) return { canStart: false as const, code: "running" as const };
-          finishRun(open, entry);
+          await finishRun(open, entry);
         }
-        const eligible = mastery.proofEligibility(store, studentId, entry, now(), cooldownHours);
+        const eligible = await mastery.proofEligibility(store, studentId, entry, now(), cooldownHours);
         if (eligible.ok) return { canStart: true as const };
         return { canStart: false as const, code: eligible.code, ...(eligible.retryAt ? { retryAt: eligible.retryAt } : {}) };
       });
@@ -467,7 +476,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
 
     // ----- classes, codes and logins (pseudonymous only: no names are ever entered) -----
     /** Creates a class with a class code, a 6-digit teacher PIN (shown once) and printable student codes. */
-    createClassroom(input: { grade: number; section: string; studentCount: number; pin?: string }) {
+    async createClassroom(input: { grade: number; section: string; studentCount: number; pin?: string }) {
       const grade = input.grade;
       const section = String(input.section ?? "").trim().toUpperCase();
       const count = input.studentCount;
@@ -478,47 +487,47 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       if (!/^\d{6}$/.test(pin)) throw new Error("The PIN must be 6 digits.");
       const prefix = `${grade}${section}`;
 
-      return store.transaction(() => {
+      return store.transaction(async () => {
         let cls: ClassRow | null = null;
         for (let i = 0; i < 20 && !cls; i++) {
           const suffix = Array.from({ length: 4 }, () => CODE_ALPHABET[randomInt(0, CODE_ALPHABET.length)]).join("");
           const candidate: ClassRow = { id: randomUUID(), code: `${prefix}-${suffix}`, grade, section, aiAllowed: grade >= 8 };
-          if (store.insertClass(candidate, hashPin(pin))) cls = candidate;
+          if (await store.insertClass(candidate, hashPin(pin))) cls = candidate;
         }
         if (!cls) throw new Error("Could not make a class code. Try again.");
         const studentCodes = Array.from({ length: count }, (_, i) => `${prefix}-${String(i + 1).padStart(2, "0")}`);
-        for (const code of studentCodes) store.insertStudent({ id: randomUUID(), classId: cls.id, code });
-        log(null, "class_created", { classId: cls.id, grade, students: count, aiAllowed: cls.aiAllowed });
+        for (const code of studentCodes) await store.insertStudent({ id: randomUUID(), classId: cls.id, code });
+        await log(null, "class_created", { classId: cls.id, grade, students: count, aiAllowed: cls.aiAllowed });
         return { classId: cls.id, classCode: cls.code, pin, studentCodes };
       });
     },
 
-    verifyTeacherPin(classCode: string, pin: string): { ok: true; classId: string } | Fail {
-      const cls = store.getClassByCode(normaliseCode(classCode));
+    async verifyTeacherPin(classCode: string, pin: string): Promise<{ ok: true; classId: string } | Fail> {
+      const cls = await store.getClassByCode(normaliseCode(classCode));
       if (!cls) return fail("Wrong class code or PIN.", "wrong_pin");
       const cutoff = now().getTime() - PIN_LOCKOUT_MINUTES * 60_000;
       const recent = (pinFailures.get(cls.id) ?? []).filter((t) => t > cutoff);
       if (recent.length >= PIN_MAX_FAILURES) {
-        log(null, "teacher_login", { classId: cls.id, ok: false, lockedOut: true });
+        await log(null, "teacher_login", { classId: cls.id, ok: false, lockedOut: true });
         return fail(`Too many wrong PINs. Try again in ${PIN_LOCKOUT_MINUTES} minutes.`, "locked_out");
       }
-      const ok = pinMatches(String(pin ?? "").trim(), store.getClassPinHash(cls.id));
+      const ok = pinMatches(String(pin ?? "").trim(), await store.getClassPinHash(cls.id));
       pinFailures.set(cls.id, ok ? [] : [...recent, now().getTime()]);
-      log(null, "teacher_login", { classId: cls.id, ok });
+      await log(null, "teacher_login", { classId: cls.id, ok });
       return ok ? { ok: true, classId: cls.id } : fail("Wrong class code or PIN.", "wrong_pin");
     },
 
-    studentLogin(classCode: string, studentCode: string): { ok: true; studentId: string } | Fail {
-      const cls = store.getClassByCode(normaliseCode(classCode));
-      const student = cls && store.findStudentByCode(cls.id, normaliseCode(studentCode));
+    async studentLogin(classCode: string, studentCode: string): Promise<{ ok: true; studentId: string } | Fail> {
+      const cls = await store.getClassByCode(normaliseCode(classCode));
+      const student = cls && (await store.findStudentByCode(cls.id, normaliseCode(studentCode)));
       if (!cls || !student) return fail("We could not find these codes.", "wrong_codes");
-      log(student.id, "student_login", { classId: cls.id });
+      await log(student.id, "student_login", { classId: cls.id });
       return { ok: true, studentId: student.id };
     },
 
-    getStudentContext(studentId: string) {
-      const student = store.getStudent(studentId);
-      const cls = student && store.getClass(student.classId);
+    async getStudentContext(studentId: string) {
+      const student = await store.getStudent(studentId);
+      const cls = student && (await store.getClass(student.classId));
       if (!student || !cls) return undefined;
       return {
         studentId: student.id,
@@ -532,87 +541,90 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
 
     getClass: (classId: string) => store.getClass(classId),
     getClassByCode: (classCode: string) => store.getClassByCode(normaliseCode(classCode)),
-    listStudentCodes: (classId: string) => store.listStudents(classId).map((s) => s.code),
-    getItemOwner: (itemId: string) => store.getItem(itemId)?.studentId,
+    listStudentCodes: async (classId: string) => (await store.listStudents(classId)).map((s) => s.code),
+    getItemOwner: async (itemId: string) => (await store.getItem(itemId))?.studentId,
 
     /** Every skill, in teaching order, with this child's state. */
-    getSkillMap(studentId: string) {
-      requireStudent(studentId);
-      return Object.values(registry).map((e) => ({ skillId: e.spec.id, state: mastery.refreshUnlock(store, studentId, e, now()) }));
+    async getSkillMap(studentId: string) {
+      await requireStudent(studentId);
+      const out = [];
+      for (const e of Object.values(registry)) out.push({ skillId: e.spec.id, state: await mastery.refreshUnlock(store, studentId, e, now()) });
+      return out;
     },
 
     /** Opens a skill for every student in the class. Returns how many were newly opened. */
-    teacherUnlockClass(classId: string, skillId: string): number {
-      if (!store.getClass(classId)) throw new Error(`Unknown class: ${classId}`);
+    async teacherUnlockClass(classId: string, skillId: string): Promise<number> {
+      await requireClass(classId);
       const entry = getEntry(registry, skillId);
       let opened = 0;
-      store.transaction(() => {
-        for (const s of store.listStudents(classId)) {
-          if (mastery.getState(store, s.id, entry) !== "LOCKED") continue;
-          if (mastery.teacherUnlock(store, s.id, entry, now()) === "OPEN") opened++;
+      await store.transaction(async () => {
+        for (const s of await store.listStudents(classId)) {
+          if ((await mastery.getState(store, s.id, entry)) !== "LOCKED") continue;
+          if ((await mastery.teacherUnlock(store, s.id, entry, now())) === "OPEN") opened++;
         }
       });
-      log(null, "teacher_unlock_class", { classId, skillId, opened });
+      await log(null, "teacher_unlock_class", { classId, skillId, opened });
       return opened;
     },
 
     /** How many students are in each state, per skill. */
-    getClassProgress(classId: string) {
-      if (!store.getClass(classId)) throw new Error(`Unknown class: ${classId}`);
-      const students = store.listStudents(classId);
-      return Object.values(registry).map((e) => {
+    async getClassProgress(classId: string) {
+      await requireClass(classId);
+      const students = await store.listStudents(classId);
+      const out = [];
+      for (const e of Object.values(registry)) {
         const counts = Object.fromEntries(MASTERY_STATES.map((s) => [s, 0])) as Record<(typeof MASTERY_STATES)[number], number>;
-        for (const s of students) counts[mastery.refreshUnlock(store, s.id, e, now())]++;
-        return { skillId: e.spec.id, counts };
-      });
+        for (const s of students) counts[await mastery.refreshUnlock(store, s.id, e, now())]++;
+        out.push({ skillId: e.spec.id, counts });
+      }
+      return out;
     },
 
     // ----- projector (class mode: no student accounts, never touches mastery) -----
-    projectorTrace(classId: string, skillId: string) {
-      if (!store.getClass(classId)) throw new Error(`Unknown class: ${classId}`);
+    async projectorTrace(classId: string, skillId: string) {
+      await requireClass(classId);
       const { spec } = getEntry(registry, skillId);
       const seed = newSeed();
       const instance = spec.generate(createRng(seed));
       const mistake = spec.mistakes[Math.floor(random() * spec.mistakes.length)];
-      log(null, "projector_trace", { classId, skillId, mistakeId: mistake.id });
+      await log(null, "projector_trace", { classId, skillId, mistakeId: mistake.id });
       return { seed, mistakeId: mistake.id, question: instance.text, lines: mistake.apply(instance).trace.map((l) => l.text) };
     },
 
-    projectorCheck(
+    async projectorCheck(
       classId: string,
       skillId: string,
       seed: number,
       mistakeId: string,
       tappedLine: number,
       typedLine: string,
-    ): TeachResult {
-      if (!store.getClass(classId)) throw new Error(`Unknown class: ${classId}`);
+    ): Promise<TeachResult> {
+      await requireClass(classId);
       const { spec } = getEntry(registry, skillId);
       if (!Number.isInteger(seed) || !spec.mistakes.some((m) => m.id === mistakeId)) throw new Error("Bad projector item");
       const result = checkTeachStep(spec.generate(createRng(seed)), mistakeId, tappedLine, String(typedLine ?? ""));
-      log(null, "projector_step", { classId, skillId, mistakeId, lineCorrect: result.lineCorrect, fixAccepted: result.fixAccepted });
+      await log(null, "projector_step", { classId, skillId, mistakeId, lineCorrect: result.lineCorrect, fixAccepted: result.fixAccepted });
       return result;
     },
 
     // ----- mined mistakes (the Misconception Miner will add drafts; teachers decide) -----
-    listPendingMinedMistakes() {
-      return store.listMinedMistakes("draft").map(({ id, skillId, createdAt }) => ({ id, skillId, createdAt }));
+    async listPendingMinedMistakes() {
+      return (await store.listMinedMistakes("draft")).map(({ id, skillId, createdAt }) => ({ id, skillId, createdAt }));
     },
 
-    decideMinedMistake(classId: string, id: string, decision: "approved" | "rejected"): boolean {
-      const cls = store.getClass(classId);
-      if (!cls) throw new Error(`Unknown class: ${classId}`);
-      const done = store.decideMinedMistake(id, decision, `teacher of class ${cls.code}`);
-      log(null, "mined_mistake_decided", { classId, id, decision, done });
+    async decideMinedMistake(classId: string, id: string, decision: "approved" | "rejected"): Promise<boolean> {
+      const cls = await requireClass(classId);
+      const done = await store.decideMinedMistake(id, decision, `teacher of class ${cls.code}`);
+      await log(null, "mined_mistake_decided", { classId, id, decision, done });
       return done;
     },
 
     // ----- teacher -----
     /** Students grouped by their most frequent mistake in the last 7 days (ties: the most recent one). */
-    getStuckBoard(classId: string) {
-      if (!store.getClass(classId)) throw new Error(`Unknown class: ${classId}`);
+    async getStuckBoard(classId: string) {
+      await requireClass(classId);
       const since = new Date(now().getTime() - STUCK_WINDOW_DAYS * 86_400_000).toISOString();
-      const hits = store.listClassMistakesSince(classId, since);
+      const hits = await store.listClassMistakesSince(classId, since);
 
       const perStudent = new Map<string, { code: string; tally: Map<string, { count: number; last: number }> }>();
       hits.forEach((h, order) => {
@@ -635,7 +647,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         g.studentCodes.push(code);
         groups.set(top, g);
       }
-      log(null, "stuck_board_viewed", { classId });
+      await log(null, "stuck_board_viewed", { classId });
       return [...groups.values()]
         .map((g) => ({ ...g, count: g.studentCodes.length, studentCodes: g.studentCodes.sort() }))
         .sort(
@@ -647,10 +659,9 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     },
 
     /** Anonymous counts only: no student codes, ids or class codes. */
-    exportPilotCsv(classId: string): string {
-      const cls = store.getClass(classId);
-      if (!cls) throw new Error(`Unknown class: ${classId}`);
-      const students = store.countStudents(classId);
+    async exportPilotCsv(classId: string): Promise<string> {
+      const cls = await requireClass(classId);
+      const students = await store.countStudents(classId);
       const header = [
         "grade",
         "skillId",
@@ -666,7 +677,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         "studentsMastered",
         "note",
       ];
-      const rows = store.exportCounts(classId).map((c) =>
+      const rows = (await store.exportCounts(classId)).map((c) =>
         [
           cls.grade,
           c.skillId,
@@ -683,7 +694,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
           students < SMALL_SAMPLE ? "small sample" : "",
         ].join(","),
       );
-      log(null, "pilot_export", { classId, rows: rows.length });
+      await log(null, "pilot_export", { classId, rows: rows.length });
       return [header.join(","), ...rows].join("\n") + "\n";
     },
   };
