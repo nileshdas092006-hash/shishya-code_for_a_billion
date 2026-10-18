@@ -145,11 +145,16 @@ export async function unlockSkillForClass(classCode: string, skillId: string) {
   refresh();
 }
 
-export async function decideMined(classCode: string, id: string, decision: "approved" | "rejected") {
+export async function decideMined(
+  classCode: string,
+  id: string,
+  decision: "approved" | "rejected",
+): Promise<{ ok: true } | { ok: false; reason: string }> {
   const cls = await teacherClass(str(classCode, 20));
-  if (!cls || (decision !== "approved" && decision !== "rejected")) return;
-  await (await getServices()).decideMinedMistake(cls.id, str(id, 64), decision);
-  refresh();
+  if (!cls || (decision !== "approved" && decision !== "rejected")) return { ok: false, reason: "Enter the class PIN first." };
+  const result = await (await getServices()).decideMinedMistake(cls.id, str(id, 64), decision);
+  if (result.ok) refresh();
+  return result;
 }
 
 export async function projectorNew(classCode: string, skillId: string) {

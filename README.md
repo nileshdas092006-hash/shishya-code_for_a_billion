@@ -22,6 +22,20 @@ npm run dev:demo    # runs the app on the demo data
 On a laptop, pilot data lives in `data/shishya.db` (not in git). Settings are listed in [.env.example](.env.example);
 copy it to `.env.local` to change them (`.env.local` is never committed).
 
+## The Misconception Miner (AI agent)
+
+When children give wrong answers that no known mistake explains, the Miner proposes one new mistake as data (never
+code), checks it with code on 1,000 generated questions, and saves a tested draft. A teacher approves or rejects it on
+the class board; only approved mistakes are used, and they never change any child's mastery.
+
+```bash
+npm run miner -- alg.linear.both-sides          # needs GROQ_API_KEY or OPENROUTER_API_KEY in .env.local (free tiers)
+npm run miner -- alg.linear.both-sides --fake   # offline FAKE model, no key
+```
+
+The AI only ever sees anonymous numbers (the question's a, b, c, d and the wrong answer). Each AI call is logged,
+without keys or messages, in `data/agent-runs.jsonl`.
+
 ## Deploy to Vercel
 
 Vercel does not keep files between requests, so in the cloud the data lives in a free hosted

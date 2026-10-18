@@ -4,15 +4,19 @@ import { diagnose } from "../core/diagnose";
 import { equals, toString } from "../core/fraction";
 import { createRng } from "../core/rng";
 import type { ApplyItem } from "../core/skills/linear-both-sides-apply";
+import { validateMinedMistake, type MinedMistakeSpec } from "../core/minedMistake";
 import { checkTeachStep, type TeachResult } from "../core/teach";
 import type { Instance } from "../core/types";
 import * as mastery from "./mastery";
+import { minedMistakes, unknownErrors } from "./miner-ports";
 import { defaultRegistry, getEntry, instanceFor, type Registry, type SkillEntry } from "./skills";
 import type { ClassRow, ItemFormat, ItemKind, ItemRow, ProofRunRow, Store, StudentRow } from "./store";
 
 // Session services: what the student and teacher screens call. Correct answers and mistake answers come only
 // from src/core; mastery changes only through src/server/mastery.ts. Every action logs an event row.
 // Every function is async because the store is (libSQL: a local file or a cloud database).
+// Teacher-approved mined mistakes join each skill's mistake list (diagnosis, Teach, stuck board). They are data
+// checked by src/core; they never decide mastery.
 
 export type ServiceOptions = {
   registry?: Registry;
@@ -177,6 +181,26 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
 
   const deadlineOf = (run: ProofRunRow) => Date.parse(run.startedAt) + mastery.PROOF_TIME_LIMIT_MINUTES * 60_000;
 
+  /** Approved mined mistakes per skill, reloaded at most once a minute (and at once after a teacher decides). */
+  const minedCache = new Map<string, { at: number; entry: SkillEntry }>();
+  const MINED_CACHE_MS = 60_000;
+
+  /** A skill with its authored mistakes plus the teacher-approved mined ones. */
+  async function entryOf(skillId: string): Promise<SkillEntry> {
+    const base = getEntry(registry, skillId);
+    const cached = minedCache.get(skillId);
+    if (cached && Date.now() - cached.at < MINED_CACHE_MS) return cached.entry;
+    const mined = await minedMistakes(store, base.spec, ["APPROVED"]);
+    const entry = mined.length ? { ...base, spec: { ...base.spec, mistakes: [...base.spec.mistakes, ...mined] } } : base;
+    minedCache.set(skillId, { at: Date.now(), entry });
+    return entry;
+  }
+
+  async function labelOf(skillId: string, mistakeId: string): Promise<string | undefined> {
+    if (!registry[skillId]) return undefined;
+    return (await entryOf(skillId)).spec.mistakes.find((m) => m.id === mistakeId)?.label;
+  }
+
   return {
     // ----- set-up (pseudonymous codes only) -----
     async createClass(code: string, grade: number): Promise<ClassRow> {
@@ -212,7 +236,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     // ----- practise -----
     async servePracticeItem(studentId: string, skillId: string): Promise<{ ok: true; itemId: string; text: string } | Fail> {
       await requireStudent(studentId);
-      const entry = getEntry(registry, skillId);
+      const entry = await entryOf(skillId);
       if ((await mastery.refreshUnlock(store, studentId, entry, now())) === "LOCKED") {
         return fail("This skill is locked. Ask your teacher.", "locked");
       }
@@ -227,7 +251,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       answerText: string,
     ): Promise<{ ok: true; correct: boolean; mistakeId: string | null; feedback: string } | Fail> {
       const item = await requireItem(itemId, "practice");
-      const entry = getEntry(registry, item.skillId);
+      const entry = await entryOf(item.skillId);
       const typed = parseAnswer(answerText);
       if (!typed.ok) return fail(typed.error, "bad_answer", { errorKey: typed.errorKey });
       return store.transaction(async () => {
@@ -259,7 +283,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       skillId: string,
     ): Promise<{ ok: true; sessionId: string; traces: { itemId: string; question: string; lines: string[] }[] } | Fail> {
       await requireStudent(studentId);
-      const entry = getEntry(registry, skillId);
+      const entry = await entryOf(skillId);
       if ((await mastery.refreshUnlock(store, studentId, entry, now())) === "LOCKED") {
         return fail("This skill is locked. Ask your teacher.", "locked");
       }
@@ -295,13 +319,13 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
 
     async submitTeachStep(itemId: string, tappedLine: number, typedLine: string) {
       const item = await requireItem(itemId, "teach");
-      const entry = getEntry(registry, item.skillId);
+      const entry = await entryOf(item.skillId);
       const { triesMax } = entry.spec.teachRule;
       return store.transaction(async () => {
         const tries = await store.listTeachTraces(item.id);
         if (tries.some((t) => t.lineCorrect && t.fixAccepted)) return fail("You already fixed this one.", "already_fixed");
         if (tries.length >= triesMax) return fail("No tries left for this one.", "no_tries");
-        const result = checkTeachStep(instanceFor(entry, item), item.mistakeId!, tappedLine, typedLine);
+        const result = checkTeachStep(instanceFor(entry, item), item.mistakeId!, tappedLine, typedLine, entry.spec.mistakes);
         const tryNumber = tries.length + 1;
         const saved = await store.insertTeachTrace({
           id: randomUUID(),
@@ -334,7 +358,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       skillId: string,
     ): Promise<{ ok: true; runId: string; aiOff: true; deadline: string; items: ProofItemView[] } | Fail> {
       await requireStudent(studentId);
-      const entry = getEntry(registry, skillId);
+      const entry = await entryOf(skillId);
       try {
         return await store.transaction(async () => {
           await mastery.refreshUnlock(store, studentId, entry, now());
@@ -396,7 +420,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       | Fail
     > {
       const item = await requireItem(itemId, "proof");
-      const entry = getEntry(registry, item.skillId);
+      const entry = await entryOf(item.skillId);
       const typed = parseAnswer(answerText);
       if (!typed.ok) return fail(typed.error, "bad_answer", { errorKey: typed.errorKey });
       return store.transaction(async () => {
@@ -439,7 +463,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       skillId: string,
     ): Promise<{ ok: true; runId: string; deadline: string; items: (ProofItemView & { answered: boolean })[] } | Fail> {
       await requireStudent(studentId);
-      const entry = getEntry(registry, skillId);
+      const entry = await entryOf(skillId);
       const open = await store.getOpenProofRun(studentId, skillId);
       if (!open || now().getTime() > deadlineOf(open)) return fail("No proof is running.", "none");
       const items = [];
@@ -460,7 +484,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     /** Can this child start a proof now? (An abandoned, expired proof is closed first.) */
     async proofStatus(studentId: string, skillId: string): Promise<{ canStart: true } | { canStart: false; code: FailCode; retryAt?: string }> {
       await requireStudent(studentId);
-      const entry = getEntry(registry, skillId);
+      const entry = await entryOf(skillId);
       return store.transaction(async () => {
         await mastery.refreshUnlock(store, studentId, entry, now());
         const open = await store.getOpenProofRun(studentId, skillId);
@@ -555,7 +579,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     /** Opens a skill for every student in the class. Returns how many were newly opened. */
     async teacherUnlockClass(classId: string, skillId: string): Promise<number> {
       await requireClass(classId);
-      const entry = getEntry(registry, skillId);
+      const entry = await entryOf(skillId);
       let opened = 0;
       await store.transaction(async () => {
         for (const s of await store.listStudents(classId)) {
@@ -583,7 +607,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     // ----- projector (class mode: no student accounts, never touches mastery) -----
     async projectorTrace(classId: string, skillId: string) {
       await requireClass(classId);
-      const { spec } = getEntry(registry, skillId);
+      const { spec } = await entryOf(skillId);
       const seed = newSeed();
       const instance = spec.generate(createRng(seed));
       const mistake = spec.mistakes[Math.floor(random() * spec.mistakes.length)];
@@ -600,23 +624,54 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       typedLine: string,
     ): Promise<TeachResult> {
       await requireClass(classId);
-      const { spec } = getEntry(registry, skillId);
+      const { spec } = await entryOf(skillId);
       if (!Number.isInteger(seed) || !spec.mistakes.some((m) => m.id === mistakeId)) throw new Error("Bad projector item");
-      const result = checkTeachStep(spec.generate(createRng(seed)), mistakeId, tappedLine, String(typedLine ?? ""));
+      const result = checkTeachStep(spec.generate(createRng(seed)), mistakeId, tappedLine, String(typedLine ?? ""), spec.mistakes);
       await log(null, "projector_step", { classId, skillId, mistakeId, lineCorrect: result.lineCorrect, fixAccepted: result.fixAccepted });
       return result;
     },
 
-    // ----- mined mistakes (the Misconception Miner will add drafts; teachers decide) -----
+    // ----- mined mistakes (the Misconception Miner adds tested drafts; teachers decide) -----
+    /** Tested drafts waiting for a teacher, with the mistake data and the validator's report. */
     async listPendingMinedMistakes() {
-      return (await store.listMinedMistakes("draft")).map(({ id, skillId, createdAt }) => ({ id, skillId, createdAt }));
+      const parse = <T>(text: string): T | null => {
+        try {
+          return JSON.parse(text) as T;
+        } catch {
+          return null;
+        }
+      };
+      return (await store.listMinedMistakes("DRAFT_TESTED")).map((r) => ({
+        id: r.id,
+        skillId: r.skillId,
+        createdAt: r.createdAt,
+        spec: parse<MinedMistakeSpec>(r.source),
+        report: parse<{ reproduced: number; checkedInstances: number; overlaps: Record<string, number> }>(r.testsJson),
+      }));
     },
 
-    async decideMinedMistake(classId: string, id: string, decision: "approved" | "rejected"): Promise<boolean> {
+    /** Approve (only if it still passes the validator) or reject a tested draft. */
+    async decideMinedMistake(classId: string, id: string, decision: "approved" | "rejected"): Promise<{ ok: true } | { ok: false; reason: string }> {
       const cls = await requireClass(classId);
-      const done = await store.decideMinedMistake(id, decision, `teacher of class ${cls.code}`);
+      const row = await store.getMinedMistake(id);
+      if (!row || row.status !== "DRAFT_TESTED") return { ok: false, reason: "This is not a draft waiting for review." };
+      if (decision === "approved") {
+        const base = registry[row.skillId];
+        if (!base) return { ok: false, reason: "Unknown skill." };
+        let spec: unknown;
+        try {
+          spec = JSON.parse(row.source);
+        } catch {
+          return { ok: false, reason: "The draft could not be read." };
+        }
+        const existing = [...base.spec.mistakes, ...(await minedMistakes(store, base.spec, ["APPROVED"]))];
+        const report = validateMinedMistake(spec, { skill: base.spec, unknownErrors: await unknownErrors(store, row.skillId), existing });
+        if (!report.ok) return { ok: false, reason: `It no longer passes the checks: ${report.errors.join("; ")}` };
+      }
+      const done = await store.decideMinedMistake(id, decision === "approved" ? "APPROVED" : "REJECTED", `teacher of class ${cls.code}`);
+      minedCache.delete(row.skillId);
       await log(null, "mined_mistake_decided", { classId, id, decision, done });
-      return done;
+      return done ? { ok: true } : { ok: false, reason: "Someone else decided it first." };
     },
 
     // ----- teacher -----
@@ -642,7 +697,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         const label =
           mistakeId === "unknown"
             ? UNKNOWN_LABEL
-            : (registry[skillId]?.spec.mistakes.find((m) => m.id === mistakeId)?.label ?? mistakeId);
+            : ((await labelOf(skillId, mistakeId)) ?? mistakeId);
         const g = groups.get(top) ?? { skillId, mistakeId, label, studentCodes: [] };
         g.studentCodes.push(code);
         groups.set(top, g);

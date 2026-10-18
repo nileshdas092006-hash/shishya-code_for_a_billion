@@ -77,12 +77,14 @@ export type MasteryRow = {
   updatedAt: string;
 };
 export type UnknownErrorRow = { id: number; skillId: string; paramsJson: string; wrongAnswer: string; count: number };
+export type MinedStatus = "DRAFT_TESTED" | "APPROVED" | "REJECTED";
 export type MinedMistakeRow = {
   id: string;
   skillId: string;
   source: string;
   testsJson: string;
-  status: "draft" | "approved" | "rejected";
+  /** DRAFT_TESTED: passed the validator, waiting for a teacher. APPROVED drafts are used by the app. */
+  status: MinedStatus;
   approver: string | null;
   createdAt: string;
 };
@@ -195,7 +197,7 @@ CREATE TABLE IF NOT EXISTS minedMistakes (
   skillId TEXT NOT NULL,
   source TEXT NOT NULL,
   testsJson TEXT NOT NULL,
-  status TEXT NOT NULL CHECK (status IN ('draft', 'approved', 'rejected')),
+  status TEXT NOT NULL CHECK (status IN ('DRAFT_TESTED', 'APPROVED', 'REJECTED')),
   approver TEXT,
   createdAt TEXT NOT NULL
 );
@@ -267,7 +269,39 @@ const toRun = (r: Row): ProofRunRow => ({
   startedAt: r.startedAt as string,
   finishedAt: (r.finishedAt as string | null) ?? null,
 });
+const toMined = (r: Row): MinedMistakeRow => ({
+  id: r.id as string,
+  skillId: r.skillId as string,
+  source: r.source as string,
+  testsJson: r.testsJson as string,
+  status: r.status as MinedStatus,
+  approver: (r.approver as string | null) ?? null,
+  createdAt: r.createdAt as string,
+});
 const toStudent = (r: Row): StudentRow => ({ id: r.id as string, classId: r.classId as string, code: r.code as string });
+
+// ---------- migrations (each safe to run on every start-up) ----------
+
+async function migrate(client: Client) {
+  // Mined mistake statuses were draft/approved/rejected; now DRAFT_TESTED/APPROVED/REJECTED.
+  const mined = await client.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'minedMistakes'");
+  if (String(mined.rows[0]?.sql ?? "").includes("'draft'")) {
+    await client.batch(
+      [
+        `CREATE TABLE minedMistakes_v2 (
+          id TEXT PRIMARY KEY, skillId TEXT NOT NULL, source TEXT NOT NULL, testsJson TEXT NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('DRAFT_TESTED', 'APPROVED', 'REJECTED')), approver TEXT, createdAt TEXT NOT NULL)`,
+        `INSERT INTO minedMistakes_v2 (id, skillId, source, testsJson, status, approver, createdAt)
+         SELECT id, skillId, source, testsJson,
+                CASE status WHEN 'draft' THEN 'DRAFT_TESTED' WHEN 'approved' THEN 'APPROVED' ELSE 'REJECTED' END,
+                approver, createdAt FROM minedMistakes`,
+        "DROP TABLE minedMistakes",
+        "ALTER TABLE minedMistakes_v2 RENAME TO minedMistakes",
+      ],
+      "write",
+    );
+  }
+}
 
 // ---------- connections, write lock and transactions ----------
 
@@ -305,6 +339,7 @@ export async function openStore(config: StoreConfig | string = {}) {
   const client: Client = createClient({ url, authToken, timeout: 5000 });
   if (path) await client.execute("PRAGMA journal_mode = WAL"); // readers never wait for a writer
   await client.executeMultiple(SCHEMA);
+  await migrate(client);
 
   const lockKey = path ? path.toLowerCase() : url;
   if (!writeLocks.has(lockKey)) writeLocks.set(lockKey, new Lock());
@@ -543,20 +578,21 @@ export async function openStore(config: StoreConfig | string = {}) {
         m.id, m.skillId, m.source, m.testsJson, m.status, m.approver, m.createdAt,
       );
     },
-    async listMinedMistakes(status: MinedMistakeRow["status"]): Promise<MinedMistakeRow[]> {
-      return (await all("SELECT * FROM minedMistakes WHERE status = ? ORDER BY createdAt, id", status)).map((r) => ({
-        id: r.id as string,
-        skillId: r.skillId as string,
-        source: r.source as string,
-        testsJson: r.testsJson as string,
-        status: r.status as MinedMistakeRow["status"],
-        approver: (r.approver as string | null) ?? null,
-        createdAt: r.createdAt as string,
-      }));
+    async listMinedMistakes(status: MinedStatus, skillId?: string): Promise<MinedMistakeRow[]> {
+      return (
+        await all(
+          "SELECT * FROM minedMistakes WHERE status = ? AND (? IS NULL OR skillId = ?) ORDER BY createdAt, id",
+          status, skillId ?? null, skillId ?? null,
+        )
+      ).map(toMined);
     },
-    /** Approve or reject a draft. False if it was not a draft any more. */
-    decideMinedMistake(id: string, status: "approved" | "rejected", approver: string): Promise<boolean> {
-      return changed("UPDATE minedMistakes SET status = ?, approver = ? WHERE id = ? AND status = 'draft'", status, approver, id);
+    async getMinedMistake(id: string): Promise<MinedMistakeRow | undefined> {
+      const r = await one("SELECT * FROM minedMistakes WHERE id = ?", id);
+      return r && toMined(r);
+    },
+    /** Approve or reject a tested draft. False if it was not a draft any more. */
+    decideMinedMistake(id: string, status: "APPROVED" | "REJECTED", approver: string): Promise<boolean> {
+      return changed("UPDATE minedMistakes SET status = ?, approver = ? WHERE id = ? AND status = 'DRAFT_TESTED'", status, approver, id);
     },
 
     // ----- events (pilot metrics) -----

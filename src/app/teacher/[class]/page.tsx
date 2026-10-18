@@ -6,7 +6,9 @@ import { createRng } from "@/core/rng";
 import { getSkillEntry } from "@/core/skills";
 import { skillKey, t } from "@/i18n";
 import { getServices } from "@/server/instance";
-import { decideMined, unlockSkillForClass } from "../../actions";
+import { toMistake } from "@/core/minedMistake";
+import { unlockSkillForClass } from "../../actions";
+import { MinedDecision } from "./MinedDecision";
 import { Equation } from "../../_components/Equation";
 import { teacherClass } from "../../_lib/auth";
 import { StudentCodeSheet } from "../CreateClassForm";
@@ -126,20 +128,9 @@ async function ClassBoard({ params }: { params: Promise<{ class: string }> }) {
         ) : (
           <ul className="flex flex-col gap-3">
             {mined.map((m) => (
-              <li key={m.id} className="card flex flex-wrap items-center gap-3">
-                <span className="font-semibold">
-                  {t(skillKey(m.skillId, "title"))}: draft {m.id}
-                </span>
-                <form action={decideMined.bind(null, cls.code, m.id, "approved")}>
-                  <button type="submit" className="btn btn-primary">
-                    Approve
-                  </button>
-                </form>
-                <form action={decideMined.bind(null, cls.code, m.id, "rejected")}>
-                  <button type="submit" className="btn">
-                    Reject
-                  </button>
-                </form>
+              <li key={m.id} className="card flex flex-col gap-3">
+                <MinedDraft draft={m} />
+                <MinedDecision classCode={cls.code} id={m.id} />
               </li>
             ))}
           </ul>
@@ -152,6 +143,55 @@ async function ClassBoard({ params }: { params: Promise<{ class: string }> }) {
         </div>
         <StudentCodeSheet classCode={cls.code} codes={codes} />
       </section>
+    </div>
+  );
+}
+
+type Draft = Awaited<ReturnType<Awaited<ReturnType<typeof getServices>>["listPendingMinedMistakes"]>>[number];
+
+/** A tested draft from the Misconception Miner: what it says, how much data it explains, and an example. */
+function MinedDraft({ draft }: { draft: Draft }) {
+  const entry = getSkillEntry(draft.skillId);
+  const spec = draft.spec;
+  let example: { text: string }[] | null = null;
+  let wrongLine = 0;
+  try {
+    if (entry && spec) {
+      const out = toMistake(spec, entry.spec).apply(entry.spec.generate(createRng(EXAMPLE_SEED)));
+      example = out.trace;
+      wrongLine = out.firstWrongLine;
+    }
+  } catch {
+    example = null;
+  }
+  if (!spec) return <p className="msg-bad">Draft {draft.id} could not be read. Reject it.</p>;
+  return (
+    <div className="flex flex-col gap-2">
+      <h3 className="text-xl font-bold">{spec.label}</h3>
+      <p>
+        <span className="font-semibold">Child sees:</span> {spec.childLabel}
+      </p>
+      <p>
+        <span className="font-semibold">Wrong answer it predicts:</span> <span className="math">x = {spec.answerFormula}</span>
+        {draft.report && <> · explains {draft.report.reproduced} logged wrong answers · checked on {draft.report.checkedInstances} questions</>}
+      </p>
+      {example && (
+        <ol className="flex flex-col gap-1">
+          {example.map((line, i) => (
+            <li key={i} className={`flex items-baseline gap-3 ${i + 1 === wrongLine ? "text-red-800" : ""}`}>
+              <span className="shrink-0 font-semibold">L{i + 1}</span>
+              <span className="flex-1 min-w-0">
+                <Equation text={line.text} size="sm" />
+                {i + 1 === wrongLine && <span className="block text-base font-bold">← first wrong line</span>}
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
+      <p className="text-base text-gray-700">
+        Drafted by the AI Misconception Miner and checked by code. It is used only after you approve it, and it never changes
+        any child&apos;s mastery.
+      </p>
     </div>
   );
 }

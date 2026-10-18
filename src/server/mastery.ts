@@ -106,7 +106,7 @@ async function qualifyingTraceIds(store: Store, entry: SkillEntry, items: ItemRo
     const tries = (await store.listTeachTraces(item.id)).slice(0, triesMax);
     const fixed = tries.find((t) => {
       if (t.mistakeId !== item.mistakeId) return false;
-      const check = checkTeachStep(instance, item.mistakeId!, t.tappedLine, t.typedLine);
+      const check = checkTeachStep(instance, item.mistakeId!, t.tappedLine, t.typedLine, entry.spec.mistakes);
       return check.lineCorrect && check.fixAccepted;
     });
     if (!fixed) return null;

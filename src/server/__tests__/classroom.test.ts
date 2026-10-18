@@ -140,22 +140,23 @@ describe("projector mode (no student accounts)", () => {
 });
 
 describe("mined mistakes waiting for the teacher", () => {
-  it("lists drafts and records Approve / Reject once", async () => {
+  it("lists tested drafts, refuses to approve one that is not valid data, and records a decision once", async () => {
     const { svc, store, clock } = await fresh();
     const room = await svc.createClassroom({ grade: 8, section: "B", studentCount: 1 });
     expect(await svc.listPendingMinedMistakes()).toEqual([]);
     await store.insertMinedMistake({
       id: "mm1",
       skillId: SKILL,
-      source: "export function apply() {}",
+      source: "export function apply() {}", // code, not mined-mistake data: can never be approved
       testsJson: "{}",
-      status: "draft",
+      status: "DRAFT_TESTED",
       approver: null,
       createdAt: clock.now().toISOString(),
     });
     expect((await svc.listPendingMinedMistakes()).map((m) => m.id)).toEqual(["mm1"]);
-    expect(await svc.decideMinedMistake(room.classId, "mm1", "approved")).toBe(true);
-    expect(await svc.decideMinedMistake(room.classId, "mm1", "rejected")).toBe(false);
+    expect(await svc.decideMinedMistake(room.classId, "mm1", "approved")).toMatchObject({ ok: false });
+    expect(await svc.decideMinedMistake(room.classId, "mm1", "rejected")).toEqual({ ok: true });
+    expect(await svc.decideMinedMistake(room.classId, "mm1", "rejected")).toMatchObject({ ok: false });
     expect(await svc.listPendingMinedMistakes()).toEqual([]);
   });
 });

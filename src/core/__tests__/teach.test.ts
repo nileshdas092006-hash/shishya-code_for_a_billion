@@ -86,3 +86,15 @@ describe("teach feedback carries a message key", () => {
     expect(r.feedbackParams).toEqual(params);
   });
 });
+
+describe("checkTeachStep with a mined mistake", () => {
+  it("uses the mistake list it is given", async () => {
+    const { toMinedMistakeForTest } = await import("./teach-mined-fixture");
+    const mined = toMinedMistakeForTest();
+    const inst = makeInstance({ a: 4, b: -3, c: 2, d: 7 }, 0);
+    const mistakes = [...linearBothSides.mistakes, mined];
+    expect(() => checkTeachStep(inst, mined.id, 5, "x = 5")).toThrow(); // not in the default (authored) list
+    expect(checkTeachStep(inst, mined.id, 5, "x = 5", mistakes)).toMatchObject({ lineCorrect: true, fixAccepted: true });
+    expect(checkTeachStep(inst, mined.id, 5, "x = 5/2", mistakes).fixAccepted).toBe(false);
+  });
+});

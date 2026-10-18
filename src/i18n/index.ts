@@ -17,6 +17,9 @@ export function t(key: MessageKey, params?: Record<string, string | number>, lan
   return keepMathTogether(filled);
 }
 
-export const skillKey = (skillId: string, part: "title" | "example") => `skill.${skillId}.${part}` as const;
+/** False for text that has no translation key yet, e.g. a teacher-approved mined mistake's child label. */
+export const hasMessage = (key: string, lang: Lang = "en") => key in tables[lang];
+
+export const skillKey =(skillId: string, part: "title" | "example") => `skill.${skillId}.${part}` as const;
 export const hintKey = (skillId: string, level: number) => `hint.${skillId}.${level as 1 | 2 | 3 | 4}` as const;
 export const mistakeKey = (skillId: string, mistakeId: string) => `mistake.${skillId}.${mistakeId}` as const;

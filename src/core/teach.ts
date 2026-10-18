@@ -1,7 +1,7 @@
 import { equivalent, fill, parseEquation, type MessageParams, type ParseErrorKey } from "./equation";
 import { linearBothSides } from "./skills/linear-both-sides";
 import { meetsTargetForm, type TraceLineNumber } from "./targetForm";
-import type { Instance } from "./types";
+import type { Instance, Mistake } from "./types";
 
 // "Teach the Shishya": did the child find the Shishya's first wrong line, and is their typed fix right?
 // Feedback uses the NCERT textbook's language and never states the final answer. It comes in English (feedback)
@@ -39,14 +39,16 @@ const message = (key: TeachMessageKey, params?: MessageParams) => ({
 /**
  * tappedLine and the mistake's firstWrongLine are 1-based. lineCorrect and fixAccepted are judged separately
  * (fixAccepted checks the typed line against the mistake's first wrong line); feedback talks about the tap first.
+ * `mistakes` defaults to the authored ones; pass the skill's full list to include approved mined mistakes.
  */
 export function checkTeachStep(
   instance: Instance,
   mistakeId: string,
   tappedLine: number,
   typedLine: string,
+  mistakes: Mistake[] = linearBothSides.mistakes,
 ): TeachResult {
-  const mistake = linearBothSides.mistakes.find((m) => m.id === mistakeId);
+  const mistake = mistakes.find((m) => m.id === mistakeId);
   if (!mistake) throw new Error(`Unknown mistake id: ${mistakeId}`);
   const wrongLine = mistake.apply(instance).firstWrongLine as TraceLineNumber;
 

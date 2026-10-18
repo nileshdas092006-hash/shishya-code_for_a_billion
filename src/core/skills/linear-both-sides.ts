@@ -1,3 +1,4 @@
+import { formatEquation as eq, fracText } from "../format";
 import { div, equals, frac, type Fraction } from "../fraction";
 import { randInt, type Rng } from "../rng";
 import type { Instance, Mistake, SkillSpec, Trace } from "../types";
@@ -6,30 +7,9 @@ import type { Instance, Mistake, SkillSpec, Trace } from "../types";
 
 const SKILL_ID = "alg.linear.both-sides";
 const VERSION = "1.0.0";
-const MINUS = "−"; // U+2212, the printed minus sign
 const MAX_TRIES = 1000;
 
 type Params = Instance["params"];
-/** One term of an expression: a coefficient, with or without x. */
-type Term = [coef: number, hasX: boolean];
-
-// ---------- Printing ----------
-
-function termText([coef, hasX]: Term, leading: boolean): string {
-  const size = Math.abs(coef);
-  const body = hasX ? (size === 1 ? "x" : `${size}x`) : `${size}`;
-  if (leading) return coef < 0 ? `${MINUS}${body}` : body;
-  return coef < 0 ? ` ${MINUS} ${body}` : ` + ${body}`;
-}
-
-const side = (terms: Term[]) => terms.map((t, i) => termText(t, i === 0)).join("");
-const eq = (left: Term[], right: Term[]) => `${side(left)} = ${side(right)}`;
-
-function fracText(f: Fraction): string {
-  const sign = f.num < 0 ? MINUS : "";
-  const size = Math.abs(f.num);
-  return f.den === 1 ? `${sign}${size}` : `${sign}${size}/${f.den}`;
-}
 
 const toTrace = (lines: string[]): Trace => lines.map((text) => ({ text }));
 

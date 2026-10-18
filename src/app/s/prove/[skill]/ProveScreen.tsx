@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState, useTransition } from "react";
-import { mistakeKey, skillKey, t, type MessageKey } from "@/i18n";
+import { hasMessage, mistakeKey, skillKey, t, type MessageKey } from "@/i18n";
 import { proofOverview, startProofRun, submitProof } from "../../../actions";
 import { Equation } from "../../../_components/Equation";
 import { Shishya } from "../../../_components/Shishya";
@@ -99,10 +99,12 @@ export function ProveScreen({ skillId }: { skillId: string }) {
           ))}
         {!outcome.passed && (
           <ul className="flex flex-col gap-2 list-disc pl-6 text-xl">
-            {outcome.practise.filter((m) => m !== "unknown").map((m) => (
+            {outcome.practise.filter((m) => m !== "unknown" && hasMessage(mistakeKey(skillId, m))).map((m) => (
               <li key={m}>{t(mistakeKey(skillId, m))}</li>
             ))}
-            {(outcome.practise.length === 0 || outcome.practise.includes("unknown")) && <li>{t("prove.practiseStepByStep")}</li>}
+            {(outcome.practise.length === 0 || outcome.practise.some((m) => !hasMessage(mistakeKey(skillId, m)))) && (
+              <li>{t("prove.practiseStepByStep")}</li>
+            )}
           </ul>
         )}
         {!outcome.passed && status && !status.canStart && status.retryAt && (

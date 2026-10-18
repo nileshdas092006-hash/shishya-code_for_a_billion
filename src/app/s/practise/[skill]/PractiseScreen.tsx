@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState, useTransition } from "react";
-import { hintKey, mistakeKey, t, type MessageKey } from "@/i18n";
+import { hasMessage, hintKey, keepMathTogether, mistakeKey, t, type MessageKey } from "@/i18n";
 import { answerPractice, servePractice } from "../../../actions";
 import { Equation } from "../../../_components/Equation";
 import { Shishya } from "../../../_components/Shishya";
@@ -56,7 +56,12 @@ export function PractiseScreen({ skillId }: { skillId: string }) {
         setStreak(0);
         setFeedback(
           r.mistakeId && r.mistakeId !== "unknown"
-            ? { kind: "bad", text: t("practise.wrongKnown"), detail: t(mistakeKey(skillId, r.mistakeId)) }
+            ? {
+                kind: "bad",
+                text: t("practise.wrongKnown"),
+                // a teacher-approved mined mistake has no translation yet: use its own child label
+                detail: hasMessage(mistakeKey(skillId, r.mistakeId)) ? t(mistakeKey(skillId, r.mistakeId)) : keepMathTogether(r.feedback),
+              }
             : { kind: "bad", text: t("practise.wrongUnknown") },
         );
       }
