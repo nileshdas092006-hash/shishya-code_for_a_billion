@@ -180,3 +180,11 @@
 - Test classes created on local scratch databases only (none on the live site this time).
 - Files: `src/app/_lib/use-hydrated.ts`, `src/app/_components/ReadyButton.tsx`, `src/app/_components/TraceLines.tsx`, `src/app/s/{practise,teach,prove}/[skill]/*Screen.tsx`, `src/app/teacher/{PrintButton.tsx,[class]/MinedReviewForm.tsx,[class]/project/ProjectorScreen.tsx}`, `src/i18n/{en,hi}.ts`, `src/app/_components/__tests__/ReadyButton.test.tsx`, `BUILD_LOG.md`.
 - Built in AgentFoundry with Claude Code.
+
+## 2026-10-19: Live check after the speed-up and ready buttons (1e2bb38)
+- Das pushed 057bdba…1e2bb38; the live site served the new build about 20 s later (the "Start teaching" button carries the new `data-ready` marker).
+- Live smoke test, TEST class **8Q-44TU** (all `8Q-…` classes are TEST classes: exclude them from pilot numbers): 11 of 11 PASS.
+- Live timings (run 3 before the region move → run 5 after it → run 6 with the code speed-up and ready buttons): class board 9.5 → 0.6 → 0.9 s; unlock for class 11.5 → 0.7 → 0.4 s; PIN → board 8.0 → 0.5 → 0.7 s; last proof answer 8.0 → 0.4 → 0.3 s; teach checks 2.9–3.8 → 0.3–0.4 → 0.2–0.3 s; every page 0.4–1.3 s.
+- Honest reading: with only 3 students in the test class, run 5 and run 6 are about the same (small ups and downs, first loads after a redeploy). The round-trip savings (class board 329 → 6 queries, unlock 246 → 8 for 40 students) matter for full classes and are held by the round-trip test; a live class of 40 was not timed.
+- Files: `BUILD_LOG.md`.
+- Built in AgentFoundry with Claude Code.
