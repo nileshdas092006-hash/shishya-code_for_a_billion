@@ -36,6 +36,20 @@ npm run miner -- alg.linear.both-sides --fake   # offline FAKE model, no key
 The AI only ever sees anonymous numbers (the question's a, b, c, d and the wrong answer). Each AI call is logged,
 without keys or messages, in `data/agent-runs.jsonl`.
 
+## Skills and the Skill Author (AI agent)
+
+Five skills form a chain: integers → like terms → one-step equations → two-step equations → variables on both sides
+(`src/core/skills/`, notes in `docs/skills/`). Every skill passes the same property tests over 1,000 generated questions.
+
+The Skill Author drafts a new skill and its tests on a separate branch, never touching your working folder:
+
+```bash
+npm run author -- alg.integers.multiply "Multiply and divide integers, like −3 × 4 = −12"
+```
+
+It may only create files in `src/core/skills` and `src/core/__tests__`, may only run `npm test`, stops when the tests
+pass (or after 20 turns), commits on branch `author/<skillId>`, prints a review checklist, and never merges.
+
 ## Deploy to Vercel
 
 Vercel does not keep files between requests, so in the cloud the data lives in a free hosted

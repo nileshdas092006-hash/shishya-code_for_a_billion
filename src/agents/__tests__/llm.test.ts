@@ -142,6 +142,17 @@ describe("createLlmClient", () => {
     expect(JSON.stringify(log.records)).not.toContain("PRIVATE TEXT");
   });
 
+  it("gives up on a slow provider after LLM_TIMEOUT_MS (default 60 s) and tries the next", async () => {
+    const slow = (async (url: string | URL | Request, init?: RequestInit) => {
+      if (!String(url).includes("groq")) return reply("fast");
+      return new Promise<Response>((_, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal!.reason)));
+    }) as typeof fetch;
+    const log = memoryCallLog();
+    const r = await createLlmClient({ env: { ...env, LLM_TIMEOUT_MS: "50" }, fetchImpl: slow, log })(request);
+    expect(r.provider).toBe("openrouter");
+    expect(log.records[0]).toMatchObject({ provider: "groq", ok: false, error: "timed out" });
+  });
+
   it("respects the daily cap per provider (default 200, or <NAME>_DAILY_CAP)", async () => {
     const now = () => new Date("2026-10-20T10:00:00Z");
     const log = memoryCallLog();

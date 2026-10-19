@@ -210,9 +210,15 @@ export async function runAuthor(opts: {
   ];
 
   const base = () => ({ testRuns, files: [...created], lastTestOutput, checklist: REVIEW_CHECKLIST(opts.skillId, [...created]) });
+  let modelReplies = 0; // so a failed run still reports how many turns it took
+  const model: ChatModel = async (request) => {
+    const reply = await opts.model(request);
+    modelReplies++;
+    return reply;
+  };
   try {
     const result = await runAgent({
-      model: opts.model,
+      model,
       system: systemPrompt(opts.skillId, opts.description),
       user: `Draft the skill ${opts.skillId}: ${opts.description}. Start by reading the files you need.`,
       tools,
@@ -220,6 +226,6 @@ export async function runAuthor(opts: {
     });
     return { status: passed ? "tests_passed" : "stopped", turns: result.turns, finalText: result.final, ...base() };
   } catch (e) {
-    return { status: "failed", turns: 0, error: e instanceof Error ? e.message : "the AI failed", ...base() };
+    return { status: "failed", turns: modelReplies, error: e instanceof Error ? e.message : "the AI failed", ...base() };
   }
 }

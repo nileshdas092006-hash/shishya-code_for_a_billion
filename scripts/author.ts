@@ -54,12 +54,11 @@ const ports: AuthorPorts = {
   },
   exists: async (path) => existsSync(join(worktree, path)),
   runTests: async () => {
-    const r = spawnSync(process.platform === "win32" ? "npm.cmd" : "npm", ["test"], {
-      cwd: worktree,
-      encoding: "utf8",
-      timeout: 300_000,
-      shell: process.platform === "win32",
-    });
+    // run npm's own script with this Node (no shell), exactly as "npm test" would
+    const npmCli = process.env.npm_execpath;
+    const r = npmCli
+      ? spawnSync(process.execPath, [npmCli, "test"], { cwd: worktree, encoding: "utf8", timeout: 300_000 })
+      : spawnSync("npm", ["test"], { cwd: worktree, encoding: "utf8", timeout: 300_000 });
     const output = `${r.stdout ?? ""}\n${r.stderr ?? ""}`.replace(/\x1b\[[0-9;]*m/g, "");
     return { passed: r.status === 0, output };
   },

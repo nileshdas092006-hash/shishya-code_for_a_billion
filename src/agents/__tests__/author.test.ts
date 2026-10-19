@@ -114,12 +114,14 @@ describe("runAuthor (FAKE model)", () => {
     expect(r).toMatchObject({ status: "stopped", turns: 20 });
   });
 
-  it("reports a failed run (for example every AI provider failed) without crashing", async () => {
+  it("reports a failed run (for example every AI provider failed) without crashing, with the turns it did take", async () => {
     const f = fakePorts([]);
+    let calls = 0;
     const model = (async () => {
+      if (calls++ < 2) return { message: toolCall("list_files", { dir: "src/core/skills" }), provider: "fake", model: "fake" };
       throw new Error("All AI providers failed: groq: HTTP 429");
     }) as Parameters<typeof runAuthor>[0]["model"];
     const r = await runAuthor({ model, ports: f.ports, skillId: "alg.x", description: "x" });
-    expect(r).toMatchObject({ status: "failed", error: expect.stringMatching(/429/) });
+    expect(r).toMatchObject({ status: "failed", turns: 2, error: expect.stringMatching(/429/) });
   });
 });

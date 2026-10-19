@@ -133,7 +133,8 @@ export function createLlmClient(
   const fetchImpl = opts.fetchImpl ?? fetch;
   const log = opts.log ?? defaultLog(env);
   const now = opts.now ?? (() => new Date());
-  const timeoutMs = opts.timeoutMs ?? 60_000;
+  // LLM_TIMEOUT_MS: how long to wait for one reply before trying the next provider (free models can be slow).
+  const timeoutMs = opts.timeoutMs ?? (Number(env.LLM_TIMEOUT_MS) > 0 ? Number(env.LLM_TIMEOUT_MS) : 60_000);
 
   return async (request) => {
     const providers = providersFromEnv(env);
