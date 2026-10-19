@@ -590,9 +590,12 @@ export async function openStore(config: StoreConfig | string = {}) {
       const r = await one("SELECT * FROM minedMistakes WHERE id = ?", id);
       return r && toMined(r);
     },
-    /** Approve or reject a tested draft. False if it was not a draft any more. */
-    decideMinedMistake(id: string, status: "APPROVED" | "REJECTED", approver: string): Promise<boolean> {
-      return changed("UPDATE minedMistakes SET status = ?, approver = ? WHERE id = ? AND status = 'DRAFT_TESTED'", status, approver, id);
+    /** Approve or reject a tested draft (optionally saving the teacher's edited JSON). False if it was not a draft any more. */
+    decideMinedMistake(id: string, status: "APPROVED" | "REJECTED", approver: string, source?: string): Promise<boolean> {
+      return changed(
+        "UPDATE minedMistakes SET status = ?, approver = ?, source = COALESCE(?, source) WHERE id = ? AND status = 'DRAFT_TESTED'",
+        status, approver, source ?? null, id,
+      );
     },
 
     // ----- events (pilot metrics) -----

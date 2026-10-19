@@ -130,7 +130,12 @@ async function ClassBoard({ params }: { params: Promise<{ class: string }> }) {
             {mined.map((m) => (
               <li key={m.id} className="card flex flex-col gap-3">
                 <MinedDraft draft={m} />
-                <MinedDecision classCode={cls.code} id={m.id} />
+                {m.spec ? (
+                  <MinedDecision
+                    classCode={cls.code}
+                    draft={{ id: m.id, label: m.spec.label, childLabel: m.spec.childLabel, answerFormula: m.spec.answerFormula }}
+                  />
+                ) : null}
               </li>
             ))}
           </ul>
@@ -167,14 +172,12 @@ function MinedDraft({ draft }: { draft: Draft }) {
   if (!spec) return <p className="msg-bad">Draft {draft.id} could not be read. Reject it.</p>;
   return (
     <div className="flex flex-col gap-2">
-      <h3 className="text-xl font-bold">{spec.label}</h3>
-      <p>
-        <span className="font-semibold">Child sees:</span> {spec.childLabel}
-      </p>
-      <p>
-        <span className="font-semibold">Wrong answer it predicts:</span> <span className="math">x = {spec.answerFormula}</span>
-        {draft.report && <> · explains {draft.report.reproduced} logged wrong answers · checked on {draft.report.checkedInstances} questions</>}
-      </p>
+      <h3 className="text-xl font-bold">Draft from the Misconception Miner: {spec.id}</h3>
+      {draft.report && (
+        <p>
+          Explains {draft.report.reproduced} logged wrong answers · checked by code on {draft.report.checkedInstances} questions
+        </p>
+      )}
       {example && (
         <ol className="flex flex-col gap-1">
           {example.map((line, i) => (

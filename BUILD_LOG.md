@@ -84,3 +84,11 @@
 - Tests: 264 passing (5 new). Lint clean, build passes.
 - Files: `src/agents/{llm,miner}.ts`, `src/agents/__tests__/{llm,miner}.test.ts`, `scripts/miner.ts`, `.env.example`, `BUILD_LOG.md`.
 - Built in AgentFoundry with Claude Code.
+
+## 2026-10-19: Task 6b, safer Miner labels; teacher can edit before approving
+- Why: in the first real run the AI's child message told the child to do the mistaken step. Code checks cannot judge advice.
+- Miner system prompt: the teacher label must name the mistake; the child message must say what went wrong and the correct step in NCERT words, and must never tell the child to do the mistaken step (with a good and a bad example).
+- Review card on /teacher/[class]: a clear warning "Check the child message: the AI can be wrong about advice."; the teacher can edit the teacher label and the child message before Approve; formulas cannot be edited there. Edited text is checked again (NCERT words, length) with the full validator, saved in the draft, and the approver is recorded as "teacher of class … (edited the labels)".
+- Tests: 269 passing (a rendered-card test for the warning, editable fields and non-editable formula; a server test that edits are checked, saved with the approver, and then used as the child's feedback). Vitest now also runs .tsx tests and understands the "@/" import alias (config only).
+- Files: `src/agents/miner.ts`, `src/server/{services,store}.ts`, `src/app/actions.ts`, `src/app/teacher/[class]/{page.tsx,MinedDecision.tsx,MinedReviewForm.tsx}`, `src/app/teacher/[class]/__tests__/MinedReviewForm.test.tsx`, `src/agents/__tests__/miner.test.ts`, `vitest.config.mts`, `BUILD_LOG.md`.
+- Built in AgentFoundry with Claude Code.

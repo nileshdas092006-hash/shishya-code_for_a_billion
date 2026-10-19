@@ -47,8 +47,13 @@ of them, and describe it as JSON DATA (never code):
   "lines": { "<n>": "<template>" for every n from firstWrongLine to 5 }, "answerFormula": "<formula>" }
 Formulas use ONLY a, b, c, d, whole numbers, + - * / and brackets. Templates are the Shishya's wrong lines: x,
 whole numbers, + - = and {formulas}, e.g. "{a - c}x = {d + b}". Lines before firstWrongLine are copied from the
-correct working. The last line must be "x = {<answerFormula>}". childLabel must say what to do using the NCERT
-words "do the same operation on both sides"; never say "move" or "change the sign".
+correct working. The last line must be "x = {<answerFormula>}".
+label (for the teacher) must NAME the mistake, e.g. "Divides by the x-coefficient from the question, not the collected one".
+childLabel (for the child, one or two short sentences) must say WHAT WENT WRONG and WHAT THE CORRECT STEP IS, in
+NCERT words such as "do the same operation on both sides". It must NEVER tell the child to do the mistaken step.
+Good: "You divided by the number in front of x in the question. First collect the x-terms, then divide both sides by
+the number in front of x in that line." Bad: "Divide by the coefficient of x in the original equation." (that is the
+mistake). Never say "move" or "change the sign".
 Known mistakes, as examples of the format:
 {"id":"forgot-to-divide","firstWrongLine":5,"lines":{"5":"x = {d - b}"},"answerFormula":"d - b"}
 {"id":"kept-const-sign","firstWrongLine":3,"lines":{"3":"{a}x - {c}x = {d} + {b}","4":"{a - c}x = {d + b}","5":"x = {(d + b) / (a - c)}"},"answerFormula":"(d + b) / (a - c)"}

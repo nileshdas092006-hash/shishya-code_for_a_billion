@@ -650,27 +650,45 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       }));
     },
 
-    /** Approve (only if it still passes the validator) or reject a tested draft. */
-    async decideMinedMistake(classId: string, id: string, decision: "approved" | "rejected"): Promise<{ ok: true } | { ok: false; reason: string }> {
+    /**
+     * Approve (only if it still passes the validator) or reject a tested draft. On approval the teacher may rewrite
+     * the label and the child message (never the formulas); the edited JSON is checked again and saved.
+     */
+    async decideMinedMistake(
+      classId: string,
+      id: string,
+      decision: "approved" | "rejected",
+      edits?: { label?: string; childLabel?: string },
+    ): Promise<{ ok: true } | { ok: false; reason: string }> {
       const cls = await requireClass(classId);
       const row = await store.getMinedMistake(id);
       if (!row || row.status !== "DRAFT_TESTED") return { ok: false, reason: "This is not a draft waiting for review." };
+      let edited = false;
+      let newSource: string | undefined;
       if (decision === "approved") {
         const base = registry[row.skillId];
         if (!base) return { ok: false, reason: "Unknown skill." };
-        let spec: unknown;
+        let spec: Record<string, unknown>;
         try {
-          spec = JSON.parse(row.source);
+          spec = JSON.parse(row.source) as Record<string, unknown>;
         } catch {
           return { ok: false, reason: "The draft could not be read." };
+        }
+        const label = edits?.label?.trim();
+        const childLabel = edits?.childLabel?.trim();
+        edited = (label !== undefined && label !== spec.label) || (childLabel !== undefined && childLabel !== spec.childLabel);
+        if (edited) {
+          spec = { ...spec, ...(label !== undefined ? { label } : {}), ...(childLabel !== undefined ? { childLabel } : {}) };
+          newSource = JSON.stringify(spec);
         }
         const existing = [...base.spec.mistakes, ...(await minedMistakes(store, base.spec, ["APPROVED"]))];
         const report = validateMinedMistake(spec, { skill: base.spec, unknownErrors: await unknownErrors(store, row.skillId), existing });
         if (!report.ok) return { ok: false, reason: `It no longer passes the checks: ${report.errors.join("; ")}` };
       }
-      const done = await store.decideMinedMistake(id, decision === "approved" ? "APPROVED" : "REJECTED", `teacher of class ${cls.code}`);
+      const approver = `teacher of class ${cls.code}${edited ? " (edited the labels)" : ""}`;
+      const done = await store.decideMinedMistake(id, decision === "approved" ? "APPROVED" : "REJECTED", approver, newSource);
       minedCache.delete(row.skillId);
-      await log(null, "mined_mistake_decided", { classId, id, decision, done });
+      await log(null, "mined_mistake_decided", { classId, id, decision, done, edited });
       return done ? { ok: true } : { ok: false, reason: "Someone else decided it first." };
     },
 

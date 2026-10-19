@@ -149,10 +149,15 @@ export async function decideMined(
   classCode: string,
   id: string,
   decision: "approved" | "rejected",
+  edits?: { label?: string; childLabel?: string },
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   const cls = await teacherClass(str(classCode, 20));
   if (!cls || (decision !== "approved" && decision !== "rejected")) return { ok: false, reason: "Enter the class PIN first." };
-  const result = await (await getServices()).decideMinedMistake(cls.id, str(id, 64), decision);
+  const clean = edits && {
+    ...(typeof edits.label === "string" ? { label: str(edits.label, 300) } : {}),
+    ...(typeof edits.childLabel === "string" ? { childLabel: str(edits.childLabel, 300) } : {}),
+  };
+  const result = await (await getServices()).decideMinedMistake(cls.id, str(id, 64), decision, clean);
   if (result.ok) refresh();
   return result;
 }

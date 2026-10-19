@@ -177,6 +177,37 @@ describe("the Misconception Miner (FAKE model)", () => {
     expect(model.requests).toHaveLength(5);
   });
 
+  it("a teacher can edit the labels before approving; the edit is checked and saved with the approver", async () => {
+    ctx = await setup();
+    await ctx.svc.teacherUnlock(ctx.student.id, SKILL);
+    await logDivideByAErrors(6);
+    await runMiner({ model: goodScript(), ports: createMinerPorts(ctx.store), skillId: SKILL });
+    const [draft] = await ctx.svc.listPendingMinedMistakes();
+
+    const bad = await ctx.svc.decideMinedMistake(ctx.cls.id, draft.id, "approved", { childLabel: "Move it across and change the sign." });
+    expect(bad).toMatchObject({ ok: false, reason: expect.stringMatching(/NCERT/) });
+
+    const childLabel = "You divided by the number in front of x in the question. First collect the x-terms, then divide both sides by the number in front of x in that line.";
+    const edits = { label: "Divides by the original coefficient a, not by (a − c)", childLabel };
+    expect(await ctx.svc.decideMinedMistake(ctx.cls.id, draft.id, "approved", edits)).toEqual({ ok: true });
+
+    const row = (await ctx.store.getMinedMistake(draft.id))!;
+    expect(row.status).toBe("APPROVED");
+    expect(row.approver).toMatch(/teacher of class KV8B.*edited/);
+    expect(JSON.parse(row.source)).toMatchObject({ ...edits, answerFormula: "(d - b) / a" }); // formula unchanged
+
+    for (;;) {
+      const served = await ctx.svc.servePracticeItem(ctx.student.id, SKILL);
+      if (!served.ok) throw new Error(served.reason);
+      const item = (await ctx.store.getItem(served.itemId))!;
+      const p = JSON.parse(item.paramsJson);
+      const wrong = frac(p.d - p.b, p.a);
+      if (diagnose(linearBothSides, linearBothSides.generate(createRng(item.seed)), wrong) !== "unknown") continue;
+      expect(await ctx.svc.submitPracticeAnswer(served.itemId, toString(wrong))).toMatchObject({ mistakeId: "divided-by-a", feedback: childLabel });
+      break;
+    }
+  });
+
   it("a teacher can reject a draft, and an invalid draft can never be approved", async () => {
     ctx = await setup();
     await logDivideByAErrors(6);
