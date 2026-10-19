@@ -147,3 +147,11 @@
 - Load times on the live site (ms, page load): / 402, /s 475, /s/home 3341, Practise 1067, Teach 1122, Prove 1294–3311, /teacher 384, class board 7008–9477, projector 904. Actions: create class 4.0 s, student login 1.2 s, practise answer 2.1–2.2 s, teach check 2.9–3.8 s, prove answer 2.5–8.0 s, **unlock for class 11.5 s, PIN → board 8.0 s**. The class board and unlock are slow: many database round trips one after another, each crossing from Vercel to Turso. To look at next: put the Vercel function region next to the Turso database's region, and reduce the number of queries on the class board.
 - Files: `BUILD_LOG.md` (the app fix is in commit 09a9394).
 - Built in AgentFoundry with Claude Code.
+
+## 2026-10-19: Skill map fix live; smoke test complete
+- Das pushed 09a9394 and 58862b3; Vercel redeployed within about 30 s (seen as the new skill-card layout on /s/home).
+- Re-run on the live site with TEST class 8Q-ENN4 (exclude all `8Q-…` classes from pilot numbers): teacher PIN → board shows 1 Mastered, stuck board shows kept-x-sign, pilot CSV downloads: PASS. All 9 pages at 360px: no sideways scroll, no error text, no console errors, equations ≥ 18px: PASS (/s/home now 360/360, was 426/360).
+- With the run before it (steps 1–7 PASS on the same class), every step of the live smoke test now passes.
+- Still slow: the class board took 7.7 s at 360px (many database round trips, Vercel ↔ Turso). The first page after the redeploy took 11 s (a cold start).
+- Files: `BUILD_LOG.md`.
+- Built in AgentFoundry with Claude Code.
