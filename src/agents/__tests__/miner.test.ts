@@ -56,6 +56,10 @@ describe("the Misconception Miner (FAKE model)", () => {
     const model = goodScript();
     const result = await runMiner({ model, ports: createMinerPorts(ctx.store), skillId: SKILL });
     expect(result).toMatchObject({ status: "draft_saved", validations: 2, unknownErrors: 6 });
+    expect(result.attempts.map((a) => [a.answerFormula, a.ok, a.reproduced])).toEqual([
+      ["d / a", false, 0],
+      ["(d - b) / a", true, 6],
+    ]);
 
     // the model saw only anonymous numbers
     const seen = JSON.stringify(model.requests);
@@ -138,6 +142,30 @@ describe("the Misconception Miner (FAKE model)", () => {
     expect(result.status).toBe("no_draft");
     expect(model.requests[1].messages.at(-1)?.content).toMatch(/validate/i);
     expect(await ctx.svc.listPendingMinedMistakes()).toEqual([]);
+  });
+
+  it("describes every field of a mined mistake to the model as a JSON schema", async () => {
+    ctx = await setup();
+    await logDivideByAErrors(6);
+    const model = scriptedModel([finalAnswer("nothing")]);
+    await runMiner({ model, ports: createMinerPorts(ctx.store), skillId: SKILL });
+    const validate = model.requests[0].tools.find((t) => t.function.name === "validate_mined_mistake")!;
+    const props = validate.function.parameters.properties as Record<string, unknown>;
+    expect(Object.keys(props).sort()).toEqual(["answerFormula", "childLabel", "firstWrongLine", "id", "label", "lines", "stepType"]);
+  });
+
+  it("when the AI fails part-way, reports it and keeps the proposals already checked", async () => {
+    ctx = await setup();
+    await logDivideByAErrors(6);
+    let n = 0;
+    const steps = [toolCall("get_unknown_errors", {}), toolCall("validate_mined_mistake", WRONG_GUESS)];
+    const model = (async () => {
+      if (n < steps.length) return { message: steps[n++], provider: "fake", model: "fake" };
+      throw new Error("All AI providers failed: groq: HTTP 400");
+    }) as Parameters<typeof runMiner>[0]["model"];
+    const result = await runMiner({ model, ports: createMinerPorts(ctx.store), skillId: SKILL });
+    expect(result).toMatchObject({ status: "failed", validations: 1, error: expect.stringMatching(/HTTP 400/) });
+    expect(result.attempts.map((a) => a.answerFormula)).toEqual(["d / a"]);
   });
 
   it("stops after 5 failed validations", async () => {

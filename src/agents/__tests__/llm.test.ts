@@ -25,14 +25,24 @@ function fakeFetch(script: Record<string, (number | "network")[]>) {
   return { fn: fn as typeof fetch, calls };
 }
 
-const env = { GROQ_API_KEY: GROQ_KEY, OPENROUTER_API_KEY: OR_KEY };
+const models = { GROQ_MODEL: "groq-model-x", OPENROUTER_MODEL: "vendor/model-y:free" };
+const env = { GROQ_API_KEY: GROQ_KEY, OPENROUTER_API_KEY: OR_KEY, ...models };
 
 describe("providers", () => {
   it("reads providers in LLM_PROVIDERS order, skipping ones without a key", () => {
     expect(providersFromEnv(env).map((p) => p.name)).toEqual(["groq", "openrouter"]);
     expect(providersFromEnv({ ...env, LLM_PROVIDERS: "openrouter,groq" }).map((p) => p.name)).toEqual(["openrouter", "groq"]);
-    expect(providersFromEnv({ OPENROUTER_API_KEY: OR_KEY }).map((p) => p.name)).toEqual(["openrouter"]);
-    expect(providersFromEnv({ GROQ_API_KEY: GROQ_KEY })[0]).toMatchObject({ baseUrl: "https://api.groq.com/openai/v1" });
+    expect(providersFromEnv({ OPENROUTER_API_KEY: OR_KEY, ...models }).map((p) => p.name)).toEqual(["openrouter"]);
+    expect(providersFromEnv({ GROQ_API_KEY: GROQ_KEY, ...models })[0]).toMatchObject({
+      baseUrl: "https://api.groq.com/openai/v1",
+      model: "groq-model-x",
+    });
+  });
+
+  it("has no model names in code: a provider without <NAME>_MODEL is skipped, with a clear message", async () => {
+    expect(providersFromEnv({ GROQ_API_KEY: GROQ_KEY, OPENROUTER_API_KEY: OR_KEY })).toEqual([]);
+    const chat = createLlmClient({ env: { GROQ_API_KEY: GROQ_KEY }, log: memoryCallLog() });
+    await expect(chat(request)).rejects.toThrow(/GROQ_MODEL/);
   });
 
   it("only allows a free OpenRouter model", () => {
@@ -58,8 +68,8 @@ describe("createLlmClient", () => {
     expect(f.calls[0].body).toMatchObject({ messages: request.messages, tools: [{ type: "function" }] });
   });
 
-  it("falls back to the next provider on a rate limit (429), an error or a network failure", async () => {
-    for (const failure of [429, 500, "network"] as const) {
+  it("falls back to the next provider on a rate limit (429), an unknown model (404), an error or a network failure", async () => {
+    for (const failure of [429, 404, 500, "network"] as const) {
       const f = fakeFetch({ groq: [failure], openrouter: [200] });
       const log = memoryCallLog();
       const r = await createLlmClient({ env, fetchImpl: f.fn, log })(request);
@@ -76,9 +86,50 @@ describe("createLlmClient", () => {
     const log = memoryCallLog();
     const err = await createLlmClient({ env, fetchImpl: f.fn, log })(request).catch((e: Error) => e);
     expect(String(err)).toMatch(/groq[\s\S]*429[\s\S]*openrouter[\s\S]*503/);
+    const notFound = await createLlmClient({ env, fetchImpl: fakeFetch({ groq: [404], openrouter: [404] }).fn, log })(request).catch(
+      (e: Error) => e,
+    );
+    expect(String(notFound)).toMatch(/404 \(model not found\?/);
     for (const text of [String(err), JSON.stringify(log.records)]) {
       expect(text).not.toContain(GROQ_KEY);
       expect(text).not.toContain(OR_KEY);
+    }
+  });
+
+  it("retries the same provider once when the model wrote broken tool-call JSON (tool_use_failed)", async () => {
+    let calls = 0;
+    const bodies: { temperature: number }[] = [];
+    const f = async (_url: unknown, init?: RequestInit) => {
+      calls++;
+      bodies.push(JSON.parse(String(init?.body)));
+      if (calls === 1) {
+        return new Response(JSON.stringify({ error: { code: "tool_use_failed", message: "Failed to parse tool call arguments as JSON" } }), {
+          status: 400,
+        });
+      }
+      return reply("fixed");
+    };
+    const log = memoryCallLog();
+    const r = await createLlmClient({ env: { GROQ_API_KEY: GROQ_KEY, GROQ_MODEL: "m" }, fetchImpl: f as typeof fetch, log })(request);
+    expect(r.message.content).toBe("fixed");
+    expect(calls).toBe(2);
+    expect(bodies[1].temperature).toBeGreaterThan(bodies[0].temperature);
+    expect(log.records.map((x) => x.ok)).toEqual([false, true]);
+  });
+
+  it("keeps a short excerpt of the provider's error (code and message), with any key blanked out", async () => {
+    const body = { error: { message: `tool call validation failed for key ${GROQ_KEY} ${"x".repeat(400)}`, code: "invalid_request_error" } };
+    const f = async () => new Response(JSON.stringify(body), { status: 400 });
+    const log = memoryCallLog();
+    const err = await createLlmClient({ env: { GROQ_API_KEY: GROQ_KEY, GROQ_MODEL: "m" }, fetchImpl: f as typeof fetch, log })(request).catch(
+      (e: Error) => e,
+    );
+    expect(String(err)).toMatch(/HTTP 400.*invalid_request_error.*tool call validation failed/);
+    expect(log.records).toHaveLength(1); // not a broken-tool-JSON error, so no retry
+    expect(log.records[0].error).toMatch(/invalid_request_error/);
+    for (const text of [String(err), JSON.stringify(log.records)]) {
+      expect(text).not.toContain(GROQ_KEY);
+      expect(text.length).toBeLessThan(600);
     }
   });
 
@@ -98,7 +149,7 @@ describe("createLlmClient", () => {
     const f = fakeFetch({ groq: [200], openrouter: [200] });
     const r = await createLlmClient({ env: { ...env, GROQ_DAILY_CAP: "2" }, fetchImpl: f.fn, log, now })(request);
     expect(r.provider).toBe("openrouter"); // groq used up today's 2 calls
-    const capped = createLlmClient({ env: { GROQ_API_KEY: GROQ_KEY, GROQ_DAILY_CAP: "2" }, fetchImpl: f.fn, log, now });
+    const capped = createLlmClient({ env: { GROQ_API_KEY: GROQ_KEY, GROQ_MODEL: "m", GROQ_DAILY_CAP: "2" }, fetchImpl: f.fn, log, now });
     await expect(capped(request)).rejects.toThrow(/daily cap/);
     expect(providersFromEnv(env)[0].dailyCap).toBe(200);
   });

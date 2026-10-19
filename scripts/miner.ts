@@ -33,7 +33,9 @@ const skillId = args.find((a, i) => !a.startsWith("--") && args[i - 1] !== "--db
 const url = flag("--db") ?? process.env.DATABASE_URL ?? "file:data/shishya.db";
 
 if (!fake && providersFromEnv().length === 0) {
-  console.log("No AI key yet: put GROQ_API_KEY or OPENROUTER_API_KEY in .env.local (see .env.example). Use --fake to try it offline.");
+  console.log(
+    "No usable AI provider yet: put GROQ_API_KEY + GROQ_MODEL, or OPENROUTER_API_KEY + OPENROUTER_MODEL (a :free model), in .env.local (see .env.example). Use --fake to try it offline.",
+  );
   process.exit(0);
 }
 
@@ -62,6 +64,11 @@ try {
   console.log(`  unknown wrong answers (kinds): ${result.unknownErrors}`);
   console.log(`  result: ${result.status}${result.draftId ? ` → draft ${result.draftId} (waiting for a teacher on the class board)` : ""}`);
   console.log(`  validations: ${result.validations}, turns: ${result.turns}${result.agentStatus ? `, stopped: ${result.agentStatus}` : ""}`);
+  for (const [i, a] of result.attempts.entries()) {
+    console.log(`  proposal ${i + 1}: ${a.id}  x = ${a.answerFormula}  → ${a.ok ? "PASSED" : "failed"} (explains ${a.reproduced} logged answers)`);
+    for (const e of a.errors.slice(0, 3)) console.log(`      - ${e}`);
+  }
+  if (result.error) console.log(`  error: ${result.error}`);
   if (result.finalText) console.log(`  the model said: ${result.finalText.slice(0, 300)}`);
   if (!fake) console.log("  each AI call is logged (no keys, no messages) in data/agent-runs.jsonl");
 } catch (e) {

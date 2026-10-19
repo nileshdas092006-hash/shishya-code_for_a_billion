@@ -20,11 +20,15 @@ export type MinerPorts = {
 };
 
 export type MinerResult = {
-  status: "not_enough_data" | "draft_saved" | "no_draft";
+  status: "not_enough_data" | "draft_saved" | "no_draft" | "failed";
+  /** Why the run failed (for example every AI provider failed). */
+  error?: string;
   unknownErrors: number;
   validations: number;
   turns: number;
   draftId?: string;
+  /** Every proposal it validated: the formula, whether it passed, and why not. */
+  attempts: { id: string; answerFormula: string; ok: boolean; reproduced: number; errors: string[] }[];
   agentStatus?: string;
   finalText?: string;
 };
@@ -58,11 +62,36 @@ const describeError = (skill: SkillSpec, e: UnknownError) => {
   return { a, b, c, d, question: formatEquation([[a, true], [b, false]], [[c, true], [d, false]]), correctAnswer: correct, wrongAnswer: e.wrongAnswer, count: e.count ?? 1 };
 };
 
-const mistakeParam = {
+/** Every field, described, so models write valid tool-call JSON. */
+const mistakeSchema = {
   type: "object",
-  properties: { mistake: { type: "object", description: "The mined mistake JSON." } },
-  required: ["mistake"],
+  properties: {
+    id: { type: "string", description: "kebab-case name, e.g. divided-by-a" },
+    label: { type: "string", description: "what went wrong, for the teacher" },
+    childLabel: { type: "string", description: "what to do, for the child, in NCERT words" },
+    stepType: { type: "string", enum: ["move-x", "move-const", "simplify", "divide"] },
+    firstWrongLine: { type: "integer", minimum: 2, maximum: 5 },
+    lines: {
+      type: "object",
+      description: 'the wrong line templates from firstWrongLine to 5, e.g. {"5": "x = {(d - b) / a}"}',
+      additionalProperties: { type: "string" },
+    },
+    answerFormula: { type: "string", description: "the wrong answer as a formula of a, b, c, d, e.g. (d - b) / a" },
+  },
+  required: ["id", "label", "childLabel", "stepType", "firstWrongLine", "lines", "answerFormula"],
 };
+
+/** The same JSON with keys in a fixed order, so the same mistake always compares equal. */
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value && typeof value === "object") {
+    const entries = Object.keys(value as object)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonical((value as Record<string, unknown>)[k])}`);
+    return `{${entries.join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
 
 export async function runMiner(opts: {
   model: ChatModel;
@@ -78,10 +107,13 @@ export async function runMiner(opts: {
 
   const unknownErrors = await opts.ports.getUnknownErrors(skill.id);
   const total = unknownErrors.reduce((n, e) => n + (e.count ?? 1), 0);
-  if (total < MIN_UNKNOWN) return { status: "not_enough_data", unknownErrors: unknownErrors.length, validations: 0, turns: 0 };
+  if (total < MIN_UNKNOWN) {
+    return { status: "not_enough_data", unknownErrors: unknownErrors.length, validations: 0, turns: 0, attempts: [] };
+  }
   const existing = await opts.ports.existingMistakes(skill.id);
 
   let validations = 0;
+  const attempts: MinerResult["attempts"] = [];
   let lastPassing: string | null = null;
   let draftId: string | undefined;
   const asSpec = (args: unknown) => {
@@ -108,14 +140,21 @@ export async function runMiner(opts: {
         function: {
           name: "validate_mined_mistake",
           description: `Check a proposed mined mistake against the data and 1,000 generated questions. At most ${maxValidations} tries.`,
-          parameters: mistakeParam,
+          parameters: mistakeSchema,
         },
       },
       run: (args) => {
         const spec = asSpec(args);
         validations++;
         const report = check(spec);
-        lastPassing = report.ok ? JSON.stringify(spec) : lastPassing;
+        attempts.push({
+          id: String(spec?.id ?? ""),
+          answerFormula: String(spec?.answerFormula ?? ""),
+          ok: report.ok,
+          reproduced: report.reproduced,
+          errors: report.errors,
+        });
+        lastPassing = report.ok ? canonical(spec) : lastPassing;
         const content = JSON.stringify({ ok: report.ok, errors: report.errors, reproduced: report.reproduced });
         if (!report.ok && validations >= maxValidations) {
           return { content: `${content}\nNo validation tries left. Stop.`, endsRun: true };
@@ -129,12 +168,12 @@ export async function runMiner(opts: {
         function: {
           name: "submit_draft",
           description: "Save a mined mistake that has just passed validate_mined_mistake, as a draft for a teacher to review.",
-          parameters: mistakeParam,
+          parameters: mistakeSchema,
         },
       },
       run: async (args) => {
         const spec = asSpec(args);
-        if (JSON.stringify(spec) !== lastPassing) {
+        if (canonical(spec) !== lastPassing) {
           return { content: "Refused: validate this exact JSON with validate_mined_mistake first, then submit it unchanged." };
         }
         const report = check(spec); // check again: never trust the conversation
@@ -145,19 +184,34 @@ export async function runMiner(opts: {
     },
   ];
 
-  const result = await runAgent({
-    model: opts.model,
-    system: systemPrompt(skill),
-    user: `Find a new misconception for ${skill.id}. ${unknownErrors.length} kinds of unknown wrong answers are logged. Start with get_unknown_errors.`,
-    tools,
-    maxTurns: opts.maxTurns ?? 12,
-  });
+  let result;
+  try {
+    result = await runAgent({
+      model: opts.model,
+      system: systemPrompt(skill),
+      user: `Find a new misconception for ${skill.id}. ${unknownErrors.length} kinds of unknown wrong answers are logged. Start with get_unknown_errors.`,
+      tools,
+      maxTurns: opts.maxTurns ?? 12,
+    });
+  } catch (e) {
+    // the AI failed part-way (for example every provider failed): report it, keep what was already checked
+    return {
+      status: draftId ? "draft_saved" : "failed",
+      error: e instanceof Error ? e.message : "the AI failed",
+      unknownErrors: unknownErrors.length,
+      validations,
+      turns: 0,
+      draftId,
+      attempts,
+    };
+  }
   return {
     status: draftId ? "draft_saved" : "no_draft",
     unknownErrors: unknownErrors.length,
     validations,
     turns: result.turns,
     draftId,
+    attempts,
     agentStatus: result.status,
     finalText: result.final,
   };

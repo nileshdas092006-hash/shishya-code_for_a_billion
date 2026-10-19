@@ -24,19 +24,11 @@ type Env = Record<string, string | undefined>;
 
 export type Provider = { name: string; baseUrl: string; apiKey: string; model: string; dailyCap: number };
 
-const KNOWN: Record<string, { baseUrl: string; keyVar: string; modelVar: string; defaultModel: string }> = {
-  groq: {
-    baseUrl: "https://api.groq.com/openai/v1",
-    keyVar: "GROQ_API_KEY",
-    modelVar: "GROQ_MODEL",
-    defaultModel: "llama-3.3-70b-versatile",
-  },
-  openrouter: {
-    baseUrl: "https://openrouter.ai/api/v1",
-    keyVar: "OPENROUTER_API_KEY",
-    modelVar: "OPENROUTER_MODEL",
-    defaultModel: "meta-llama/llama-3.3-70b-instruct:free",
-  },
+// Model names are NOT in code (free models come and go): set GROQ_MODEL / OPENROUTER_MODEL; .env.example lists
+// tested choices. A provider with a key but no model name is skipped.
+const KNOWN: Record<string, { baseUrl: string; keyVar: string; modelVar: string }> = {
+  groq: { baseUrl: "https://api.groq.com/openai/v1", keyVar: "GROQ_API_KEY", modelVar: "GROQ_MODEL" },
+  openrouter: { baseUrl: "https://openrouter.ai/api/v1", keyVar: "OPENROUTER_API_KEY", modelVar: "OPENROUTER_MODEL" },
 };
 const DEFAULT_DAILY_CAP = 200;
 
@@ -48,8 +40,8 @@ export function providersFromEnv(env: Env = process.env): Provider[] {
     const known = KNOWN[name];
     const apiKey = known && env[known.keyVar]?.trim();
     if (!known || !apiKey) continue;
-    const model = env[known.modelVar]?.trim() || known.defaultModel;
-    if (name === "openrouter" && !model.endsWith(":free")) continue;
+    const model = env[known.modelVar]?.trim();
+    if (!model || (name === "openrouter" && !model.endsWith(":free"))) continue;
     const cap = Number(env[`${name.toUpperCase()}_DAILY_CAP`] ?? env.LLM_DAILY_CAP ?? DEFAULT_DAILY_CAP);
     out.push({ name, baseUrl: known.baseUrl, apiKey, model, dailyCap: Number.isFinite(cap) && cap >= 0 ? cap : DEFAULT_DAILY_CAP });
   }
@@ -122,6 +114,18 @@ const defaultLog = (env: Env) => (env.VERCEL || env.NODE_ENV === "production" ? 
 
 // ---------- the client ----------
 
+/** The provider's own error code and message, short, with the key blanked out (never the request). */
+async function errorExcerpt(res: Response, apiKey: string): Promise<string> {
+  try {
+    const body = (await res.json()) as { error?: { message?: unknown; code?: unknown } | string };
+    const err = typeof body.error === "string" ? { message: body.error } : (body.error ?? {});
+    const text = [err.code, err.message].filter((x) => typeof x === "string" && x).join(" ");
+    return text.split(apiKey).join("***").replace(/\s+/g, " ").slice(0, 200);
+  } catch {
+    return "";
+  }
+}
+
 export function createLlmClient(
   opts: { env?: Env; fetchImpl?: typeof fetch; log?: CallLog; now?: () => Date; timeoutMs?: number } = {},
 ): ChatModel {
@@ -134,55 +138,75 @@ export function createLlmClient(
   return async (request) => {
     const providers = providersFromEnv(env);
     if (providers.length === 0) {
-      throw new Error("No AI provider key found. Put GROQ_API_KEY or OPENROUTER_API_KEY in .env.local (see .env.example).");
+      throw new Error(
+        "No usable AI provider. Put GROQ_API_KEY + GROQ_MODEL, or OPENROUTER_API_KEY + OPENROUTER_MODEL (a :free model), in .env.local (see .env.example).",
+      );
     }
     const failures: string[] = [];
     for (const p of providers) {
-      if (log.countToday(p.name, now()) >= p.dailyCap) {
-        failures.push(`${p.name}: daily cap of ${p.dailyCap} calls reached`);
-        continue;
-      }
-      const started = Date.now();
-      const base = { at: now().toISOString(), provider: p.name, model: p.model };
-      try {
-        const res = await fetchImpl(`${p.baseUrl}/chat/completions`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${p.apiKey}`, "Content-Type": "application/json", "X-Title": "Shishya" },
-          body: JSON.stringify({
-            model: p.model,
-            messages: request.messages,
-            ...(request.tools.length ? { tools: request.tools, tool_choice: "auto" } : {}),
-            temperature: 0,
-          }),
-          signal: AbortSignal.timeout(timeoutMs),
-        });
-        if (!res.ok) {
-          const why = res.status === 429 ? "rate limited" : "error";
-          log.record({ ...base, ok: false, ms: Date.now() - started, status: res.status, error: why });
-          failures.push(`${p.name}: HTTP ${res.status} (${why})`);
-          continue;
+      // One retry on the same provider if the model wrote broken tool-call JSON (Groq: "tool_use_failed").
+      for (let attempt = 0; attempt < 2; attempt++) {
+        if (log.countToday(p.name, now()) >= p.dailyCap) {
+          failures.push(`${p.name}: daily cap of ${p.dailyCap} calls reached`);
+          break;
         }
-        const data = (await res.json()) as {
-          choices?: { message?: ChatMessage }[];
-          usage?: { prompt_tokens?: number; completion_tokens?: number };
-        };
-        const message = data.choices?.[0]?.message;
-        if (!message) throw new Error("the reply had no message");
-        log.record({
-          ...base,
-          ok: true,
-          ms: Date.now() - started,
-          status: res.status,
-          promptTokens: data.usage?.prompt_tokens,
-          completionTokens: data.usage?.completion_tokens,
-        });
-        return { message: { role: "assistant", content: message.content ?? null, tool_calls: message.tool_calls }, provider: p.name, model: p.model };
-      } catch (e) {
-        const why = e instanceof Error ? e.name === "TimeoutError" ? "timed out" : e.message : "failed";
-        log.record({ ...base, ok: false, ms: Date.now() - started, error: why });
-        failures.push(`${p.name}: ${why}`);
+        const outcome = await callOnce(p, request, attempt === 0 ? 0 : 0.3);
+        if (outcome.reply) return outcome.reply;
+        if (outcome.retry && attempt === 0) continue;
+        failures.push(`${p.name}: ${outcome.why}`);
+        break;
       }
     }
     throw new Error(`All AI providers failed: ${failures.join("; ")}`);
   };
+
+  async function callOnce(
+    p: Provider,
+    request: ChatRequest,
+    temperature: number,
+  ): Promise<{ reply?: ChatReply; why?: string; retry?: boolean }> {
+    const started = Date.now();
+    const base = { at: now().toISOString(), provider: p.name, model: p.model };
+    try {
+      const res = await fetchImpl(`${p.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${p.apiKey}`, "Content-Type": "application/json", "X-Title": "Shishya" },
+        body: JSON.stringify({
+          model: p.model,
+          messages: request.messages,
+          ...(request.tools.length ? { tools: request.tools, tool_choice: "auto" } : {}),
+          temperature,
+        }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (!res.ok) {
+        const kind = res.status === 429 ? "rate limited" : res.status === 404 ? "model not found? check the model name" : "error";
+        const detail = await errorExcerpt(res, p.apiKey);
+        const why = detail ? `${kind}: ${detail}` : kind;
+        log.record({ ...base, ok: false, ms: Date.now() - started, status: res.status, error: why });
+        return { why: `HTTP ${res.status} (${why})`, retry: res.status === 400 && detail.includes("tool_use_failed") };
+      }
+      const data = (await res.json()) as {
+        choices?: { message?: ChatMessage }[];
+        usage?: { prompt_tokens?: number; completion_tokens?: number };
+      };
+      const message = data.choices?.[0]?.message;
+      if (!message) throw new Error("the reply had no message");
+      log.record({
+        ...base,
+        ok: true,
+        ms: Date.now() - started,
+        status: res.status,
+        promptTokens: data.usage?.prompt_tokens,
+        completionTokens: data.usage?.completion_tokens,
+      });
+      return {
+        reply: { message: { role: "assistant", content: message.content ?? null, tool_calls: message.tool_calls }, provider: p.name, model: p.model },
+      };
+    } catch (e) {
+      const why = e instanceof Error ? (e.name === "TimeoutError" ? "timed out" : e.message) : "failed";
+      log.record({ ...base, ok: false, ms: Date.now() - started, error: why });
+      return { why };
+    }
+  }
 }
