@@ -1,15 +1,32 @@
 # Shishya
 
-Shishya finds the exact algebra step each child gets wrong, lets them fix it by teaching the Shishya, and uses code (not AI) to decide when they have truly learned it.
+Shishya is a free, open-source algebra practice app for Class 7–9 children in India's crowded classrooms. It finds the
+exact step of an equation each child gets wrong, lets the child fix it by "teaching the Shishya" (a classmate character
+whose working has a mistake), and then asks for proof with AI switched off. Code, not AI, decides when a child has
+truly learned a skill. Two AI agents help behind the scenes, always checked by code and approved by a teacher: the
+Misconception Miner turns unexplained wrong answers into new mistake patterns, and the Skill Author drafts new skills.
+No names are stored, children under 13 never see an AI chat, and every child-facing word follows the NCERT textbook,
+in English and Hindi.
 
-## Run it
+**Live demo:** _coming soon (link will be added here after deploying to Vercel)_
+
+**Built with AgentFoundry** (all app code was written in AgentFoundry with Claude Code; see [BUILD_LOG.md](BUILD_LOG.md)).
+
+## Run it locally
 
 Needs Node.js 22.18 or newer (24 recommended).
 
 ```bash
 npm install
 npm run dev   # open http://localhost:3000
-npm test      # run the unit tests
+```
+
+## Run the tests
+
+```bash
+npm test        # unit, property and end-to-end server tests (Vitest)
+npm run lint    # ESLint, including the rule that keeps src/core pure
+npm run build   # production build
 ```
 
 Demo data (kept apart from pilot data, in `data/demo.db`, and shown with a DEMO banner):
