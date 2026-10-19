@@ -1,12 +1,12 @@
 import Link from "next/link";
 import { Suspense } from "react";
-import { skillKey, t } from "@/i18n";
+import { t } from "@/i18n";
 import { getServices } from "@/server/instance";
 import { logoutStudent } from "../../actions";
 import { currentStudent } from "../../_lib/auth";
 import { guardPage, LoggedOutNotice } from "../../_lib/page-guard";
 import { Loading } from "../../_lib/student-pages";
-import { StateIcon } from "../../_components/StateIcon";
+import { SkillCardHeader } from "./SkillCardHeader";
 
 export default function StudentHome() {
   return (
@@ -32,14 +32,7 @@ function SkillMap() {
             const path = encodeURIComponent(skillId);
             return (
               <li key={skillId} className="card flex flex-col gap-3">
-                <div className="flex items-center gap-3">
-                  <StateIcon state={state} />
-                  <div className="flex flex-col">
-                    <span className="text-2xl font-bold">{t(skillKey(skillId, "title"))}</span>
-                    <span className="math text-lg text-gray-700">{t(skillKey(skillId, "example"))}</span>
-                  </div>
-                  <span className="ml-auto text-lg font-bold">{t(`map.state.${state}`)}</span>
-                </div>
+                <SkillCardHeader skillId={skillId} state={state} />
                 {state === "LOCKED" ? (
                   <p className="text-lg">{t("map.locked")}</p>
                 ) : (
