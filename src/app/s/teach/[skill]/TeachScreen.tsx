@@ -6,6 +6,7 @@ import { t, type MessageKey } from "@/i18n";
 import { startTeachSession, submitTeach } from "../../../actions";
 import { Shishya, type Mood } from "../../../_components/Shishya";
 import { TraceLines } from "../../../_components/TraceLines";
+import { ReadyButton } from "../../../_components/ReadyButton";
 
 type Trace = { itemId: string; question: string; lines: string[] };
 type Result = { ok: boolean; text: string };
@@ -93,9 +94,9 @@ export function TeachScreen({ skillId }: { skillId: string }) {
           <Shishya mood="confused" size={120} />
           <p className="text-xl">{t("teach.intro")}</p>
         </div>
-        <button type="button" className="btn btn-primary text-xl" onClick={start} disabled={pending}>
+        <ReadyButton type="button" className="btn btn-primary text-xl" onClick={start} disabled={pending}>
           {t("teach.start")}
-        </button>
+        </ReadyButton>
       </div>
     );
   }
@@ -132,9 +133,9 @@ export function TeachScreen({ skillId }: { skillId: string }) {
               {t("map.prove")}
             </Link>
           )}
-          <button type="button" className="btn" onClick={start} disabled={pending}>
+          <ReadyButton type="button" className="btn" onClick={start} disabled={pending}>
             {t("teach.start")}
-          </button>
+          </ReadyButton>
           <Link href="/s/home" className="btn">
             {t("common.back")}
           </Link>
@@ -172,9 +173,9 @@ export function TeachScreen({ skillId }: { skillId: string }) {
             {t("teach.typeHint")}
           </p>
           <div className="flex flex-wrap items-center gap-4">
-            <button type="submit" className="btn btn-primary text-xl" disabled={pending || !typed.trim()}>
+            <ReadyButton type="submit" className="btn btn-primary text-xl" disabled={pending || !typed.trim()}>
               {t("teach.check")}
-            </button>
+            </ReadyButton>
             <span className="text-lg">{t("teach.triesLeft", { n: triesLeft })}</span>
           </div>
         </form>
@@ -187,9 +188,9 @@ export function TeachScreen({ skillId }: { skillId: string }) {
       )}
       {!result?.ok && triesLeft === 0 && <p className="msg-note text-xl">{t("teach.noTries")}</p>}
       {traceDone && (
-        <button type="button" className="btn btn-primary text-xl self-start" onClick={next}>
+        <ReadyButton type="button" className="btn btn-primary text-xl self-start" onClick={next}>
           {t("teach.next")}
-        </button>
+        </ReadyButton>
       )}
     </div>
   );

@@ -5,6 +5,7 @@ import { skillKey, t, type MessageKey } from "@/i18n";
 import { projectorCheckLine, projectorNew } from "../../../actions";
 import { Shishya, type Mood } from "../../../_components/Shishya";
 import { TraceLines } from "../../../_components/TraceLines";
+import { ReadyButton } from "../../../_components/ReadyButton";
 
 type Trace = { seed: number; mistakeId: string; question: string; lines: string[] };
 
@@ -62,9 +63,9 @@ export function ProjectorScreen({ classCode, skillIds }: { classCode: string; sk
             ))}
           </select>
         )}
-        <button type="button" className="btn btn-primary text-2xl" onClick={load} disabled={pending}>
+        <ReadyButton type="button" className="btn btn-primary text-2xl" onClick={load} disabled={pending}>
           {t("project.newTrace")}
-        </button>
+        </ReadyButton>
       </div>
 
       {trace && (
@@ -83,9 +84,9 @@ export function ProjectorScreen({ classCode, skillIds }: { classCode: string; sk
                 {t("project.typeFix")} ({t("teach.line", { n: selected })})
                 <input value={typed} onChange={(e) => setTyped(e.target.value)} autoComplete="off" className="field math text-6xl min-h-24" />
               </label>
-              <button type="submit" className="btn btn-primary text-3xl self-start min-h-20 px-10" disabled={pending || !typed.trim()}>
+              <ReadyButton type="submit" className="btn btn-primary text-3xl self-start min-h-20 px-10" disabled={pending || !typed.trim()}>
                 {t("project.check")}
-              </button>
+              </ReadyButton>
             </form>
           )}
           {result && (

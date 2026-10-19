@@ -2,6 +2,7 @@
 
 import { t } from "@/i18n";
 import { Equation } from "./Equation";
+import { ReadyButton } from "./ReadyButton";
 
 // The Shishya's working, one tappable line each (mouse, touch or keyboard).
 
@@ -25,7 +26,7 @@ export function TraceLines({
         const isSelected = selected === n;
         return (
           <li key={n}>
-            <button
+            <ReadyButton
               type="button"
               onClick={() => onSelect(n)}
               disabled={disabled}
@@ -41,7 +42,7 @@ export function TraceLines({
               <span className="flex-1 min-w-0 w-full">
                 <Equation text={text} size={big ? "xl" : "md"} />
               </span>
-            </button>
+            </ReadyButton>
           </li>
         );
       })}

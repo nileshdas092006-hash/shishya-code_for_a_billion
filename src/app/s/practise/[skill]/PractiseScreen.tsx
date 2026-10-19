@@ -6,6 +6,7 @@ import { hasMessage, hintKey, keepMathTogether, mistakeKey, skillKey, t, type Me
 import { answerPractice, servePractice } from "../../../actions";
 import { Equation } from "../../../_components/Equation";
 import { Shishya } from "../../../_components/Shishya";
+import { ReadyButton } from "../../../_components/ReadyButton";
 
 const STREAK_FOR_TEACH = 5;
 const HINT_LEVELS = 4;
@@ -99,9 +100,9 @@ export function PractiseScreen({ skillId, answerKind }: { skillId: string; answe
             {t(answerKind === "expression" ? "practise.answerHint.expression" : "practise.answerHint")}
           </p>
           {!answered && (
-            <button type="submit" className="btn btn-primary text-xl self-start" disabled={pending || !answer.trim()}>
+            <ReadyButton type="submit" className="btn btn-primary text-xl self-start" disabled={pending || !answer.trim()}>
               {t("practise.check")}
-            </button>
+            </ReadyButton>
           )}
         </form>
       </div>
@@ -117,9 +118,9 @@ export function PractiseScreen({ skillId, answerKind }: { skillId: string; answe
       )}
 
       {answered && (
-        <button type="button" className="btn btn-primary text-xl self-start" onClick={loadNext} disabled={pending}>
+        <ReadyButton type="button" className="btn btn-primary text-xl self-start" onClick={loadNext} disabled={pending}>
           {t("practise.next")}
-        </button>
+        </ReadyButton>
       )}
 
       <section aria-label={t("practise.hint")} className="flex flex-col gap-3">
@@ -130,9 +131,9 @@ export function PractiseScreen({ skillId, answerKind }: { skillId: string; answe
           </div>
         ))}
         {hints < HINT_LEVELS ? (
-          <button type="button" className="btn self-start" onClick={() => setHints((h) => h + 1)}>
+          <ReadyButton type="button" className="btn self-start" onClick={() => setHints((h) => h + 1)}>
             {t("practise.hint")}
-          </button>
+          </ReadyButton>
         ) : (
           <p className="text-gray-700">{t("practise.noMoreHints")}</p>
         )}

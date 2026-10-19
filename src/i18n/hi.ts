@@ -98,6 +98,7 @@ export const hi: Record<string, string> = {
   "common.error": "कुछ गलत हो गया। कृपया फिर से कोशिश करो।",
   "common.locked": "यह कौशल बंद है। अपने शिक्षक से कहो।",
   "common.notFound": "वह पेज नहीं मिला।",
+  "common.loading": "लोड हो रहा है…",
   "setup.missing": "शिष्य अभी तैयार नहीं है: सर्वर में एक सेटिंग नहीं है। अपने शिक्षक को बताओ।",
 
   "skill.alg.linear.both-sides.title": "दोनों पक्षों में x",

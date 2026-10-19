@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { ReadyButton } from "../../_components/ReadyButton";
 
 // The teacher's review of a mistake the AI Misconception Miner found. The teacher may rewrite the teacher label and
 // the child message before approving; the formula cannot be changed here. Approving runs the code checks again.
@@ -55,12 +56,12 @@ export function MinedReviewForm({
         Wrong answer it predicts (cannot be edited here): <span className="math font-bold">x = {draft.answerFormula}</span>
       </p>
       <div className="flex flex-wrap gap-3">
-        <button type="button" className="btn btn-primary" disabled={pending} onClick={() => send("approved")}>
+        <ReadyButton type="button" className="btn btn-primary" disabled={pending} onClick={() => send("approved")}>
           Approve
-        </button>
-        <button type="button" className="btn" disabled={pending} onClick={() => send("rejected")}>
+        </ReadyButton>
+        <ReadyButton type="button" className="btn" disabled={pending} onClick={() => send("rejected")}>
           Reject
-        </button>
+        </ReadyButton>
       </div>
       {message && (
         <p role="alert" className="msg-bad">

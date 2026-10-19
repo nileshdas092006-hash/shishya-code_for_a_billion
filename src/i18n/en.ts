@@ -103,6 +103,7 @@ export const ui = {
   "common.error": "Something went wrong. Please try again.",
   "common.locked": "This skill is locked. Ask your teacher.",
   "common.notFound": "We could not find that page.",
+  "common.loading": "Loading…",
   "setup.missing": "Shishya is not set up yet: the server is missing a setting. Tell your teacher.",
 
   "skill.alg.integers.ops.title": "Adding and subtracting integers",

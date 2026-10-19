@@ -6,6 +6,7 @@ import { hasMessage, mistakeKey, skillKey, t, type MessageKey } from "@/i18n";
 import { proofOverview, startProofRun, submitProof } from "../../../actions";
 import { Equation } from "../../../_components/Equation";
 import { Shishya } from "../../../_components/Shishya";
+import { ReadyButton } from "../../../_components/ReadyButton";
 
 type Item = { itemId: string; format: "solve" | "apply"; text: string; answered: boolean };
 type Run = { deadline: string; items: Item[] };
@@ -157,9 +158,9 @@ export function ProveScreen({ skillId, answerKind }: { skillId: string; answerKi
             <p id="prove-hint" className="text-base text-gray-700">
               {t(answerKind === "expression" ? "practise.answerHint.expression" : "practise.answerHint")}
             </p>
-            <button type="submit" className="btn btn-primary text-xl self-start" disabled={pending || !answer.trim()}>
+            <ReadyButton type="submit" className="btn btn-primary text-xl self-start" disabled={pending || !answer.trim()}>
               {t("prove.submit")}
-            </button>
+            </ReadyButton>
           </form>
         </div>
         {note && (
@@ -177,9 +178,9 @@ export function ProveScreen({ skillId, answerKind }: { skillId: string; answerKi
     return (
       <div className="flex flex-col items-start gap-4">
         <p className="text-xl">{t("prove.rules")}</p>
-        <button type="button" className="btn btn-primary text-2xl" onClick={start} disabled={pending}>
+        <ReadyButton type="button" className="btn btn-primary text-2xl" onClick={start} disabled={pending}>
           {t("prove.start")}
-        </button>
+        </ReadyButton>
       </div>
     );
   }
