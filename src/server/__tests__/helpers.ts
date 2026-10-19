@@ -39,7 +39,11 @@ function sweepOldFolders() {
   mkdirSync(TEST_ROOT, { recursive: true });
   for (const name of readdirSync(TEST_ROOT)) {
     const dir = join(TEST_ROOT, name);
-    if (Date.now() - statSync(dir).mtimeMs > 3600_000) removeQuietly(dir);
+    try {
+      if (Date.now() - statSync(dir).mtimeMs > 3600_000) removeQuietly(dir);
+    } catch {
+      // another test worker removed it a moment ago: nothing to do
+    }
   }
 }
 
