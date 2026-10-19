@@ -20,6 +20,8 @@ export const hi: Record<string, string> = {
   "login.go": "शुरू करो",
   "login.wrong": "ये कोड नहीं मिले। अपने शिक्षक से जाँच लो।",
   "login.logout": "समाप्त करो और लॉग आउट करो",
+  "login.again": "कृपया अपने कोड फिर से लिखो।",
+  "login.againLink": "मेरे कोड लिखो",
 
   "map.title": "तुम्हारे कौशल",
   "map.state.LOCKED": "बंद",
@@ -96,6 +98,7 @@ export const hi: Record<string, string> = {
   "common.error": "कुछ गलत हो गया। कृपया फिर से कोशिश करो।",
   "common.locked": "यह कौशल बंद है। अपने शिक्षक से कहो।",
   "common.notFound": "वह पेज नहीं मिला।",
+  "setup.missing": "शिष्य अभी तैयार नहीं है: सर्वर में एक सेटिंग नहीं है। अपने शिक्षक को बताओ।",
 
   "skill.alg.linear.both-sides.title": "दोनों पक्षों में x",
   "skill.alg.linear.both-sides.example": "जैसे 4x − 3 = 2x + 7",

@@ -1,7 +1,20 @@
+import { createClient } from "@libsql/client";
 import { afterEach, describe, expect, it } from "vitest";
+import { SetupError } from "../instance";
 import { createServices } from "../services";
 import { openStore } from "../store";
 import { answerProof, correctFix, makeClock, SKILL, tempDbUrl } from "./helpers";
+
+/** Rows actually in the database file (read with a separate connection). */
+async function rowCounts(url: string) {
+  const db = createClient({ url });
+  try {
+    const n = async (table: string) => Number((await db.execute(`SELECT COUNT(*) AS n FROM ${table}`)).rows[0].n);
+    return { classes: await n("classes"), students: await n("students") };
+  } finally {
+    db.close();
+  }
+}
 
 let cleanup: (() => void) | undefined;
 afterEach(() => {
@@ -43,6 +56,58 @@ describe("creating a class", () => {
     await expect(svc.createClassroom({ grade: 8, section: "A", studentCount: 0 })).rejects.toThrow();
     await expect(svc.createClassroom({ grade: 8, section: "A", studentCount: 61 })).rejects.toThrow();
     expect((await svc.createClassroom({ grade: 7, section: "c", studentCount: 3 })).classCode).toMatch(/^7C-/);
+  });
+
+  it("checks every precondition (the server settings too) BEFORE writing anything", async () => {
+    const { url, cleanup: rm } = tempDbUrl();
+    const store = await openStore({ url });
+    cleanup = () => {
+      store.close();
+      rm();
+    };
+    const order: string[] = [];
+    const spied = new Proxy(store, {
+      get: (target, key) =>
+        key === "transaction" || key === "insertClass" || key === "insertStudent"
+          ? (...args: unknown[]) => (order.push(String(key)), (target[key] as (...a: unknown[]) => unknown)(...args))
+          : target[key as keyof typeof target],
+    });
+    const svc = createServices(spied, {
+      checkSetup: () => {
+        order.push("checkSetup");
+        throw new SetupError("SESSION_SECRET", "SESSION_SECRET (32+ characters) must be set in production.");
+      },
+    });
+    await expect(svc.createClassroom({ grade: 8, section: "Q", studentCount: 3 })).rejects.toBeInstanceOf(SetupError);
+    expect(order).toEqual(["checkSetup"]);
+    expect(await rowCounts(url)).toEqual({ classes: 0, students: 0 });
+    // bad input is refused before the settings are even looked at
+    order.length = 0;
+    await expect(svc.createClassroom({ grade: 6, section: "Q", studentCount: 3 })).rejects.toThrow(/Grade/);
+    expect(order).toEqual([]);
+  });
+
+  it("writes the class, its PIN and its students in one transaction: a failure halfway leaves nothing", async () => {
+    const { url, cleanup: rm } = tempDbUrl();
+    const store = await openStore({ url });
+    cleanup = () => {
+      store.close();
+      rm();
+    };
+    let students = 0;
+    const failing = new Proxy(store, {
+      get: (target, key) =>
+        key === "insertStudent"
+          ? async (...args: Parameters<typeof store.insertStudent>) => {
+              if (++students === 2) throw new Error("database went away");
+              return target.insertStudent(...args);
+            }
+          : target[key as keyof typeof target],
+    });
+    const svc = createServices(failing, { checkSetup: () => {} });
+    await expect(svc.createClassroom({ grade: 8, section: "Q", studentCount: 3 })).rejects.toThrow("database went away");
+    expect(await rowCounts(url)).toEqual({ classes: 0, students: 0 });
+    expect((await svc.createClassroom({ grade: 8, section: "Q", studentCount: 1 })).studentCodes).toEqual(["8Q-01"]);
   });
 
   it("Class 7 has AI off", async () => {

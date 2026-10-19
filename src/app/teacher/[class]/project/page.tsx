@@ -5,6 +5,7 @@ import { Suspense } from "react";
 import { SKILLS } from "@/core/skills";
 import { getServices } from "@/server/instance";
 import { teacherClass } from "../../../_lib/auth";
+import { guardPage } from "../../../_lib/page-guard";
 import { TeacherPinForm } from "../../TeacherPinForm";
 import { ProjectorScreen } from "./ProjectorScreen";
 
@@ -19,25 +20,27 @@ export default function ProjectorPage({ params }: PageProps<"/teacher/[class]/pr
   );
 }
 
-async function Projector({ params }: { params: Promise<{ class: string }> }) {
-  const classCode = decodeURIComponent((await params).class).toUpperCase();
-  await connection();
-  if (!(await (await getServices()).getClassByCode(classCode))) notFound();
-  const cls = await teacherClass(classCode);
-  if (!cls) {
+function Projector({ params }: { params: Promise<{ class: string }> }) {
+  return guardPage("teacher", async () => {
+    const classCode = decodeURIComponent((await params).class).toUpperCase();
+    await connection();
+    if (!(await (await getServices()).getClassByCode(classCode))) notFound();
+    const cls = await teacherClass(classCode);
+    if (!cls) {
+      return (
+        <section className="card flex flex-col gap-4">
+          <h1 className="text-2xl font-bold">Class {classCode}: enter the teacher PIN</h1>
+          <TeacherPinForm classCode={classCode} />
+        </section>
+      );
+    }
     return (
-      <section className="card flex flex-col gap-4">
-        <h1 className="text-2xl font-bold">Class {classCode}: enter the teacher PIN</h1>
-        <TeacherPinForm classCode={classCode} />
-      </section>
+      <div className="flex flex-col gap-4">
+        <Link href={`/teacher/${encodeURIComponent(cls.code)}`} className="btn self-start no-print">
+          Back to the class board
+        </Link>
+        <ProjectorScreen classCode={cls.code} skillIds={SKILLS.map((s) => s.spec.id)} />
+      </div>
     );
-  }
-  return (
-    <div className="flex flex-col gap-4">
-      <Link href={`/teacher/${encodeURIComponent(cls.code)}`} className="btn self-start no-print">
-        Back to the class board
-      </Link>
-      <ProjectorScreen classCode={cls.code} skillIds={SKILLS.map((s) => s.spec.id)} />
-    </div>
-  );
+  });
 }

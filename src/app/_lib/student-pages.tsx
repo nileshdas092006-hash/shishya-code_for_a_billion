@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 import { getSkillEntry } from "@/core/skills";
 import { skillKey, t } from "@/i18n";
 import { getServices } from "@/server/instance";
@@ -8,9 +8,10 @@ import { currentStudent } from "./auth";
 
 // Shared by the student skill pages: who is logged in, which skill, and its state.
 
+/** null when no child is logged in (the page then shows LoggedOutNotice). */
 export async function studentSkill(rawSkill: string) {
   const student = await currentStudent();
-  if (!student) redirect("/s");
+  if (!student) return null;
   const skillId = decodeURIComponent(rawSkill);
   if (!getSkillEntry(skillId)) notFound();
   const state = await (await getServices()).getState(student.studentId, skillId);

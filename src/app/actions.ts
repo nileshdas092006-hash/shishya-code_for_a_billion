@@ -4,7 +4,9 @@ import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 import { getSkillEntry } from "@/core/skills";
 import type { MessageKey } from "@/i18n";
-import { getServices } from "@/server/instance";
+import { getServices, isSetupError, requireSetup } from "@/server/instance";
+import { logServerError } from "@/server/setup";
+import { SETUP_MISSING_TEACHER } from "./_lib/page-guard";
 import {
   addTeacherClass,
   currentStudent,
@@ -23,8 +25,30 @@ const notAllowed = (code: NotAllowed["code"] = "auth"): NotAllowed => ({ ok: fal
 const str = (v: unknown, max = 200) => String(v ?? "").slice(0, max);
 const knownSkill = (skillId: unknown) => (getSkillEntry(str(skillId)) ? str(skillId) : null);
 
-async function studentOrNull() {
-  return currentStudent();
+// A missing server setting must never crash a screen: the cause goes to the server log, and the caller
+// is treated as not logged in (or gets a friendly "not set up yet" message).
+async function orNullIfNotSetUp<T>(where: string, read: () => Promise<T | null>): Promise<T | null> {
+  try {
+    return await read();
+  } catch (e) {
+    if (!isSetupError(e)) throw e;
+    logServerError(where, e);
+    return null;
+  }
+}
+
+const studentOrNull = () => orNullIfNotSetUp("student action", currentStudent);
+const classOrNull = (classCode: unknown) => orNullIfNotSetUp("teacher action", () => teacherClass(str(classCode, 20)));
+
+/** Checks the server settings before a log-in; a friendly message instead of a crash when one is missing. */
+function notSetUp(where: string): boolean {
+  try {
+    requireSetup();
+    return false;
+  } catch (e) {
+    logServerError(where, e);
+    return true;
+  }
 }
 
 async function ownedItem(itemId: unknown) {
@@ -37,6 +61,7 @@ async function ownedItem(itemId: unknown) {
 // ---------------- student: log in / out ----------------
 
 export async function loginStudent(_prev: { error?: MessageKey }, form: FormData): Promise<{ error?: MessageKey }> {
+  if (notSetUp("student login")) return { error: "setup.missing" };
   const result = await (await getServices()).studentLogin(str(form.get("classCode"), 20), str(form.get("studentCode"), 20));
   if (!result.ok) return { error: "login.wrong" };
   await startStudentSession(result.studentId);
@@ -124,11 +149,16 @@ export async function createClassAction(_prev: CreateClassState, form: FormData)
     await addTeacherClass(room.classId);
     return { status: "created", classCode: room.classCode, pin: room.pin, studentCodes: room.studentCodes, grade, section: section.toUpperCase() };
   } catch (e) {
+    if (isSetupError(e)) {
+      logServerError("create class", e);
+      return { status: "error", message: SETUP_MISSING_TEACHER };
+    }
     return { status: "error", message: e instanceof Error ? e.message : "Could not create the class." };
   }
 }
 
 export async function teacherLogin(_prev: { error?: string }, form: FormData): Promise<{ error?: string }> {
+  if (notSetUp("teacher login")) return { error: SETUP_MISSING_TEACHER };
   const classCode = str(form.get("classCode"), 20);
   const result = await (await getServices()).verifyTeacherPin(classCode, str(form.get("pin"), 12));
   if (!result.ok) return { error: result.reason };
@@ -138,7 +168,7 @@ export async function teacherLogin(_prev: { error?: string }, form: FormData): P
 }
 
 export async function unlockSkillForClass(classCode: string, skillId: string) {
-  const cls = await teacherClass(str(classCode, 20));
+  const cls = await classOrNull(classCode);
   const skill = knownSkill(skillId);
   if (!cls || !skill) return;
   await (await getServices()).teacherUnlockClass(cls.id, skill);
@@ -151,7 +181,7 @@ export async function decideMined(
   decision: "approved" | "rejected",
   edits?: { label?: string; childLabel?: string },
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
-  const cls = await teacherClass(str(classCode, 20));
+  const cls = await classOrNull(classCode);
   if (!cls || (decision !== "approved" && decision !== "rejected")) return { ok: false, reason: "Enter the class PIN first." };
   const clean = edits && {
     ...(typeof edits.label === "string" ? { label: str(edits.label, 300) } : {}),
@@ -163,7 +193,7 @@ export async function decideMined(
 }
 
 export async function projectorNew(classCode: string, skillId: string) {
-  const cls = await teacherClass(str(classCode, 20));
+  const cls = await classOrNull(classCode);
   const skill = knownSkill(skillId);
   if (!cls) return notAllowed();
   if (!skill) return notAllowed("not_found");
@@ -178,7 +208,7 @@ export async function projectorCheckLine(
   tappedLine: number,
   typedLine: string,
 ) {
-  const cls = await teacherClass(str(classCode, 20));
+  const cls = await classOrNull(classCode);
   const skill = knownSkill(skillId);
   if (!cls) return notAllowed();
   if (!skill) return notAllowed("not_found");

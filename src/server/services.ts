@@ -26,6 +26,8 @@ export type ServiceOptions = {
   random?: () => number;
   /** Overrides PROOF_COOLDOWN_HOURS. */
   cooldownHours?: number;
+  /** Throws (a SetupError) if a server setting is missing; run before creating a class, so nothing is half-written. */
+  checkSetup?: () => void;
 };
 
 /** reason is English for logs and teachers; screens show their own translated words based on code (and errorKey). */
@@ -513,8 +515,10 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       if (!Number.isInteger(count) || count < 1 || count > MAX_STUDENTS) throw new Error(`Students must be 1 to ${MAX_STUDENTS}.`);
       const pin = input.pin ?? String(randomInt(0, 1_000_000)).padStart(6, "0");
       if (!/^\d{6}$/.test(pin)) throw new Error("The PIN must be 6 digits.");
+      opts.checkSetup?.(); // e.g. no SESSION_SECRET: the teacher could never be given the class, so write nothing
       const prefix = `${grade}${section}`;
 
+      // the class, its PIN hash and every student code are written together or not at all
       return store.transaction(async () => {
         let cls: ClassRow | null = null;
         for (let i = 0; i < 20 && !cls; i++) {

@@ -11,6 +11,7 @@ import { unlockSkillForClass } from "../../actions";
 import { MinedDecision } from "./MinedDecision";
 import { Equation } from "../../_components/Equation";
 import { teacherClass } from "../../_lib/auth";
+import { guardPage } from "../../_lib/page-guard";
 import { StudentCodeSheet } from "../CreateClassForm";
 import { PrintButton } from "../PrintButton";
 import { TeacherPinForm } from "../TeacherPinForm";
@@ -27,129 +28,131 @@ export default function ClassBoardPage({ params }: PageProps<"/teacher/[class]">
   );
 }
 
-async function ClassBoard({ params }: { params: Promise<{ class: string }> }) {
-  const classCode = decodeURIComponent((await params).class).toUpperCase();
-  await connection();
-  const svc = await getServices();
-  if (!(await svc.getClassByCode(classCode))) notFound();
-  const cls = await teacherClass(classCode);
-  if (!cls) {
+function ClassBoard({ params }: { params: Promise<{ class: string }> }) {
+  return guardPage("teacher", async () => {
+    const classCode = decodeURIComponent((await params).class).toUpperCase();
+    await connection();
+    const svc = await getServices();
+    if (!(await svc.getClassByCode(classCode))) notFound();
+    const cls = await teacherClass(classCode);
+    if (!cls) {
+      return (
+        <section className="card flex flex-col gap-4">
+          <h1 className="text-2xl font-bold">Class {classCode}: enter the teacher PIN</h1>
+          <TeacherPinForm classCode={classCode} />
+        </section>
+      );
+    }
+  
+    const stuck = await svc.getStuckBoard(cls.id);
+    const progress = await svc.getClassProgress(cls.id);
+    const mined = await svc.listPendingMinedMistakes();
+    const codes = await svc.listStudentCodes(cls.id);
+    const base = `/teacher/${encodeURIComponent(cls.code)}`;
+  
     return (
-      <section className="card flex flex-col gap-4">
-        <h1 className="text-2xl font-bold">Class {classCode}: enter the teacher PIN</h1>
-        <TeacherPinForm classCode={classCode} />
-      </section>
-    );
-  }
-
-  const stuck = await svc.getStuckBoard(cls.id);
-  const progress = await svc.getClassProgress(cls.id);
-  const mined = await svc.listPendingMinedMistakes();
-  const codes = await svc.listStudentCodes(cls.id);
-  const base = `/teacher/${encodeURIComponent(cls.code)}`;
-
-  return (
-    <div className="flex flex-col gap-8">
-      <div className="flex flex-wrap items-center justify-between gap-3 no-print">
-        <h1 className="text-3xl font-extrabold">
-          Class {cls.grade}
-          {cls.section} <span className="math text-2xl text-gray-700">({cls.code})</span>
-        </h1>
-        <div className="flex flex-wrap gap-3">
-          <Link href={`${base}/project`} className="btn btn-primary">
-            Projector mode
-          </Link>
-          <a href={`${base}/export`} className="btn" download>
-            Download pilot CSV
-          </a>
+      <div className="flex flex-col gap-8">
+        <div className="flex flex-wrap items-center justify-between gap-3 no-print">
+          <h1 className="text-3xl font-extrabold">
+            Class {cls.grade}
+            {cls.section} <span className="math text-2xl text-gray-700">({cls.code})</span>
+          </h1>
+          <div className="flex flex-wrap gap-3">
+            <Link href={`${base}/project`} className="btn btn-primary">
+              Projector mode
+            </Link>
+            <a href={`${base}/export`} className="btn" download>
+              Download pilot CSV
+            </a>
+          </div>
         </div>
-      </div>
-      {!cls.aiAllowed && <p className="msg-note no-print">Class 7: AI chat is switched off for this class, always.</p>}
-
-      <section className="flex flex-col gap-3 no-print" aria-labelledby="stuck">
-        <h2 id="stuck" className="text-2xl font-bold">
-          Stuck board (last 7 days)
-        </h2>
-        {stuck.length === 0 ? (
-          <p className="text-gray-700">No wrong answers yet.</p>
-        ) : (
-          stuck.map((g) => <StuckGroup key={`${g.skillId}|${g.mistakeId}`} group={g} />)
-        )}
-      </section>
-
-      <section className="flex flex-col gap-3 no-print" aria-labelledby="progress">
-        <h2 id="progress" className="text-2xl font-bold">
-          Progress
-        </h2>
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-lg">
-            <thead>
-              <tr className="border-b-2 border-gray-400 text-left">
-                <th className="py-2 pr-3">Skill</th>
-                <th className="py-2 pr-3">Locked</th>
-                <th className="py-2 pr-3">Open</th>
-                <th className="py-2 pr-3">Key 1</th>
-                <th className="py-2 pr-3">Not yet</th>
-                <th className="py-2 pr-3">Mastered</th>
-                <th className="py-2" />
-              </tr>
-            </thead>
-            <tbody>
-              {progress.map(({ skillId, counts }) => (
-                <tr key={skillId} className="border-b border-gray-300">
-                  <td className="py-2 pr-3 font-semibold">{t(skillKey(skillId, "title"))}</td>
-                  <td className="py-2 pr-3">{counts.LOCKED}</td>
-                  <td className="py-2 pr-3">{counts.OPEN}</td>
-                  <td className="py-2 pr-3">{counts.KEY1}</td>
-                  <td className="py-2 pr-3">{counts.NOT_YET}</td>
-                  <td className="py-2 pr-3">{counts.MASTERED}</td>
-                  <td className="py-2">
-                    {counts.LOCKED > 0 && (
-                      <form action={unlockSkillForClass.bind(null, cls.code, skillId)}>
-                        <button type="submit" className="btn">
-                          Unlock for class
-                        </button>
-                      </form>
-                    )}
-                  </td>
+        {!cls.aiAllowed && <p className="msg-note no-print">Class 7: AI chat is switched off for this class, always.</p>}
+  
+        <section className="flex flex-col gap-3 no-print" aria-labelledby="stuck">
+          <h2 id="stuck" className="text-2xl font-bold">
+            Stuck board (last 7 days)
+          </h2>
+          {stuck.length === 0 ? (
+            <p className="text-gray-700">No wrong answers yet.</p>
+          ) : (
+            stuck.map((g) => <StuckGroup key={`${g.skillId}|${g.mistakeId}`} group={g} />)
+          )}
+        </section>
+  
+        <section className="flex flex-col gap-3 no-print" aria-labelledby="progress">
+          <h2 id="progress" className="text-2xl font-bold">
+            Progress
+          </h2>
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-lg">
+              <thead>
+                <tr className="border-b-2 border-gray-400 text-left">
+                  <th className="py-2 pr-3">Skill</th>
+                  <th className="py-2 pr-3">Locked</th>
+                  <th className="py-2 pr-3">Open</th>
+                  <th className="py-2 pr-3">Key 1</th>
+                  <th className="py-2 pr-3">Not yet</th>
+                  <th className="py-2 pr-3">Mastered</th>
+                  <th className="py-2" />
                 </tr>
+              </thead>
+              <tbody>
+                {progress.map(({ skillId, counts }) => (
+                  <tr key={skillId} className="border-b border-gray-300">
+                    <td className="py-2 pr-3 font-semibold">{t(skillKey(skillId, "title"))}</td>
+                    <td className="py-2 pr-3">{counts.LOCKED}</td>
+                    <td className="py-2 pr-3">{counts.OPEN}</td>
+                    <td className="py-2 pr-3">{counts.KEY1}</td>
+                    <td className="py-2 pr-3">{counts.NOT_YET}</td>
+                    <td className="py-2 pr-3">{counts.MASTERED}</td>
+                    <td className="py-2">
+                      {counts.LOCKED > 0 && (
+                        <form action={unlockSkillForClass.bind(null, cls.code, skillId)}>
+                          <button type="submit" className="btn">
+                            Unlock for class
+                          </button>
+                        </form>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+  
+        <section className="flex flex-col gap-3 no-print" aria-labelledby="mined">
+          <h2 id="mined" className="text-2xl font-bold">
+            New mistakes found by the Misconception Miner
+          </h2>
+          {mined.length === 0 ? (
+            <p className="text-gray-700">Nothing waiting for your decision.</p>
+          ) : (
+            <ul className="flex flex-col gap-3">
+              {mined.map((m) => (
+                <li key={m.id} className="card flex flex-col gap-3">
+                  <MinedDraft draft={m} />
+                  {m.spec ? (
+                    <MinedDecision
+                      classCode={cls.code}
+                      draft={{ id: m.id, label: m.spec.label, childLabel: m.spec.childLabel, answerFormula: m.spec.answerFormula }}
+                    />
+                  ) : null}
+                </li>
               ))}
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <section className="flex flex-col gap-3 no-print" aria-labelledby="mined">
-        <h2 id="mined" className="text-2xl font-bold">
-          New mistakes found by the Misconception Miner
-        </h2>
-        {mined.length === 0 ? (
-          <p className="text-gray-700">Nothing waiting for your decision.</p>
-        ) : (
-          <ul className="flex flex-col gap-3">
-            {mined.map((m) => (
-              <li key={m.id} className="card flex flex-col gap-3">
-                <MinedDraft draft={m} />
-                {m.spec ? (
-                  <MinedDecision
-                    classCode={cls.code}
-                    draft={{ id: m.id, label: m.spec.label, childLabel: m.spec.childLabel, answerFormula: m.spec.answerFormula }}
-                  />
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-
-      <section className="flex flex-col gap-3">
-        <div className="no-print">
-          <PrintButton label="Print student codes" />
-        </div>
-        <StudentCodeSheet classCode={cls.code} codes={codes} />
-      </section>
-    </div>
-  );
+            </ul>
+          )}
+        </section>
+  
+        <section className="flex flex-col gap-3">
+          <div className="no-print">
+            <PrintButton label="Print student codes" />
+          </div>
+          <StudentCodeSheet classCode={cls.code} codes={codes} />
+        </section>
+      </div>
+    );
+  });
 }
 
 type Draft = Awaited<ReturnType<Awaited<ReturnType<typeof getServices>>["listPendingMinedMistakes"]>>[number];

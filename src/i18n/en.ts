@@ -24,6 +24,8 @@ export const ui = {
   "login.go": "Start",
   "login.wrong": "We could not find these codes. Check them with your teacher.",
   "login.logout": "Finish and log out",
+  "login.again": "Please type your codes again.",
+  "login.againLink": "Type my codes",
 
   "map.title": "Your skills",
   "map.state.LOCKED": "Locked",
@@ -101,6 +103,7 @@ export const ui = {
   "common.error": "Something went wrong. Please try again.",
   "common.locked": "This skill is locked. Ask your teacher.",
   "common.notFound": "We could not find that page.",
+  "setup.missing": "Shishya is not set up yet: the server is missing a setting. Tell your teacher.",
 
   "skill.alg.integers.ops.title": "Adding and subtracting integers",
   "skill.alg.integers.ops.example": "like −7 + 3 and 5 − (−4)",

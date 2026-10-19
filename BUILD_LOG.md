@@ -117,3 +117,15 @@
 - **Class "QA" (section Q, codes `8Q-…`) is a TEST class. Exclude every grade 8 section Q class from pilot numbers.**
 - Files: `BUILD_LOG.md`.
 - Built in AgentFoundry with Claude Code.
+
+## 2026-10-19: Fail safe when a setting is missing; friendly logged-out pages
+- Why: the live smoke test found that without SESSION_SECRET, "Create class" saved a class (and students) and only then failed, so the teacher never saw its PIN, and every student page showed "This page couldn't load".
+- Create class: every precondition is checked BEFORE anything is written: the input first, then the server settings (`checkSetup` in `createServices`, which in the app checks SESSION_SECRET is 32+ characters and DATABASE_URL is set). The class, its PIN hash and all student codes are written in ONE transaction, so a failure halfway leaves nothing (tested with a database that fails on the second student).
+- New `src/server/setup.ts`: `SetupError` (names the missing setting, never its value), `checkSetup`, `requireSetup`, and a server-log helper. A missing secret or database URL is now a SetupError.
+- Pages that need a login never crash (`src/app/_lib/page-guard.tsx`): no valid cookie → "Please type your codes again." with a link to /s (was a silent redirect); a missing setting → "Shishya is not set up yet: the server is missing a setting. Tell your teacher." (teachers get "…Ask the person who set it up to check the settings."); any other server error → "Something went wrong". The real cause is logged on the server only. redirect() and notFound() still work. Used on /s/home, Practise, Teach, Prove, the class board and projector mode; the pilot CSV answers 503 with the friendly text.
+- Actions: student and teacher log-in show the friendly message instead of crashing; other actions treat the caller as not logged in; create class shows the friendly message and sets no cookie.
+- New child text in English and Hindi (`login.again`, `login.againLink`, `setup.missing`); Hindi to be checked by a Hindi-medium teacher.
+- Checks: 362 tests pass (16 new: settings check, precondition order, rollback, page guard, actions). Lint clean, type check clean, build passes. A local production server started WITHOUT SESSION_SECRET: Create class in headless Edge showed the friendly message and the database had 0 classes and 0 students; /s/home and Practise showed the friendly message; the CSV gave 503; the server log named SESSION_SECRET only.
+- Still needed (Das): set SESSION_SECRET in Vercel (Production) and redeploy, then re-run the live smoke test.
+- Files: `src/server/{setup,instance,services}.ts`, `src/app/_lib/{page-guard,student-pages}.tsx`, `src/app/actions.ts`, `src/app/s/home/page.tsx`, `src/app/s/{practise,teach,prove}/[skill]/page.tsx`, `src/app/teacher/[class]/{page.tsx,project/page.tsx,export/route.ts}`, `src/i18n/{en,hi}.ts`, tests `src/server/__tests__/{setup-check,classroom}.test.ts`, `src/app/_lib/__tests__/page-guard.test.tsx`, `src/app/__tests__/actions-setup.test.ts`, `BUILD_LOG.md`.
+- Built in AgentFoundry with Claude Code.
