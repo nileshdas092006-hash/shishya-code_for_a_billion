@@ -1,7 +1,7 @@
 import { parseAnswerFor, sameAnswer } from "../core/answer";
 import { checkTeachStep } from "../core/teach";
 import { instanceFor, type SkillEntry } from "./skills";
-import type { ItemRow, MasteryState, ProofRunRow, Store } from "./store";
+import type { AttemptRow, EventInput, ItemRow, MasteryRow, MasteryState, ProofRunRow, Store } from "./store";
 
 // The mastery engine: the ONLY code allowed to write the mastery table (a test enforces this).
 //
@@ -33,59 +33,94 @@ export function proofCooldownHours(env: Record<string, string | undefined> = pro
   return Number.isFinite(hours) && hours >= 0 ? hours : DEFAULT_PROOF_COOLDOWN_HOURS;
 }
 
-async function readEvidence(store: Store, studentId: string, skillId: string): Promise<Evidence> {
-  const row = await store.getMastery(studentId, skillId);
-  return row ? (JSON.parse(row.evidenceJson) as Evidence) : {};
-}
+const evidenceOf = (row: MasteryRow | undefined): Evidence => (row ? (JSON.parse(row.evidenceJson) as Evidence) : {});
 
-/** The current state. KEY1 / NOT_YET earned on an older skill version count as OPEN (teach again). */
-export async function getState(store: Store, studentId: string, entry: SkillEntry): Promise<MasteryState> {
-  const row = await store.getMastery(studentId, entry.spec.id);
+/** The state a stored row means. KEY1 / NOT_YET earned on an older skill version count as OPEN (teach again). */
+function stateOf(row: MasteryRow | undefined, entry: SkillEntry): MasteryState {
   if (!row) return "LOCKED";
   if ((row.state === "KEY1" || row.state === "NOT_YET") && row.version !== entry.spec.version) return "OPEN";
   return row.state;
 }
 
-async function write(
-  store: Store,
-  studentId: string,
-  entry: SkillEntry,
-  to: MasteryState,
-  evidence: Evidence,
-  now: Date,
-): Promise<MasteryState> {
+/** The current state. */
+export async function getState(store: Store, studentId: string, entry: SkillEntry): Promise<MasteryState> {
+  return stateOf(await store.getMastery(studentId, entry.spec.id), entry);
+}
+
+/** A state change: the new row and its event log line, written together by store.writeMastery. */
+type Change = { row: MasteryRow; event: EventInput };
+
+function change(studentId: string, entry: SkillEntry, from: MasteryState, to: MasteryState, evidence: Evidence, now: Date): Change {
   const at = now.toISOString();
-  await store.transaction(async () => {
-    const from = await getState(store, studentId, entry);
-    await store.writeMastery({
-      studentId,
-      skillId: entry.spec.id,
-      state: to,
-      evidenceJson: JSON.stringify(evidence),
-      version: entry.spec.version,
-      updatedAt: at,
-    });
-    await store.logEvent(studentId, "mastery_changed", { skillId: entry.spec.id, version: entry.spec.version, from, to, evidence }, at);
-  });
-  return to;
+  return {
+    row: { studentId, skillId: entry.spec.id, state: to, evidenceJson: JSON.stringify(evidence), version: entry.spec.version, updatedAt: at },
+    event: { studentId, type: "mastery_changed", payload: { skillId: entry.spec.id, version: entry.spec.version, from, to, evidence }, at },
+  };
 }
 
-/** LOCKED → OPEN when every prerequisite is MASTERED (a skill with none opens at once). */
+/** Writes changes (rows and log lines) in one round trip, all or nothing. */
+async function write(store: Store, changes: Change[]): Promise<void> {
+  if (changes.length) await store.writeMastery(changes.map((c) => c.row), changes.map((c) => c.event));
+}
+
+const key = (studentId: string, skillId: string) => `${studentId}|${skillId}`;
+
+/**
+ * LOCKED → OPEN for every (student, skill) whose prerequisites are all MASTERED (a skill with none opens at once).
+ * Works from mastery rows read ONCE (`rows`: all rows of these students), so a class needs one read, not one per
+ * student per skill. Returns each student's state per skill.
+ */
+export async function refreshUnlockMany(
+  store: Store,
+  studentIds: string[],
+  rows: MasteryRow[],
+  entries: SkillEntry[],
+  now: Date,
+): Promise<Map<string, Map<string, MasteryState>>> {
+  const byKey = new Map(rows.map((r) => [key(r.studentId, r.skillId), r]));
+  const out = new Map<string, Map<string, MasteryState>>();
+  const changes: Change[] = [];
+  for (const studentId of studentIds) {
+    const states = new Map<string, MasteryState>();
+    for (const entry of entries) {
+      const row = byKey.get(key(studentId, entry.spec.id));
+      let state = stateOf(row, entry);
+      const prerequisites = entry.spec.prerequisites;
+      if (state === "LOCKED" && prerequisites.every((p) => byKey.get(key(studentId, p))?.state === "MASTERED")) {
+        changes.push(change(studentId, entry, state, "OPEN", { ...evidenceOf(row), unlock: { by: "prerequisites", prerequisites } }, now));
+        state = "OPEN";
+      }
+      states.set(entry.spec.id, state);
+    }
+    out.set(studentId, states);
+  }
+  await write(store, changes);
+  return out;
+}
+
+/** LOCKED → OPEN when every prerequisite is MASTERED (one student, one skill). */
 export async function refreshUnlock(store: Store, studentId: string, entry: SkillEntry, now: Date): Promise<MasteryState> {
-  const state = await getState(store, studentId, entry);
-  if (state !== "LOCKED") return state;
-  const prerequisites = entry.spec.prerequisites;
-  for (const p of prerequisites) if ((await store.getMastery(studentId, p))?.state !== "MASTERED") return state;
-  const evidence = { ...(await readEvidence(store, studentId, entry.spec.id)), unlock: { by: "prerequisites" as const, prerequisites } };
-  return write(store, studentId, entry, "OPEN", evidence, now);
+  const states = await refreshUnlockMany(store, [studentId], await store.listMastery({ studentId }), [entry], now);
+  return states.get(studentId)!.get(entry.spec.id)!;
 }
 
-/** LOCKED → OPEN because the teacher says so. */
+/** LOCKED → OPEN because the teacher says so, for many students (`rows`: their mastery rows). Returns how many opened. */
+export async function teacherUnlockMany(store: Store, studentIds: string[], rows: MasteryRow[], entry: SkillEntry, now: Date): Promise<number> {
+  const byKey = new Map(rows.map((r) => [key(r.studentId, r.skillId), r]));
+  const changes = studentIds
+    .map((id) => ({ id, row: byKey.get(key(id, entry.spec.id)) }))
+    .filter(({ row }) => stateOf(row, entry) === "LOCKED")
+    .map(({ id, row }) => change(id, entry, "LOCKED", "OPEN", { ...evidenceOf(row), unlock: { by: "teacher" } }, now));
+  await write(store, changes);
+  return changes.length;
+}
+
+/** LOCKED → OPEN because the teacher says so (one student). */
 export async function teacherUnlock(store: Store, studentId: string, entry: SkillEntry, now: Date): Promise<MasteryState> {
-  const state = await getState(store, studentId, entry);
-  if (state !== "LOCKED") return state;
-  const evidence = { ...(await readEvidence(store, studentId, entry.spec.id)), unlock: { by: "teacher" as const } };
-  return write(store, studentId, entry, "OPEN", evidence, now);
+  const row = await store.getMastery(studentId, entry.spec.id);
+  await teacherUnlockMany(store, [studentId], row ? [row] : [], entry, now);
+  const state = stateOf(row, entry);
+  return state === "LOCKED" ? "OPEN" : state;
 }
 
 const paramsMatch = (entry: SkillEntry, item: ItemRow) => JSON.stringify(instanceFor(entry, item).params) === item.paramsJson;
@@ -116,7 +151,8 @@ async function qualifyingTraceIds(store: Store, entry: SkillEntry, items: ItemRo
 
 /** OPEN → KEY1 when one teach session on the current version meets the teach rule. */
 export async function evaluateTeach(store: Store, studentId: string, entry: SkillEntry, now: Date): Promise<MasteryState> {
-  const state = await getState(store, studentId, entry);
+  const current = await store.getMastery(studentId, entry.spec.id);
+  const state = stateOf(current, entry);
   if (state !== "OPEN") return state;
   const items = await store.listItems({ studentId, skillId: entry.spec.id, kind: "teach", version: entry.spec.version });
   const sessions = new Map<string, ItemRow[]>();
@@ -126,10 +162,11 @@ export async function evaluateTeach(store: Store, studentId: string, entry: Skil
     const traceIds = await qualifyingTraceIds(store, entry, sessionItems);
     if (!traceIds) continue;
     const evidence: Evidence = {
-      ...(await readEvidence(store, studentId, entry.spec.id)),
+      ...evidenceOf(current),
       key1: { sessionId, itemIds: sessionItems.map((i) => i.id), traceIds, version: entry.spec.version },
     };
-    return write(store, studentId, entry, "KEY1", evidence, now);
+    await write(store, [change(studentId, entry, state, "KEY1", evidence, now)]);
+    return "KEY1";
   }
   return state;
 }
@@ -174,8 +211,11 @@ export async function verifyProofRun(store: Store, entry: SkillEntry, run: Proof
 
   const deadline = Date.parse(run.startedAt) + PROOF_TIME_LIMIT_MINUTES * 60_000;
   const formats = { solve: 0, apply: 0 };
+  const items = new Map((await store.getItems(run.itemIds)).map((i) => [i.id, i]));
+  const attemptsOf = new Map<string, AttemptRow[]>();
+  for (const a of await store.listAttemptsForItems(run.itemIds)) attemptsOf.set(a.itemId, [...(attemptsOf.get(a.itemId) ?? []), a]);
   for (const [i, id] of run.itemIds.entries()) {
-    const item = await store.getItem(id);
+    const item = items.get(id);
     if (!item) {
       reasons.push(`item ${i + 1} missing`);
       continue;
@@ -189,7 +229,7 @@ export async function verifyProofRun(store: Store, entry: SkillEntry, run: Proof
       reasons.push(`item ${i + 1} does not match its seed`);
       continue;
     }
-    const attempts = await store.listAttemptsForItem(item.id);
+    const attempts = attemptsOf.get(item.id) ?? [];
     if (attempts.length !== 1) {
       reasons.push(`item ${i + 1} not answered exactly once`);
       continue;
@@ -207,14 +247,17 @@ export async function recordProof(store: Store, studentId: string, entry: SkillE
   const run = await store.getProofRun(runId);
   if (!run || run.studentId !== studentId) throw new Error(`Proof run ${runId} not found for this student`);
   if (!run.finishedAt) throw new Error(`Proof run ${runId} is not finished`);
-  const state = await getState(store, studentId, entry);
+  const current = await store.getMastery(studentId, entry.spec.id);
+  const state = stateOf(current, entry);
   if (state !== "KEY1" && state !== "NOT_YET") return state;
 
   const verdict = await verifyProofRun(store, entry, run);
-  const evidence = await readEvidence(store, studentId, entry.spec.id);
+  const evidence = evidenceOf(current);
   if (verdict.passed) {
-    return write(store, studentId, entry, "MASTERED", { ...evidence, proof: { runId, itemIds: run.itemIds, version: run.version } }, now);
+    await write(store, [change(studentId, entry, state, "MASTERED", { ...evidence, proof: { runId, itemIds: run.itemIds, version: run.version } }, now)]);
+    return "MASTERED";
   }
   const failedProofs = [...(evidence.failedProofs ?? []), { runId, version: run.version, reasons: verdict.reasons }];
-  return write(store, studentId, entry, "NOT_YET", { ...evidence, failedProofs }, now);
+  await write(store, [change(studentId, entry, state, "NOT_YET", { ...evidence, failedProofs }, now)]);
+  return "NOT_YET";
 }

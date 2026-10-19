@@ -24,9 +24,9 @@ function Projector({ params }: { params: Promise<{ class: string }> }) {
   return guardPage("teacher", async () => {
     const classCode = decodeURIComponent((await params).class).toUpperCase();
     await connection();
-    if (!(await (await getServices()).getClassByCode(classCode))) notFound();
     const cls = await teacherClass(classCode);
     if (!cls) {
+      if (!(await (await getServices()).getClassByCode(classCode))) notFound();
       return (
         <section className="card flex flex-col gap-4">
           <h1 className="text-2xl font-bold">Class {classCode}: enter the teacher PIN</h1>

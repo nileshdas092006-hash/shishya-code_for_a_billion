@@ -33,9 +33,9 @@ function ClassBoard({ params }: { params: Promise<{ class: string }> }) {
     const classCode = decodeURIComponent((await params).class).toUpperCase();
     await connection();
     const svc = await getServices();
-    if (!(await svc.getClassByCode(classCode))) notFound();
-    const cls = await teacherClass(classCode);
+    const cls = await teacherClass(classCode); // the class is read once; a second read only when there is no PIN cookie
     if (!cls) {
+      if (!(await svc.getClassByCode(classCode))) notFound();
       return (
         <section className="card flex flex-col gap-4">
           <h1 className="text-2xl font-bold">Class {classCode}: enter the teacher PIN</h1>
@@ -44,10 +44,7 @@ function ClassBoard({ params }: { params: Promise<{ class: string }> }) {
       );
     }
   
-    const stuck = await svc.getStuckBoard(cls.id);
-    const progress = await svc.getClassProgress(cls.id);
-    const mined = await svc.listPendingMinedMistakes();
-    const codes = await svc.listStudentCodes(cls.id);
+    const { stuck, progress, mined, codes } = await svc.getClassBoard(cls.id);
     const base = `/teacher/${encodeURIComponent(cls.code)}`;
   
     return (

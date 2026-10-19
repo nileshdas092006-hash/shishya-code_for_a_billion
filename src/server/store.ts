@@ -279,6 +279,22 @@ const toMined = (r: Row): MinedMistakeRow => ({
   createdAt: r.createdAt as string,
 });
 const toStudent = (r: Row): StudentRow => ({ id: r.id as string, classId: r.classId as string, code: r.code as string });
+const toMastery = (r: Row): MasteryRow => ({
+  studentId: r.studentId as string,
+  skillId: r.skillId as string,
+  state: r.state as MasteryState,
+  evidenceJson: r.evidenceJson as string,
+  version: r.version as string,
+  updatedAt: r.updatedAt as string,
+});
+/** "?, ?, ?" for an IN (…) list. */
+const marks = (n: number) => Array.from({ length: n }, () => "?").join(", ");
+/** An event log line (written in the same batch as the mastery change it describes). */
+export type EventInput = { studentId: string | null; type: string; payload: unknown; at: string };
+const eventStatement = (e: EventInput) => ({
+  sql: "INSERT INTO events (studentId, type, payloadJson, createdAt) VALUES (?, ?, ?, ?)",
+  args: [e.studentId, e.type, JSON.stringify(e.payload ?? {}), e.at] as InValue[],
+});
 
 // ---------- migrations (each safe to run on every start-up) ----------
 
@@ -329,11 +345,17 @@ function localPath(url: string): string | null {
   return resolve(url.slice("file:".length));
 }
 
-export type StoreConfig = { url?: string; authToken?: string };
+export type StoreConfig = {
+  url?: string;
+  authToken?: string;
+  /** Called once per database round trip (each query, batch, BEGIN, COMMIT or ROLLBACK). Tests count them. */
+  onRoundTrip?: () => void;
+};
 
 /** Opens the database and creates the tables if they are missing (safe to run every start-up). */
 export async function openStore(config: StoreConfig | string = {}) {
-  const { url = DEFAULT_DATABASE_URL, authToken } = typeof config === "string" ? { url: config } : config;
+  const { url = DEFAULT_DATABASE_URL, authToken, onRoundTrip } = typeof config === "string" ? { url: config } : config;
+  const trip = () => onRoundTrip?.();
   const path = localPath(url);
   if (path) mkdirSync(dirname(path), { recursive: true }); // local files only; never runs for a cloud database
   const client: Client = createClient({ url, authToken, timeout: 5000 });
@@ -347,10 +369,11 @@ export async function openStore(config: StoreConfig | string = {}) {
   const inTx = new AsyncLocalStorage<Transaction>();
 
   /** A read: inside a transaction it sees that transaction's own writes. */
-  const read = async (sql: string, ...args: InValue[]) => (inTx.getStore() ?? client).execute({ sql, args });
+  const read = async (sql: string, ...args: InValue[]) => (trip(), (inTx.getStore() ?? client).execute({ sql, args }));
   /** A write: joins the current transaction, or takes the write lock for a single statement. */
   const write = async (sql: string, ...args: InValue[]) => {
     const tx = inTx.getStore();
+    trip();
     return tx ? tx.execute({ sql, args }) : lock.run(() => client.execute({ sql, args }));
   };
   const one = async (sql: string, ...args: InValue[]) => (await read(sql, ...args)).rows[0] as Row | undefined;
@@ -367,6 +390,15 @@ export async function openStore(config: StoreConfig | string = {}) {
     }
   };
 
+  /** Several writes in ONE round trip, all or nothing (inside a transaction they join it). */
+  const writeBatch = async (statements: { sql: string; args: InValue[] }[]) => {
+    if (statements.length === 0) return;
+    trip();
+    const tx = inTx.getStore();
+    if (tx) await tx.batch(statements);
+    else await lock.run(() => client.batch(statements, "write"));
+  };
+
   return {
     close: () => client.close(),
 
@@ -374,12 +406,15 @@ export async function openStore(config: StoreConfig | string = {}) {
     async transaction<T>(fn: () => Promise<T>): Promise<T> {
       if (inTx.getStore()) return fn();
       return lock.run(async () => {
+        trip();
         const tx = await client.transaction("write");
         try {
           const out = await inTx.run(tx, fn);
+          trip();
           await tx.commit();
           return out;
         } catch (e) {
+          trip();
           await tx.rollback().catch(() => undefined);
           throw e;
         } finally {
@@ -403,6 +438,11 @@ export async function openStore(config: StoreConfig | string = {}) {
     async getClassByCode(code: string): Promise<ClassRow | undefined> {
       const r = await one("SELECT id, code, grade, section, aiAllowed FROM classes WHERE code = ?", code);
       return r && toClass(r);
+    },
+    /** The class and its teacher PIN hash in one read (for the PIN check). */
+    async getClassWithPinHashByCode(code: string): Promise<{ cls: ClassRow; pinHash: string | null } | undefined> {
+      const r = await one("SELECT id, code, grade, section, aiAllowed, teacherPinHash FROM classes WHERE code = ?", code);
+      return r && { cls: toClass(r), pinHash: (r.teacherPinHash as string | null) ?? null };
     },
     async getClassPinHash(id: string): Promise<string | null> {
       return ((await one("SELECT teacherPinHash FROM classes WHERE id = ?", id))?.teacherPinHash as string | null) ?? null;
@@ -447,6 +487,11 @@ export async function openStore(config: StoreConfig | string = {}) {
         )
       ).map(toItem);
     },
+    /** Several items in one read (missing ids are simply absent). */
+    async getItems(ids: string[]): Promise<ItemRow[]> {
+      if (ids.length === 0) return [];
+      return (await all(`SELECT * FROM items WHERE id IN (${marks(ids.length)})`, ...ids)).map(toItem);
+    },
     async listRunItems(runId: string): Promise<ItemRow[]> {
       return (await all("SELECT * FROM items WHERE runId = ? ORDER BY rowid", runId)).map(toItem);
     },
@@ -461,6 +506,11 @@ export async function openStore(config: StoreConfig | string = {}) {
         "INSERT INTO attempts (id, studentId, itemId, answer, correct, mistakeId, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)",
         a.id, a.studentId, a.itemId, a.answer, a.correct ? 1 : 0, a.mistakeId, a.createdAt,
       );
+    },
+    /** The attempts of several items in one read, oldest first. */
+    async listAttemptsForItems(itemIds: string[]): Promise<AttemptRow[]> {
+      if (itemIds.length === 0) return [];
+      return (await all(`SELECT * FROM attempts WHERE itemId IN (${marks(itemIds.length)}) ORDER BY createdAt, rowid`, ...itemIds)).map(toAttempt);
     },
     async listAttemptsForItem(itemId: string): Promise<AttemptRow[]> {
       return (await all("SELECT * FROM attempts WHERE itemId = ? ORDER BY createdAt, rowid", itemId)).map(toAttempt);
@@ -533,24 +583,27 @@ export async function openStore(config: StoreConfig | string = {}) {
     // ----- mastery (ONLY src/server/mastery.ts may call writeMastery) -----
     async getMastery(studentId: string, skillId: string): Promise<MasteryRow | undefined> {
       const r = await one("SELECT * FROM mastery WHERE studentId = ? AND skillId = ?", studentId, skillId);
-      return (
-        r && {
-          studentId: r.studentId as string,
-          skillId: r.skillId as string,
-          state: r.state as MasteryState,
-          evidenceJson: r.evidenceJson as string,
-          version: r.version as string,
-          updatedAt: r.updatedAt as string,
-        }
-      );
+      return r && toMastery(r);
     },
-    async writeMastery(m: MasteryRow) {
-      await write(
-        `INSERT INTO mastery (studentId, skillId, state, evidenceJson, version, updatedAt) VALUES (?, ?, ?, ?, ?, ?)
+    /** Every mastery row of one student, or of every student in a class, in one read. */
+    async listMastery(f: { studentId: string } | { classId: string }): Promise<MasteryRow[]> {
+      const rows =
+        "studentId" in f
+          ? await all("SELECT * FROM mastery WHERE studentId = ?", f.studentId)
+          : await all("SELECT m.* FROM mastery m JOIN students s ON s.id = m.studentId WHERE s.classId = ?", f.classId);
+      return rows.map(toMastery);
+    },
+    /** Writes mastery rows and their event log lines in one round trip, all or nothing. */
+    async writeMastery(rows: MasteryRow | MasteryRow[], events: EventInput[] = []) {
+      await writeBatch([
+        ...[rows].flat().map((m) => ({
+          sql: `INSERT INTO mastery (studentId, skillId, state, evidenceJson, version, updatedAt) VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT (studentId, skillId) DO UPDATE SET
            state = excluded.state, evidenceJson = excluded.evidenceJson, version = excluded.version, updatedAt = excluded.updatedAt`,
-        m.studentId, m.skillId, m.state, m.evidenceJson, m.version, m.updatedAt,
-      );
+          args: [m.studentId, m.skillId, m.state, m.evidenceJson, m.version, m.updatedAt] as InValue[],
+        })),
+        ...events.map(eventStatement),
+      ]);
     },
 
     // ----- unknown errors (input for the Misconception Miner) -----

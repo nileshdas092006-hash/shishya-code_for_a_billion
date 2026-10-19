@@ -172,13 +172,81 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
 
   /** After a skill is MASTERED, open the skills that needed it. Returns the newly opened skill ids. */
   async function unlockAfter(studentId: string, skillId: string): Promise<string[]> {
-    const opened: string[] = [];
-    for (const e of Object.values(registry)) {
-      if (!e.spec.prerequisites.includes(skillId)) continue;
-      if ((await mastery.getState(store, studentId, e)) !== "LOCKED") continue;
-      if ((await mastery.refreshUnlock(store, studentId, e, now())) !== "LOCKED") opened.push(e.spec.id);
+    const next = Object.values(registry).filter((e) => e.spec.prerequisites.includes(skillId));
+    if (next.length === 0) return [];
+    const rows = await store.listMastery({ studentId });
+    const before = new Set(rows.map((r) => r.skillId));
+    const states = (await mastery.refreshUnlockMany(store, [studentId], rows, next, now())).get(studentId)!;
+    return next.filter((e) => !before.has(e.spec.id) && states.get(e.spec.id) !== "LOCKED").map((e) => e.spec.id);
+  }
+
+  /** Tested drafts waiting for a teacher, with the mistake data and the validator's report. */
+  async function pendingMined() {
+    const parse = <T>(text: string): T | null => {
+      try {
+        return JSON.parse(text) as T;
+      } catch {
+        return null;
+      }
+    };
+    return (await store.listMinedMistakes("DRAFT_TESTED")).map((r) => ({
+      id: r.id,
+      skillId: r.skillId,
+      createdAt: r.createdAt,
+      spec: parse<MinedMistakeSpec>(r.source),
+      report: parse<{ reproduced: number; checkedInstances: number; overlaps: Record<string, number> }>(r.testsJson),
+    }));
+  }
+
+  /** Each student's state for every skill, from one read of the class's mastery rows (opening skills whose prerequisites are mastered). */
+  async function classStates(classId: string, students: StudentRow[]) {
+    const rows = await store.listMastery({ classId });
+    return mastery.refreshUnlockMany(store, students.map((s) => s.id), rows, Object.values(registry), now());
+  }
+
+  function progressFrom(students: StudentRow[], states: Map<string, Map<string, mastery.MasteryState>>) {
+    return Object.values(registry).map((e) => {
+      const counts = Object.fromEntries(MASTERY_STATES.map((s) => [s, 0])) as Record<(typeof MASTERY_STATES)[number], number>;
+      for (const s of students) counts[states.get(s.id)!.get(e.spec.id)!]++;
+      return { skillId: e.spec.id, counts };
+    });
+  }
+
+  /** Students grouped by their most frequent mistake in the last 7 days (ties: the most recent one). */
+  async function stuckGroups(classId: string) {
+    const since = new Date(now().getTime() - STUCK_WINDOW_DAYS * 86_400_000).toISOString();
+    const hits = await store.listClassMistakesSince(classId, since);
+
+    const perStudent = new Map<string, { code: string; tally: Map<string, { count: number; last: number }> }>();
+    hits.forEach((h, order) => {
+      const s = perStudent.get(h.studentId) ?? { code: h.code, tally: new Map() };
+      const key = `${h.skillId}|${h.mistakeId}`;
+      const t = s.tally.get(key) ?? { count: 0, last: 0 };
+      s.tally.set(key, { count: t.count + 1, last: order });
+      perStudent.set(h.studentId, s);
+    });
+
+    const groups = new Map<string, { skillId: string; mistakeId: string; label: string; studentCodes: string[] }>();
+    for (const { code, tally } of perStudent.values()) {
+      const [top] = [...tally.entries()].sort((a, b) => b[1].count - a[1].count || b[1].last - a[1].last)[0];
+      const [skillId, mistakeId] = top.split("|");
+      const label =
+        mistakeId === "unknown"
+          ? UNKNOWN_LABEL
+          : ((await labelOf(skillId, mistakeId)) ?? mistakeId);
+      const g = groups.get(top) ?? { skillId, mistakeId, label, studentCodes: [] };
+      g.studentCodes.push(code);
+      groups.set(top, g);
     }
-    return opened;
+    await log(null, "stuck_board_viewed", { classId });
+    return [...groups.values()]
+      .map((g) => ({ ...g, count: g.studentCodes.length, studentCodes: g.studentCodes.sort() }))
+      .sort(
+        (a, b) =>
+          Number(a.mistakeId === "unknown") - Number(b.mistakeId === "unknown") ||
+          b.count - a.count ||
+          `${a.skillId}|${a.mistakeId}`.localeCompare(`${b.skillId}|${b.mistakeId}`),
+      );
   }
 
   const deadlineOf = (run: ProofRunRow) => Date.parse(run.startedAt) + mastery.PROOF_TIME_LIMIT_MINUTES * 60_000;
@@ -455,9 +523,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         const out = await finishRun((await store.getProofRun(run.id))!, entry);
         if (!out) return fail("This proof is already finished.", "finished");
         const wrong: string[] = [];
-        for (const i of runItems) {
-          for (const a of await store.listAttemptsForItem(i.id)) if (!a.correct && a.mistakeId) wrong.push(a.mistakeId);
-        }
+        for (const a of await store.listAttemptsForItems(runItems.map((i) => i.id))) if (!a.correct && a.mistakeId) wrong.push(a.mistakeId);
         const unlocked = out.state === "MASTERED" ? await unlockAfter(item.studentId, item.skillId) : [];
         return { ok: true as const, finished: true as const, ...out, practise: [...new Set(wrong)], unlocked };
       });
@@ -535,15 +601,16 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     },
 
     async verifyTeacherPin(classCode: string, pin: string): Promise<{ ok: true; classId: string } | Fail> {
-      const cls = await store.getClassByCode(normaliseCode(classCode));
-      if (!cls) return fail("Wrong class code or PIN.", "wrong_pin");
+      const found = await store.getClassWithPinHashByCode(normaliseCode(classCode));
+      if (!found) return fail("Wrong class code or PIN.", "wrong_pin");
+      const { cls, pinHash } = found;
       const cutoff = now().getTime() - PIN_LOCKOUT_MINUTES * 60_000;
       const recent = (pinFailures.get(cls.id) ?? []).filter((t) => t > cutoff);
       if (recent.length >= PIN_MAX_FAILURES) {
         await log(null, "teacher_login", { classId: cls.id, ok: false, lockedOut: true });
         return fail(`Too many wrong PINs. Try again in ${PIN_LOCKOUT_MINUTES} minutes.`, "locked_out");
       }
-      const ok = pinMatches(String(pin ?? "").trim(), await store.getClassPinHash(cls.id));
+      const ok = pinMatches(String(pin ?? "").trim(), pinHash);
       pinFailures.set(cls.id, ok ? [] : [...recent, now().getTime()]);
       await log(null, "teacher_login", { classId: cls.id, ok });
       return ok ? { ok: true, classId: cls.id } : fail("Wrong class code or PIN.", "wrong_pin");
@@ -579,21 +646,20 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     /** Every skill, in teaching order, with this child's state. */
     async getSkillMap(studentId: string) {
       await requireStudent(studentId);
-      const out = [];
-      for (const e of Object.values(registry)) out.push({ skillId: e.spec.id, state: await mastery.refreshUnlock(store, studentId, e, now()) });
-      return out;
+      const entries = Object.values(registry);
+      const rows = await store.listMastery({ studentId });
+      const states = (await mastery.refreshUnlockMany(store, [studentId], rows, entries, now())).get(studentId)!;
+      return entries.map((e) => ({ skillId: e.spec.id, state: states.get(e.spec.id)! }));
     },
 
     /** Opens a skill for every student in the class. Returns how many were newly opened. */
     async teacherUnlockClass(classId: string, skillId: string): Promise<number> {
       await requireClass(classId);
       const entry = await entryOf(skillId);
-      let opened = 0;
-      await store.transaction(async () => {
-        for (const s of await store.listStudents(classId)) {
-          if ((await mastery.getState(store, s.id, entry)) !== "LOCKED") continue;
-          if ((await mastery.teacherUnlock(store, s.id, entry, now())) === "OPEN") opened++;
-        }
+      const opened = await store.transaction(async () => {
+        const students = await store.listStudents(classId);
+        const rows = await store.listMastery({ classId });
+        return mastery.teacherUnlockMany(store, students.map((s) => s.id), rows, entry, now());
       });
       await log(null, "teacher_unlock_class", { classId, skillId, opened });
       return opened;
@@ -603,13 +669,15 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     async getClassProgress(classId: string) {
       await requireClass(classId);
       const students = await store.listStudents(classId);
-      const out = [];
-      for (const e of Object.values(registry)) {
-        const counts = Object.fromEntries(MASTERY_STATES.map((s) => [s, 0])) as Record<(typeof MASTERY_STATES)[number], number>;
-        for (const s of students) counts[await mastery.refreshUnlock(store, s.id, e, now())]++;
-        out.push({ skillId: e.spec.id, counts });
-      }
-      return out;
+      return progressFrom(students, await classStates(classId, students));
+    },
+
+    /** Everything the class board shows, reading the class and its students once (reads run side by side). */
+    async getClassBoard(classId: string) {
+      await requireClass(classId);
+      const [students, mined] = await Promise.all([store.listStudents(classId), pendingMined()]);
+      const [states, stuck] = await Promise.all([classStates(classId, students), stuckGroups(classId)]);
+      return { stuck, progress: progressFrom(students, states), mined, codes: students.map((s) => s.code) };
     },
 
     // ----- projector (class mode: no student accounts, never touches mastery) -----
@@ -648,22 +716,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
 
     // ----- mined mistakes (the Misconception Miner adds tested drafts; teachers decide) -----
     /** Tested drafts waiting for a teacher, with the mistake data and the validator's report. */
-    async listPendingMinedMistakes() {
-      const parse = <T>(text: string): T | null => {
-        try {
-          return JSON.parse(text) as T;
-        } catch {
-          return null;
-        }
-      };
-      return (await store.listMinedMistakes("DRAFT_TESTED")).map((r) => ({
-        id: r.id,
-        skillId: r.skillId,
-        createdAt: r.createdAt,
-        spec: parse<MinedMistakeSpec>(r.source),
-        report: parse<{ reproduced: number; checkedInstances: number; overlaps: Record<string, number> }>(r.testsJson),
-      }));
-    },
+    listPendingMinedMistakes: () => pendingMined(),
 
     /**
      * Approve (only if it still passes the validator) or reject a tested draft. On approval the teacher may rewrite
@@ -711,39 +764,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     /** Students grouped by their most frequent mistake in the last 7 days (ties: the most recent one). */
     async getStuckBoard(classId: string) {
       await requireClass(classId);
-      const since = new Date(now().getTime() - STUCK_WINDOW_DAYS * 86_400_000).toISOString();
-      const hits = await store.listClassMistakesSince(classId, since);
-
-      const perStudent = new Map<string, { code: string; tally: Map<string, { count: number; last: number }> }>();
-      hits.forEach((h, order) => {
-        const s = perStudent.get(h.studentId) ?? { code: h.code, tally: new Map() };
-        const key = `${h.skillId}|${h.mistakeId}`;
-        const t = s.tally.get(key) ?? { count: 0, last: 0 };
-        s.tally.set(key, { count: t.count + 1, last: order });
-        perStudent.set(h.studentId, s);
-      });
-
-      const groups = new Map<string, { skillId: string; mistakeId: string; label: string; studentCodes: string[] }>();
-      for (const { code, tally } of perStudent.values()) {
-        const [top] = [...tally.entries()].sort((a, b) => b[1].count - a[1].count || b[1].last - a[1].last)[0];
-        const [skillId, mistakeId] = top.split("|");
-        const label =
-          mistakeId === "unknown"
-            ? UNKNOWN_LABEL
-            : ((await labelOf(skillId, mistakeId)) ?? mistakeId);
-        const g = groups.get(top) ?? { skillId, mistakeId, label, studentCodes: [] };
-        g.studentCodes.push(code);
-        groups.set(top, g);
-      }
-      await log(null, "stuck_board_viewed", { classId });
-      return [...groups.values()]
-        .map((g) => ({ ...g, count: g.studentCodes.length, studentCodes: g.studentCodes.sort() }))
-        .sort(
-          (a, b) =>
-            Number(a.mistakeId === "unknown") - Number(b.mistakeId === "unknown") ||
-            b.count - a.count ||
-            `${a.skillId}|${a.mistakeId}`.localeCompare(`${b.skillId}|${b.mistakeId}`),
-        );
+      return stuckGroups(classId);
     },
 
     /** Anonymous counts only: no student codes, ids or class codes. */
