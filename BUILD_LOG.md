@@ -155,3 +155,18 @@
 - Still slow: the class board took 7.7 s at 360px (many database round trips, Vercel ↔ Turso). The first page after the redeploy took 11 s (a cold start).
 - Files: `BUILD_LOG.md`.
 - Built in AgentFoundry with Claude Code.
+
+## 2026-10-19: Function region moved next to Turso; fewer database round trips
+- Test classes this round: **8Q-JH3Q** and **8Q-YJEH** (live). **All grade 8 section Q classes (`8Q-…`) are TEST classes: exclude them from pilot numbers.**
+- Live site confirmed on 58862b3 (the new skill-card markup is served). Full live smoke test after Das moved the Vercel function region next to the Turso database: every step PASSES (steps 1–7 on 8Q-YJEH, step 8 logged in on the same class). The test script now waits until React has attached its handlers before clicking; a click before that is lost (worth remembering for very slow phones).
+- Live timings, before (run 3) → after the region move: create class 4.0 → 0.5 s; class board 9.5 → 0.6 s; unlock for class 11.5 → 0.7 s; PIN → board 8.0 → 0.5 s; practise answer 2.1–2.2 → 0.3 s; teach check 2.9–3.8 → 0.3–0.4 s; prove answer 2.5–8.0 → 0.2–0.4 s; skill map 2.5 → 0.5 s; every page at 360px under 0.8 s (one 10 s cold start just after a redeploy).
+- Code speed-up (commit 1dcdc31, tests first): the slow paths ran one query per student per skill. Now:
+  - store: `listMastery` (one student, or a whole class, in one read), `getItems` / `listAttemptsForItems` (by id list), `getClassWithPinHashByCode`; `writeMastery` takes several rows plus their event-log lines and sends them as ONE libSQL batch (all or nothing; joins an open transaction). An optional `onRoundTrip` counter for tests.
+  - mastery.ts (still the only writer of mastery): `refreshUnlockMany` and `teacherUnlockMany` decide from rows read once and write in one batch; single-student functions use them. Each state change still logs `mastery_changed` with from/to/evidence; proofs are still re-checked from seeds with src/core.
+  - services: one `getClassBoard` (class and students read once, reads side by side); unlock for class = one read of students, one of mastery, one batched write inside the transaction; skill map = one read; finishing a proof reads the run's items and attempts in one read each.
+  - Pages: the class board uses `getClassBoard`; board and projector read the class once.
+- Database round trips for a class of 40 (local count, before → after): class board 329 → 6; unlock for class 246 → 8; skill map 16 → 2 (3 on a first visit that opens a skill); teacher PIN 3 → 2; the answer that finishes a proof 37 → 19. A new test keeps these under fixed limits (8, 8, 3, 2, 20) and checks the board gives the same answers as the old separate calls.
+- Checks: 369 tests pass (4 new), lint clean, type check clean, build passes; full smoke test against a local production build of 1dcdc31: 11 of 11 PASS.
+- NOT yet live: `git push` asked for a GitHub login (Git Credential Manager), so it stopped there as Das asked. After Das pushes: wait for the redeploy, then re-run the live smoke test for the new timings.
+- Files: `src/server/{store,mastery,services}.ts`, `src/server/__tests__/round-trips.test.ts`, `src/app/teacher/[class]/{page.tsx,project/page.tsx}`, `BUILD_LOG.md`.
+- Built in AgentFoundry with Claude Code.
