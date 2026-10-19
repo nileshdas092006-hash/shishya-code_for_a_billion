@@ -5,24 +5,14 @@
 //   --db    which database (default: DATABASE_URL, else file:data/shishya.db).
 // Keys come from .env.local (GROQ_API_KEY / OPENROUTER_API_KEY) and are never printed.
 
-import { existsSync, readFileSync } from "node:fs";
 import { finalAnswer, scriptedModel, toolCall } from "../src/agents/fake-model";
 import { createLlmClient, providersFromEnv } from "../src/agents/llm";
 import { runMiner } from "../src/agents/miner";
 import { createMinerPorts } from "../src/server/miner-ports";
 import { openStore } from "../src/server/store";
+import { loadEnv } from "./load-env";
 
-function loadEnvFile(path: string) {
-  if (!existsSync(path)) return;
-  for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
-    const m = /^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/.exec(line);
-    if (!m || line.trim().startsWith("#")) continue;
-    const value = m[2].replace(/^(['"])(.*)\1$/, "$2");
-    if (process.env[m[1]] === undefined) process.env[m[1]] = value;
-  }
-}
-
-loadEnvFile(".env.local");
+loadEnv();
 const args = process.argv.slice(2);
 const flag = (name: string) => {
   const i = args.indexOf(name);

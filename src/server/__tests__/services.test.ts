@@ -1,7 +1,7 @@
+import { answerText } from "../../core/answer";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { toString } from "../../core/fraction";
 import { createRng } from "../../core/rng";
 import { linearBothSides } from "../../core/skills/linear-both-sides";
 import { createServices } from "../services";
@@ -23,7 +23,7 @@ async function practiseWith(studentId: string, mistakeId: string | null, text?: 
   const item = (await ctx.store.getItem(served.itemId))!;
   const inst = linearBothSides.generate(createRng(item.seed));
   const m = linearBothSides.mistakes.find((x) => x.id === mistakeId);
-  const answer = text ?? (m ? toString(m.apply(inst).answer) : item.answer);
+  const answer = text ?? (m ? answerText(m.apply(inst).answer) : item.answer);
   return ctx.svc.submitPracticeAnswer(served.itemId, answer);
 }
 

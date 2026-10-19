@@ -1,3 +1,4 @@
+import { asFraction } from "../answer";
 import { describe, expect, it } from "vitest";
 import { add, div, equals, frac, mul, type Fraction } from "../fraction";
 import { createRng } from "../rng";
@@ -5,7 +6,10 @@ import { linearBothSides, makeInstance } from "../skills/linear-both-sides";
 import type { Instance } from "../types";
 
 const SEEDS = Array.from({ length: 1000 }, (_, i) => i + 1);
-const generate = (seed: number) => linearBothSides.generate(createRng(seed));
+const generate = (seed: number) => {
+  const inst = linearBothSides.generate(createRng(seed));
+  return { ...inst, answer: asFraction(inst.answer) };
+};
 const mistake = (id: string) => {
   const m = linearBothSides.mistakes.find((x) => x.id === id);
   if (!m) throw new Error(`no mistake ${id}`);
@@ -55,7 +59,7 @@ describe("linear-both-sides: worked example 4x − 3 = 2x + 7", () => {
       "kept-x-sign",
     ]);
     for (const m of linearBothSides.mistakes) {
-      expect(equals(m.apply(inst).answer, frac(5, 2))).toBe(false);
+      expect(equals(asFraction(m.apply(inst).answer), frac(5, 2))).toBe(false);
       expect(m.origin).toBe("authored");
     }
   });
@@ -127,7 +131,7 @@ describe("linear-both-sides: property tests over 1,000 seeds", () => {
     for (const seed of SEEDS) {
       const inst = generate(seed);
       const { trace, answer } = linearBothSides.solve(inst);
-      expect(equals(answer, inst.answer)).toBe(true);
+      expect(equals(asFraction(answer), inst.answer)).toBe(true);
       expect(trace).toHaveLength(5);
       expect(trace[0].text).toBe(inst.text);
     }
@@ -136,7 +140,7 @@ describe("linear-both-sides: property tests over 1,000 seeds", () => {
   it("no mistake ever returns the correct answer, and all mistake answers are distinct", () => {
     for (const seed of SEEDS) {
       const inst = generate(seed);
-      const answers = linearBothSides.mistakes.map((m) => m.apply(inst).answer);
+      const answers = linearBothSides.mistakes.map((m) => asFraction(m.apply(inst).answer));
       for (const ans of answers) expect(equals(ans, inst.answer)).toBe(false);
       for (let i = 0; i < answers.length; i++)
         for (let j = i + 1; j < answers.length; j++) expect(equals(answers[i], answers[j])).toBe(false);

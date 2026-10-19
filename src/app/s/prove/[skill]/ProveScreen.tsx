@@ -15,7 +15,7 @@ type Outcome = { passed: boolean; practise: string[]; unlocked: string[] };
 const formatTime = (iso: string) =>
   new Date(iso).toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" });
 
-export function ProveScreen({ skillId }: { skillId: string }) {
+export function ProveScreen({ skillId, answerKind }: { skillId: string; answerKind: "number" | "expression" }) {
   const [status, setStatus] = useState<Status | null>(null);
   const [run, setRun] = useState<Run | null>(null);
   const [answer, setAnswer] = useState("");
@@ -139,13 +139,13 @@ export function ProveScreen({ skillId }: { skillId: string }) {
             </>
           ) : (
             <>
-              <p className="text-xl font-semibold">{t("practise.solve")}</p>
+              <p className="text-xl font-semibold">{t(skillKey(skillId, "task"))}</p>
               <Equation text={current.text} size="lg" />
             </>
           )}
           <form onSubmit={save} className="flex flex-col gap-3">
             <label className="flex flex-wrap items-center gap-3 text-3xl font-bold math">
-              {t("practise.answerLabel")}
+              {t(skillKey(skillId, "answerLabel"))}
               <input
                 value={answer}
                 onChange={(e) => setAnswer(e.target.value)}
@@ -155,7 +155,7 @@ export function ProveScreen({ skillId }: { skillId: string }) {
               />
             </label>
             <p id="prove-hint" className="text-base text-gray-700">
-              {t("practise.answerHint")}
+              {t(answerKind === "expression" ? "practise.answerHint.expression" : "practise.answerHint")}
             </p>
             <button type="submit" className="btn btn-primary text-xl self-start" disabled={pending || !answer.trim()}>
               {t("prove.submit")}

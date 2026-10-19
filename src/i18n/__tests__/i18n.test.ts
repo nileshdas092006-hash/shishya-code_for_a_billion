@@ -28,10 +28,12 @@ describe("i18n", () => {
     }
   });
 
-  it("every skill has a title, an example, 4 hints and a child label for every mistake", () => {
+  it("every skill has a title, an example, a task, an answer label, 4 hints and a child label for every mistake", () => {
     for (const { spec } of SKILLS) {
       expect(en[skillKey(spec.id, "title")]).toBeTruthy();
       expect(en[skillKey(spec.id, "example")]).toBeTruthy();
+      expect(en[skillKey(spec.id, "task")]).toBeTruthy();
+      expect(en[skillKey(spec.id, "answerLabel")]).toBeTruthy();
       spec.hintLadder.forEach((h, i) => expect(en[hintKey(spec.id, i + 1)]).toBe(h));
       for (const m of spec.mistakes) expect(en[mistakeKey(spec.id, m.id)]).toBe(m.childLabel);
     }

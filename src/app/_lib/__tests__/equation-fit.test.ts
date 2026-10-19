@@ -22,7 +22,7 @@ describe("fitFontPx", () => {
         const inst = spec.generate(createRng(seed));
         const texts = [
           inst.text,
-          generateApply(createRng(seed)).instance.text,
+          ...spec.solve(generateApply(createRng(seed)).instance).trace.map((l) => l.text),
           ...spec.solve(inst).trace.map((l) => l.text),
           ...spec.mistakes.flatMap((m) => m.apply(inst).trace.map((l) => l.text)),
         ];

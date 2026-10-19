@@ -1,3 +1,4 @@
+import { asFraction } from "../answer";
 import { describe, expect, it } from "vitest";
 import { createRng } from "../rng";
 import { linearBothSides, makeInstance } from "../skills/linear-both-sides";
@@ -49,7 +50,7 @@ describe("checkTeachStep: property over 1,000 seeds and every mistake", () => {
     for (const seed of SEEDS) {
       const inst = linearBothSides.generate(createRng(seed));
       const correct = linearBothSides.solve(inst).trace;
-      const answer = Math.abs(inst.answer.num);
+      const answer = Math.abs(asFraction(inst.answer).num);
       const leak = new RegExp(`x = [−-]?${answer}(?!\\d)`);
       for (const m of linearBothSides.mistakes) {
         const out = m.apply(inst);

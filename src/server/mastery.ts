@@ -1,5 +1,4 @@
-import { parseAnswer } from "../core/answer";
-import { equals } from "../core/fraction";
+import { parseAnswerFor, sameAnswer } from "../core/answer";
 import { checkTeachStep } from "../core/teach";
 import { instanceFor, type SkillEntry } from "./skills";
 import type { ItemRow, MasteryState, ProofRunRow, Store } from "./store";
@@ -195,8 +194,8 @@ export async function verifyProofRun(store: Store, entry: SkillEntry, run: Proof
       reasons.push(`item ${i + 1} not answered exactly once`);
       continue;
     }
-    const typed = parseAnswer(attempts[0].answer);
-    if (!typed.ok || !equals(typed.value, instanceFor(entry, item).answer)) reasons.push(`item ${i + 1} wrong`);
+    const typed = parseAnswerFor(entry.spec.answerKind, attempts[0].answer);
+    if (!typed.ok || !sameAnswer(typed.value, instanceFor(entry, item).answer)) reasons.push(`item ${i + 1} wrong`);
     if (Date.parse(attempts[0].createdAt) > deadline) reasons.push(`item ${i + 1} answered after ${PROOF_TIME_LIMIT_MINUTES} minutes`);
   }
   if (formats.solve !== rule.solve || formats.apply !== rule.apply) reasons.push("wrong mix of items");

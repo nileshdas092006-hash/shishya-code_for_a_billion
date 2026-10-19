@@ -10,7 +10,8 @@
     "test": "vitest run",
     "seed:demo": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/register-ts.mjs scripts/seed-demo.ts",
     "dev:demo": "node scripts/dev-demo.mjs",
-    "miner": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/register-ts.mjs scripts/miner.ts"
+    "miner": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/register-ts.mjs scripts/miner.ts",
+    "author": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --import ./scripts/register-ts.mjs scripts/author.ts"
   },
   "dependencies": {
     "@libsql/client": "^0.18.0",

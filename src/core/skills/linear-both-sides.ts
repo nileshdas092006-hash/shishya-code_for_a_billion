@@ -1,7 +1,11 @@
+import { asFraction, sameAnswer } from "../answer";
+import { equivalent, parseEquation } from "../equation";
 import { formatEquation as eq, fracText } from "../format";
-import { div, equals, frac, type Fraction } from "../fraction";
+import { div, frac, type Fraction } from "../fraction";
+import { lineResult } from "../lineCheck";
 import { randInt, type Rng } from "../rng";
-import type { Instance, Mistake, SkillSpec, Trace } from "../types";
+import { meetsTargetForm, type TraceLineNumber } from "../targetForm";
+import type { Instance, LineCheck, Mistake, SkillSpec, Trace } from "../types";
 
 // Equations a·x + b = c·x + d, e.g. 4x − 3 = 2x + 7 (a = 4, b = −3, c = 2, d = 7, answer 5).
 
@@ -35,11 +39,11 @@ function nonZero(rng: Rng): number {
 
 function followsRules(inst: Instance): boolean {
   const { a, b, c, d } = inst.params;
-  const x = inst.answer;
+  const x = asFraction(inst.answer);
   if (x.den !== 1 || x.num === 0 || Math.abs(x.num) > 12) return false;
   if ([a, b, c, d].includes(x.num)) return false;
   const answers = [x, ...mistakes.map((m) => m.apply(inst).answer)];
-  return answers.every((p, i) => answers.every((q, j) => i === j || !equals(p, q)));
+  return answers.every((p, i) => answers.every((q, j) => i === j || !sameAnswer(p, q)));
 }
 
 function generate(rng: Rng): Instance {
@@ -70,6 +74,21 @@ function solve(inst: Instance): { trace: Trace; answer: Fraction } {
     ]),
     answer,
   };
+}
+
+// ---------- Checking a child's typed line (Teach the Shishya) ----------
+
+/** Equal to the question, and the right shape for this line of the 5-line working (steps may be combined). */
+function checkLine(inst: Instance, line: number, typed: string): LineCheck {
+  const t = parseEquation(typed);
+  if (!t.ok) return { ok: false, feedback: t.error, feedbackKey: t.errorKey, ...(t.errorParams ? { feedbackParams: t.errorParams } : {}) };
+  const q = parseEquation(inst.text);
+  if (!q.ok) throw new Error(`Question does not parse: ${inst.text}`);
+  if (!equivalent(t.equation, q.equation)) return lineResult(false, "teach.fix.notEqual");
+  if (line >= 2 && line <= 5 && !meetsTargetForm(t.equation, line as TraceLineNumber)) {
+    return lineResult(false, `teach.fix.shape.${line as TraceLineNumber}`);
+  }
+  return lineResult(true, "teach.fix.ok");
 }
 
 // ---------- Authored mistakes ----------
@@ -172,8 +191,10 @@ export const linearBothSides: SkillSpec = {
   version: VERSION,
   statement: "Solve linear equations with the unknown on both sides, such as 4x − 3 = 2x + 7.",
   prerequisites: ["alg.linear.two-step"],
+  answerKind: "number",
   generate,
   solve,
+  checkLine,
   mistakes,
   // The worked example's answer (15) is outside the generator's range (|x| ≤ 12), so a hint can never give away the answer.
   hintLadder: [

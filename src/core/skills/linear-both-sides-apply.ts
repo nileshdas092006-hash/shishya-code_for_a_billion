@@ -1,15 +1,11 @@
+import { asFraction } from "../answer";
 import { randInt, type Rng } from "../rng";
-import type { Instance } from "../types";
+import type { ApplyItem } from "../types";
 import { makeInstance } from "./linear-both-sides";
 
 // The "apply" (word problem) item for alg.linear.both-sides: two taxis, a·x + b = c·x + d.
 
-export type ApplyItem = {
-  /** The equation behind the story, so the solver, mistakes and checker all work on it. */
-  instance: Instance;
-  text: string;
-  textHi: string;
-};
+export type { ApplyItem } from "../types";
 
 const MAX_TRIES = 1000;
 
@@ -36,7 +32,7 @@ export function generateApply(rng: Rng): ApplyItem {
     const d = 10 * randInt(rng, 2, 30);
     if (a === c || b === d) continue;
     const instance = makeInstance({ a, b, c, d }, rng.seed);
-    const x = instance.answer;
+    const x = asFraction(instance.answer);
     if (x.den !== 1 || x.num <= 0 || x.num > 50) continue;
     return { instance, text: storyEn(a, b, c, d), textHi: storyHi(a, b, c, d) };
   }

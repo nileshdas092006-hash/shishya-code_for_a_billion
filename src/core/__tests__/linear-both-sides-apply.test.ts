@@ -1,3 +1,4 @@
+import { asFraction } from "../answer";
 import { describe, expect, it } from "vitest";
 import { add, equals, frac, mul } from "../fraction";
 import { createRng } from "../rng";
@@ -24,7 +25,7 @@ describe("apply item: taxi fares", () => {
       }
       expect(a).not.toBe(c);
       expect(b).not.toBe(d);
-      const x = item.instance.answer;
+      const x = asFraction(item.instance.answer);
       expect(x.den).toBe(1);
       expect(x.num).toBeGreaterThan(0);
       expect(x.num).toBeLessThanOrEqual(50);

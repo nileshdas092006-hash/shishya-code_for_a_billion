@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { getSkillEntry } from "@/core/skills";
 import { t } from "@/i18n";
 import { LockedNotice, Loading, SkillHeading, studentSkill } from "../../../_lib/student-pages";
 import { AiTutorSlot } from "../../../_components/AiTutorSlot";
@@ -19,7 +20,7 @@ async function Practise({ params }: { params: Promise<{ skill: string }> }) {
   return (
     <div className="flex flex-col gap-6">
       <SkillHeading skillId={skillId} title={t("practise.title")} />
-      <PractiseScreen skillId={skillId} />
+      <PractiseScreen skillId={skillId} answerKind={getSkillEntry(skillId)!.spec.answerKind} />
       <AiTutorSlot allowed={aiChat} />
 
     </div>

@@ -1,5 +1,7 @@
+import { asFraction } from "../core/answer";
 import { formatEquation, fracText } from "../core/format";
 import { validateMinedMistake, type MinedMistakeSpec, type UnknownError, type ValidationResult } from "../core/minedMistake";
+import { createRng } from "../core/rng";
 import { getSkillEntry } from "../core/skills";
 import type { Mistake, SkillSpec } from "../core/types";
 import type { ChatModel } from "./llm";
@@ -63,7 +65,7 @@ submit_draft with exactly the same JSON. A teacher will review it. If nothing fi
 
 const describeError = (skill: SkillSpec, e: UnknownError) => {
   const { a, b, c, d } = e.params;
-  const correct = fracText(skill.solve({ skillId: skill.id, version: skill.version, seed: 0, params: e.params, text: "", answer: { num: 0, den: 1 } }).answer);
+  const correct = fracText(asFraction(skill.solve({ skillId: skill.id, version: skill.version, seed: 0, params: e.params, text: "", answer: { num: 0, den: 1 } }).answer));
   return { a, b, c, d, question: formatEquation([[a, true], [b, false]], [[c, true], [d, false]]), correctAnswer: correct, wrongAnswer: e.wrongAnswer, count: e.count ?? 1 };
 };
 
@@ -108,6 +110,10 @@ export async function runMiner(opts: {
   const entry = getSkillEntry(opts.skillId);
   if (!entry) throw new Error(`Unknown skill: ${opts.skillId}`);
   const skill = entry.spec;
+  // Mined mistakes are formulas over a, b, c, d for a·x + b = c·x + d with a number answer.
+  if (skill.answerKind !== "number" || !["a", "b", "c", "d"].every((k) => k in skill.generate(createRng(1)).params)) {
+    throw new Error(`The Misconception Miner only supports equations a·x + b = c·x + d for now (${opts.skillId} is a different kind of skill).`);
+  }
   const maxValidations = opts.maxValidations ?? 5;
 
   const unknownErrors = await opts.ports.getUnknownErrors(skill.id);

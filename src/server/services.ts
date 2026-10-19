@@ -1,12 +1,11 @@
 import { randomBytes, randomInt, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
-import { parseAnswer } from "../core/answer";
+import { answerText, parseAnswerFor, sameAnswer } from "../core/answer";
 import { diagnose } from "../core/diagnose";
-import { equals, toString } from "../core/fraction";
 import { createRng } from "../core/rng";
 import type { ApplyItem } from "../core/skills/linear-both-sides-apply";
 import { validateMinedMistake, type MinedMistakeSpec } from "../core/minedMistake";
 import { checkTeachStep, type TeachResult } from "../core/teach";
-import type { Instance } from "../core/types";
+import { applies, type Instance } from "../core/types";
 import * as mastery from "./mastery";
 import { minedMistakes, unknownErrors } from "./miner-ports";
 import { defaultRegistry, getEntry, instanceFor, type Registry, type SkillEntry } from "./skills";
@@ -118,15 +117,16 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     entry: SkillEntry,
     kind: ItemKind,
     format: ItemFormat,
-    extra: { runId?: string; mistakeId?: string } = {},
+    extra: { runId?: string; mistakeId?: string; accept?: (instance: Instance) => boolean } = {},
   ): Promise<{ item: ItemRow; instance: Instance; apply: ApplyItem | null } | null> {
     const seen = new Set((await store.listItems({ studentId, skillId: entry.spec.id })).map((i) => i.paramsJson));
-    for (let i = 0; i < FRESH_TRIES; i++) {
+    const tries = extra.accept ? FRESH_TRIES * 6 : FRESH_TRIES; // a mistake may apply to only some questions
+    for (let i = 0; i < tries; i++) {
       const seed = newSeed();
       const apply = format === "apply" ? entry.generateApply(createRng(seed)) : null;
       const instance = apply ? apply.instance : entry.spec.generate(createRng(seed));
       const paramsJson = JSON.stringify(instance.params);
-      if (seen.has(paramsJson)) continue;
+      if (seen.has(paramsJson) || (extra.accept && !extra.accept(instance))) continue;
       const item: ItemRow = {
         id: randomUUID(),
         studentId,
@@ -138,7 +138,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         runId: extra.runId ?? null,
         mistakeId: extra.mistakeId ?? null,
         paramsJson,
-        answer: toString(instance.answer),
+        answer: answerText(instance.answer),
         servedAt: iso(),
         answeredAt: null,
       };
@@ -248,27 +248,27 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
 
     async submitPracticeAnswer(
       itemId: string,
-      answerText: string,
+      typedText: string,
     ): Promise<{ ok: true; correct: boolean; mistakeId: string | null; feedback: string } | Fail> {
       const item = await requireItem(itemId, "practice");
       const entry = await entryOf(item.skillId);
-      const typed = parseAnswer(answerText);
+      const typed = parseAnswerFor(entry.spec.answerKind, typedText);
       if (!typed.ok) return fail(typed.error, "bad_answer", { errorKey: typed.errorKey });
       return store.transaction(async () => {
         if (!(await store.markItemAnswered(item.id, iso()))) return fail("This question was already answered.", "already_answered");
         const instance = instanceFor(entry, item);
-        const correct = equals(typed.value, instance.answer);
+        const correct = sameAnswer(typed.value, instance.answer);
         const mistakeId = correct ? null : diagnose(entry.spec, instance, typed.value);
         await store.insertAttempt({
           id: randomUUID(),
           studentId: item.studentId,
           itemId: item.id,
-          answer: toString(typed.value),
+          answer: answerText(typed.value),
           correct,
           mistakeId,
           createdAt: iso(),
         });
-        if (mistakeId === "unknown") await store.recordUnknownError(item.skillId, item.paramsJson, toString(typed.value));
+        if (mistakeId === "unknown") await store.recordUnknownError(item.skillId, item.paramsJson, answerText(typed.value));
         await log(item.studentId, "practice_answered", { skillId: item.skillId, itemId: item.id, correct, mistakeId });
         const feedback = correct
           ? "Correct! Both sides are equal for your answer."
@@ -298,7 +298,11 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
           const list = [];
           for (let i = 0; i < traces; i++) {
             const mistake = mistakes[i % mistakes.length];
-            const served = await serveFresh(studentId, entry, "teach", "solve", { runId: sessionId, mistakeId: mistake.id });
+            const served = await serveFresh(studentId, entry, "teach", "solve", {
+              runId: sessionId,
+              mistakeId: mistake.id,
+              accept: (instance) => applies(mistake, instance), // a question this mistake makes sense for
+            });
             if (!served) throw new NoFreshQuestion();
             list.push({
               itemId: served.item.id,
@@ -413,7 +417,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
 
     async submitProofAnswer(
       itemId: string,
-      answerText: string,
+      typedText: string,
     ): Promise<
       | { ok: true; finished: false }
       | { ok: true; finished: true; passed: boolean; state: mastery.MasteryState; practise: string[]; unlocked: string[] }
@@ -421,26 +425,26 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     > {
       const item = await requireItem(itemId, "proof");
       const entry = await entryOf(item.skillId);
-      const typed = parseAnswer(answerText);
+      const typed = parseAnswerFor(entry.spec.answerKind, typedText);
       if (!typed.ok) return fail(typed.error, "bad_answer", { errorKey: typed.errorKey });
       return store.transaction(async () => {
         const run = item.runId ? await store.getProofRun(item.runId) : undefined;
         if (!run || run.finishedAt) return fail("This proof is already finished.", "finished");
         if (!(await store.markItemAnswered(item.id, iso()))) return fail("This question was already answered.", "already_answered");
         const instance = instanceFor(entry, item);
-        const correct = equals(typed.value, instance.answer);
+        const correct = sameAnswer(typed.value, instance.answer);
         const mistakeId = correct ? null : diagnose(entry.spec, instance, typed.value);
         const saved = await store.insertAttempt({
           id: randomUUID(),
           studentId: item.studentId,
           itemId: item.id,
-          answer: toString(typed.value),
+          answer: answerText(typed.value),
           correct,
           mistakeId,
           createdAt: iso(),
         });
         if (!saved) return fail("This question was already answered.", "already_answered");
-        if (mistakeId === "unknown") await store.recordUnknownError(item.skillId, item.paramsJson, toString(typed.value));
+        if (mistakeId === "unknown") await store.recordUnknownError(item.skillId, item.paramsJson, answerText(typed.value));
         await log(item.studentId, "proof_answered", { skillId: item.skillId, runId: run.id, itemId: item.id, correct });
 
         const runItems = await store.listRunItems(run.id);
@@ -608,9 +612,16 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     async projectorTrace(classId: string, skillId: string) {
       await requireClass(classId);
       const { spec } = await entryOf(skillId);
-      const seed = newSeed();
-      const instance = spec.generate(createRng(seed));
-      const mistake = spec.mistakes[Math.floor(random() * spec.mistakes.length)];
+      let seed = newSeed();
+      let instance = spec.generate(createRng(seed));
+      let possible = spec.mistakes.filter((m) => applies(m, instance));
+      for (let i = 0; i < FRESH_TRIES && possible.length === 0; i++) {
+        seed = newSeed();
+        instance = spec.generate(createRng(seed));
+        possible = spec.mistakes.filter((m) => applies(m, instance));
+      }
+      if (possible.length === 0) throw new Error(`${skillId}: no question with a mistake that applies`);
+      const mistake = possible[Math.floor(random() * possible.length)];
       await log(null, "projector_trace", { classId, skillId, mistakeId: mistake.id });
       return { seed, mistakeId: mistake.id, question: instance.text, lines: mistake.apply(instance).trace.map((l) => l.text) };
     },

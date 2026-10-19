@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { getSkillEntry } from "@/core/skills";
 import { t } from "@/i18n";
 import { LockedNotice, Loading, SkillHeading, studentSkill } from "../../../_lib/student-pages";
 import { ProveScreen } from "./ProveScreen";
@@ -23,7 +24,7 @@ async function Prove({ params }: { params: Promise<{ skill: string }> }) {
         <SkillHeading skillId={skillId} title={t("prove.title")} />
         <AiOffBadge />
       </div>
-      <ProveScreen skillId={skillId} />
+      <ProveScreen skillId={skillId} answerKind={getSkillEntry(skillId)!.spec.answerKind} />
     </div>
   );
 }

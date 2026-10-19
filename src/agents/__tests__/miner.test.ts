@@ -27,7 +27,7 @@ afterEach(() => ctx?.done());
 
 /** Logs n unknown wrong answers that "divide by a" explains, starting with 5/2 for 4x − 3 = 2x + 7. */
 async function logDivideByAErrors(n: number) {
-  const params = [{ a: 4, b: -3, c: 2, d: 7 }];
+  const params: Record<string, number>[] = [{ a: 4, b: -3, c: 2, d: 7 }];
   for (let seed = 1; params.length < n; seed++) {
     const inst = linearBothSides.generate(createRng(seed));
     const typed = parseAnswer(toString(frac(inst.params.d - inst.params.b, inst.params.a)))!;
@@ -166,6 +166,11 @@ describe("the Misconception Miner (FAKE model)", () => {
     const result = await runMiner({ model, ports: createMinerPorts(ctx.store), skillId: SKILL });
     expect(result).toMatchObject({ status: "failed", validations: 1, error: expect.stringMatching(/HTTP 400/) });
     expect(result.attempts.map((a) => a.answerFormula)).toEqual(["d / a"]);
+  });
+
+  it("refuses skills its formula templates do not fit (like terms has expression answers)", async () => {
+    ctx = await setup();
+    await expect(runMiner({ model: goodScript(), ports: createMinerPorts(ctx.store), skillId: "alg.like-terms" })).rejects.toThrow(/only supports/);
   });
 
   it("stops after 5 failed validations", async () => {

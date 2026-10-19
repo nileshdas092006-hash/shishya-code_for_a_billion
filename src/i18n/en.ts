@@ -40,6 +40,7 @@ export const ui = {
   "practise.solve": "Solve for x.",
   "practise.answerLabel": "x =",
   "practise.answerHint": "You can type a fraction like 5/3 or a negative number like −4.",
+  "practise.answerHint.expression": "Type the simplest form, like 2x + 7 or 3x − 4.",
   "practise.check": "Check my answer",
   "practise.next": "Next question",
   "practise.correct": "Correct! Both sides are equal for your answer.",
@@ -101,11 +102,29 @@ export const ui = {
   "common.locked": "This skill is locked. Ask your teacher.",
   "common.notFound": "We could not find that page.",
 
+  "skill.alg.integers.ops.title": "Adding and subtracting integers",
+  "skill.alg.integers.ops.example": "like −7 + 3 and 5 − (−4)",
+  "skill.alg.integers.ops.task": "Work out:",
+  "skill.alg.integers.ops.answerLabel": "Answer:",
+  "skill.alg.like-terms.title": "Like terms",
+  "skill.alg.like-terms.example": "like 3x + 5 − x + 2 = 2x + 7",
+  "skill.alg.like-terms.task": "Simplify:",
+  "skill.alg.like-terms.answerLabel": "Simplest form:",
+  "skill.alg.linear.one-step.title": "One-step equations",
+  "skill.alg.linear.one-step.example": "like x + 7 = 3 and 4x = −12",
+  "skill.alg.linear.one-step.task": "Solve for x.",
+  "skill.alg.linear.one-step.answerLabel": "x =",
+  "skill.alg.linear.two-step.title": "Two-step equations",
+  "skill.alg.linear.two-step.example": "like 5x − 3 = −8",
+  "skill.alg.linear.two-step.task": "Solve for x.",
+  "skill.alg.linear.two-step.answerLabel": "x =",
   "skill.alg.linear.both-sides.title": "x on both sides",
   "skill.alg.linear.both-sides.example": "like 4x − 3 = 2x + 7",
+  "skill.alg.linear.both-sides.task": "Solve for x.",
+  "skill.alg.linear.both-sides.answerLabel": "x =",
 } as const;
 
-type SkillTextKey = `skill.${string}.${"title" | "example"}`;
+type SkillTextKey = `skill.${string}.${"title" | "example" | "task" | "answerLabel"}`;
 type HintKey = `hint.${string}.${1 | 2 | 3 | 4}`;
 type MistakeKey = `mistake.${string}.${string}`;
 export type MessageKey =

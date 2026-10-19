@@ -29,6 +29,8 @@ export const PARSE_MESSAGES = {
   "parse.unreadable": 'I cannot read "{ch}". Use only numbers, x, +, − and =.',
   "parse.tooBig": "That number is too big. Check the line again.",
   "parse.generic": "I could not read that line. Check it and try again.",
+  "parse.extraEquals": "Write just the expression here, without an equals sign (=).",
+  "parse.arith": "Use only whole numbers, brackets, + and −.",
 } as const;
 export type ParseErrorKey = keyof typeof PARSE_MESSAGES;
 
@@ -135,6 +137,29 @@ export function parseEquation(text: string): ParseResult {
   } catch (e) {
     if (e instanceof ParseError) return failure(e.key, e.params);
     return failure("parse.generic");
+  }
+}
+
+export type ExpressionResult =
+  | { ok: true; side: Side }
+  | { ok: false; error: string; errorKey: ParseErrorKey; errorParams?: MessageParams };
+
+/** Parses an expression in x without "=", such as "3x + 5 − x + 2". Never throws. */
+export function parseExpression(text: string): ExpressionResult {
+  const fail = (r: ParseResult): ExpressionResult =>
+    r.ok ? { ok: false, error: PARSE_MESSAGES["parse.generic"], errorKey: "parse.generic" } : r;
+  try {
+    const clean = String(text ?? "")
+      .toLowerCase()
+      .replace(/[−–—]/g, "-")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (!clean) return fail(failure("parse.empty"));
+    if (clean.includes("=")) return fail(failure("parse.extraEquals"));
+    return { ok: true, side: parseSide(clean) };
+  } catch (e) {
+    if (e instanceof ParseError) return fail(failure(e.key, e.params));
+    return fail(failure("parse.generic"));
   }
 }
 

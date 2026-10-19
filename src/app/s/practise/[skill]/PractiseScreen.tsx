@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState, useTransition } from "react";
-import { hasMessage, hintKey, keepMathTogether, mistakeKey, t, type MessageKey } from "@/i18n";
+import { hasMessage, hintKey, keepMathTogether, mistakeKey, skillKey, t, type MessageKey } from "@/i18n";
 import { answerPractice, servePractice } from "../../../actions";
 import { Equation } from "../../../_components/Equation";
 import { Shishya } from "../../../_components/Shishya";
@@ -12,7 +12,7 @@ const HINT_LEVELS = 4;
 
 type Feedback = { kind: "good" | "bad" | "note"; text: string; detail?: string } | null;
 
-export function PractiseScreen({ skillId }: { skillId: string }) {
+export function PractiseScreen({ skillId, answerKind }: { skillId: string; answerKind: "number" | "expression" }) {
   const [item, setItem] = useState<{ itemId: string; text: string } | null>(null);
   const [answer, setAnswer] = useState("");
   const [answered, setAnswered] = useState(false);
@@ -80,11 +80,11 @@ export function PractiseScreen({ skillId }: { skillId: string }) {
   return (
     <div className="flex flex-col gap-5">
       <div className="card flex flex-col gap-4">
-        <p className="text-xl font-semibold">{t("practise.solve")}</p>
+        <p className="text-xl font-semibold">{t(skillKey(skillId, "task"))}</p>
         <Equation text={item.text} size="lg" />
         <form onSubmit={check} className="flex flex-col gap-3">
           <label className="flex flex-wrap items-center gap-3 text-3xl font-bold math">
-            {t("practise.answerLabel")}
+            {t(skillKey(skillId, "answerLabel"))}
             <input
               value={answer}
               onChange={(e) => setAnswer(e.target.value)}
@@ -96,7 +96,7 @@ export function PractiseScreen({ skillId }: { skillId: string }) {
             />
           </label>
           <p id="answer-hint" className="text-base text-gray-700">
-            {t("practise.answerHint")}
+            {t(answerKind === "expression" ? "practise.answerHint.expression" : "practise.answerHint")}
           </p>
           {!answered && (
             <button type="submit" className="btn btn-primary text-xl self-start" disabled={pending || !answer.trim()}>

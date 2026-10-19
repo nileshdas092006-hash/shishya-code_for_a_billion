@@ -1,9 +1,9 @@
-import { parseAnswer } from "./answer";
+import { asFraction, parseAnswer, sameAnswer } from "./answer";
 import { equivalent, parseEquation } from "./equation";
 import { formatEquation, fracText } from "./format";
 import { add, div, equals, frac, mul, sub, type Fraction } from "./fraction";
 import { createRng } from "./rng";
-import type { Instance, Mistake, SkillSpec, StepType } from "./types";
+import { applies, type Instance, type Mistake, type SkillSpec, type StepType } from "./types";
 
 // A MINED mistake is DATA, never code. The Misconception Miner (an AI agent) may only propose this JSON:
 //   { id, label, childLabel, stepType, firstWrongLine (2..5), lines: {"<n>": "<template>"}, answerFormula }
@@ -290,12 +290,12 @@ export function validateMinedMistake(input: unknown, ctx: ValidationContext): Va
         return stop(`for ${q}: ${(e as Error).message}`);
       }
       result.checkedInstances++;
-      if (equals(out.answer, inst.answer)) return stop(`it gives the correct answer for ${q}, so it is not a mistake`);
+      if (sameAnswer(out.answer, inst.answer)) return stop(`it gives the correct answer for ${q}, so it is not a mistake`);
       for (const ex of ctx.existing) {
-        if (equals(ex.apply(inst).answer, out.answer)) result.overlaps[ex.id] = (result.overlaps[ex.id] ?? 0) + 1;
+        if (applies(ex, inst) && sameAnswer(ex.apply(inst).answer, out.answer)) result.overlaps[ex.id] = (result.overlaps[ex.id] ?? 0) + 1;
       }
       const last = out.trace[out.trace.length - 1].text;
-      const expected = `x = ${fracText(out.answer)}`;
+      const expected = `x = ${fracText(asFraction(out.answer))}`;
       if (last !== expected) return stop(`the last line must be x = <answerFormula>: for ${q} it is "${last}", expected "${expected}"`);
       const correctLine = ctx.skill.solve(inst).trace[fwl - 1].text;
       const wrongLine = out.trace[fwl - 1].text;

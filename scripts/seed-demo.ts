@@ -5,9 +5,9 @@
 
 import { existsSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
-import { toString } from "../src/core/fraction";
+import { answerText } from "../src/core/answer";
 import { createRng } from "../src/core/rng";
-import { SKILLS } from "../src/core/skills";
+import { getSkillEntry } from "../src/core/skills";
 import { createServices } from "../src/server/services";
 import { openStore } from "../src/server/store";
 
@@ -22,7 +22,8 @@ for (const suffix of ["", "-wal", "-shm"]) {
 
 const store = await openStore({ url: DEMO_URL });
 const svc = createServices(store, { cooldownHours: 0 });
-const { spec } = SKILLS[0];
+// The demo practice answers are for "variables on both sides" (the first skill, integers, is open to everyone).
+const { spec } = getSkillEntry("alg.linear.both-sides")!;
 
 const room = await svc.createClassroom({ grade: 8, section: "D", studentCount: 5, pin: DEMO_PIN });
 await svc.teacherUnlockClass(room.classId, spec.id);
@@ -37,7 +38,7 @@ async function practise(studentCode: string, kind: string) {
   const instance = spec.generate(createRng(item.seed));
   const mistake = spec.mistakes.find((m) => m.id === kind);
   const answer =
-    kind === "correct" ? toString(instance.answer) : mistake ? toString(mistake.apply(instance).answer) : toString(instance.answer) + "9";
+    kind === "correct" ? answerText(instance.answer) : mistake ? answerText(mistake.apply(instance).answer) : answerText(instance.answer) + "9";
   await svc.submitPracticeAnswer(served.itemId, answer);
 }
 

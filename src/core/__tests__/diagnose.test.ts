@@ -1,3 +1,4 @@
+import { asFraction } from "../answer";
 import { describe, expect, it } from "vitest";
 import { diagnose } from "../diagnose";
 import { add, frac } from "../fraction";
@@ -39,7 +40,7 @@ describe("diagnose", () => {
   it("property: a wrong answer no mistake produces gives unknown over 1,000 seeds", () => {
     for (const seed of SEEDS) {
       const q = linearBothSides.generate(createRng(seed));
-      expect(diagnose(linearBothSides, q, add(q.answer, frac(1000)))).toBe("unknown");
+      expect(diagnose(linearBothSides, q, add(asFraction(q.answer), frac(1000)))).toBe("unknown");
     }
   });
 });

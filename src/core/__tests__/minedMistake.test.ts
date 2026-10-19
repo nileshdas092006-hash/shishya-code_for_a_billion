@@ -20,7 +20,7 @@ const DIVIDE_BY_A: MinedMistakeSpec = {
 };
 
 /** Six logged unknown wrong answers that "divide by a" explains (5/2 for 4x − 3 = 2x + 7, and others). */
-function unknownErrorsFor(formula: (p: { a: number; b: number; c: number; d: number }) => string, n = 6, onlyUnknown = true): UnknownError[] {
+function unknownErrorsFor(formula: (p: Record<string, number>) => string, n = 6, onlyUnknown = true): UnknownError[] {
   const out: UnknownError[] = [{ params: P, wrongAnswer: formula(P), count: 3 }];
   for (let seed = 1; out.length < n; seed++) {
     const inst = linearBothSides.generate(createRng(seed));
@@ -31,7 +31,7 @@ function unknownErrorsFor(formula: (p: { a: number; b: number; c: number; d: num
   }
   return out;
 }
-const divideByA = (p: { a: number; b: number; d: number }) => toString(frac(p.d - p.b, p.a));
+const divideByA = (p: Record<string, number>) => toString(frac(p.d - p.b, p.a));
 const ERRORS = unknownErrorsFor(divideByA);
 const ctx = { skill: linearBothSides, unknownErrors: ERRORS, existing: linearBothSides.mistakes };
 
