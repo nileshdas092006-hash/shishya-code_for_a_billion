@@ -107,3 +107,13 @@
 - Also: model reply timeout `LLM_TIMEOUT_MS` (default 60 s); failed agent runs now report the turns they took; the Miner refuses skills its formulas do not fit; `npm run author`/`miner` read non-secret model names from .env.example when .env.local has none.
 - Tests: 346 passing at the end (17 new test files and helpers since Task 6b). Lint clean, build passes.
 - Built in AgentFoundry with Claude Code.
+
+## 2026-10-19: Live smoke test of https://shishya-codeforabillion.vercel.app/ (headless Edge)
+- How: a real headless Edge (Chrome DevTools Protocol over Node's built-in WebSocket, no new dependency), so server actions and cookies behave like a child's browser. Every answer and fix the script typed was computed by `src/core` from the question shown on screen.
+- Result: BLOCKED by a missing Vercel setting. Creating a class showed "SESSION_SECRET (32+ characters) must be set in production." Every page and action that reads a login cookie fails the same way: logged-out student pages (/s/home, /s/practise, /s/teach, /s/prove) show "This page couldn't load" (React error #441). Steps 2–7 could not run. Not a code bug: `getSessionSecret()` refuses to run in production without the secret, as designed.
+- Working: the database (Turso) is reachable (the class rows were written). `/`, `/s` and `/teacher` load at 360px with no errors, no sideways scroll, page load 0.4–1.8 s.
+- Fix needed (Das, in Vercel): Project → Settings → Environment Variables → `SESSION_SECRET` = a random value of 32+ characters (README "Deploy to Vercel", step 3), ticked for **Production**, then **Redeploy** (env changes only reach new deployments).
+- Side effect: each attempt wrote a grade 8, section Q class with 3 students to the live database before the cookie step failed (2 classes so far, codes starting `8Q-`; their PINs were never shown). Sections are one letter, so the test class is section **Q**, not "QA".
+- **Class "QA" (section Q, codes `8Q-…`) is a TEST class. Exclude every grade 8 section Q class from pilot numbers.**
+- Files: `BUILD_LOG.md`.
+- Built in AgentFoundry with Claude Code.
