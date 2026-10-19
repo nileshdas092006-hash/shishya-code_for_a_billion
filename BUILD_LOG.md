@@ -129,3 +129,21 @@
 - Still needed (Das): set SESSION_SECRET in Vercel (Production) and redeploy, then re-run the live smoke test.
 - Files: `src/server/{setup,instance,services}.ts`, `src/app/_lib/{page-guard,student-pages}.tsx`, `src/app/actions.ts`, `src/app/s/home/page.tsx`, `src/app/s/{practise,teach,prove}/[skill]/page.tsx`, `src/app/teacher/[class]/{page.tsx,project/page.tsx,export/route.ts}`, `src/i18n/{en,hi}.ts`, tests `src/server/__tests__/{setup-check,classroom}.test.ts`, `src/app/_lib/__tests__/page-guard.test.tsx`, `src/app/__tests__/actions-setup.test.ts`, `BUILD_LOG.md`.
 - Built in AgentFoundry with Claude Code.
+
+## 2026-10-19: Live smoke test re-run after SESSION_SECRET was set (headless Edge)
+- Live site confirmed on fd6a0b1 or later: a logged-out /s/home shows "Please type your codes again."
+- Test classes: **8Q-TKN8** (first run) and **8Q-ENN4** (full run), 3 students each, plus the 2 half-made 8Q classes from the first attempt. **All grade 8 section Q classes (codes `8Q-…`) are TEST classes: exclude them from pilot numbers.**
+- Result on the live site (8Q-ENN4): 10 of 11 checks PASS.
+  1. Create class 8 / Q / 3 students: PASS (class code and PIN shown).
+  2. Student login as 8Q-01: PASS.
+  3. Unlock "x on both sides" for the class: PASS (Locked 3 → Open 3).
+  4. Practise: a wrong answer from the kept-x-sign mistake named the step ("Not quite. Look at this step: …subtract it from both sides…"): PASS; a correct answer: PASS.
+  5. Teach: 3 traces fixed with lines computed by src/core → "You earned Key 1!": PASS.
+  6. Prove: 3 equations + 1 taxi word problem, all correct → "Mastered!": PASS.
+  7. Teacher board in a fresh browser with the PIN: 1 Mastered: PASS; stuck board shows kept-x-sign: PASS; pilot CSV (HTTP 200, text/csv, attachment): PASS.
+  8. Pages at 360px: 8 of 9 clean; **/s/home FAILED**: the state word next to "like 3x + 5 − x + 2 = 2x + 7" was pushed off the screen (page 426px wide).
+- Fix (commit 09a9394, tests first): new `SkillCardHeader`; on a phone the state word gets its own line and the example uses `<Equation>` (one line, shrinks to fit). 365 tests pass, lint and build clean. A full smoke run against a local production build of this commit: 11 of 11 PASS, every page at 360px with no sideways scroll. NOT yet on the live site: the push needs Das to sign in to GitHub again (Git Credential Manager asked for a login).
+- Script problems found and fixed (not app bugs): the browser driver could not return a found element as a value, and two checks read the page before it finished streaming.
+- Load times on the live site (ms, page load): / 402, /s 475, /s/home 3341, Practise 1067, Teach 1122, Prove 1294–3311, /teacher 384, class board 7008–9477, projector 904. Actions: create class 4.0 s, student login 1.2 s, practise answer 2.1–2.2 s, teach check 2.9–3.8 s, prove answer 2.5–8.0 s, **unlock for class 11.5 s, PIN → board 8.0 s**. The class board and unlock are slow: many database round trips one after another, each crossing from Vercel to Turso. To look at next: put the Vercel function region next to the Turso database's region, and reduce the number of queries on the class board.
+- Files: `BUILD_LOG.md` (the app fix is in commit 09a9394).
+- Built in AgentFoundry with Claude Code.
