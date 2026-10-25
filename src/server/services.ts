@@ -82,7 +82,7 @@ const NOT_COUNTED: Record<Exclude<ClassKind, "real">, string> = {
   test: "test class: not counted for impact",
   sandbox: "tour class: not counted for impact",
 };
-const UNKNOWN_LABEL = "Wrong answer that no known mistake explains yet";
+const UNKNOWN_LABEL = "Not matched to a known mistake";
 
 const MAX_STUDENTS = 60;
 // Failed log-ins are counted from the events table, so every server instance sees the same count.
@@ -1006,6 +1006,8 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         aiAllowed: cls.aiAllowed,
         proofWindowRequired: cls.proofWindowRequired,
         classKind: cls.kind,
+        /** Hours after a missed proof until the next try opens (for the words on the skill map). */
+        proofCooldownHours: cooldownFor(cls),
       };
     },
 

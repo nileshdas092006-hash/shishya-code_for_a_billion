@@ -5,13 +5,13 @@ import { skillKey, t } from "@/i18n";
 import { SkillCardHeader } from "../SkillCardHeader";
 
 // Found by the live 360px check: "like 3x + 5 − x + 2 = 2x + 7" never wraps (by design), so the state word
-// next to it ("Locked") was pushed past the right edge and the whole page scrolled sideways.
+// next to it ("Locked", now "Not started") was pushed past the right edge and the whole page scrolled sideways.
 
 describe("a skill card's header on the skill map, at phone width", () => {
   const html = renderToStaticMarkup(<SkillCardHeader skillId="alg.like-terms" state="LOCKED" />);
 
   it("puts the state word on its own line on a phone, and at the right on a wider screen", () => {
-    expect(html).toMatch(/<span class="[^"]*\bw-full\b[^"]*\bsm:w-auto\b[^"]*\bsm:ml-auto\b[^"]*">Locked<\/span>/);
+    expect(html).toMatch(/<span class="[^"]*\bw-full\b[^"]*\bsm:w-auto\b[^"]*\bsm:ml-auto\b[^"]*">Not started<\/span>/);
   });
 
   it("shows the example with <Equation>: one line, shrinking to fit the card instead of pushing the page wider", () => {

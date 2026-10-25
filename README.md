@@ -15,6 +15,24 @@ in English and Hindi.
 
 **Built with AgentFoundry** (all app code was written in AgentFoundry with Claude Code; see [BUILD_LOG.md](BUILD_LOG.md)).
 
+## How it works
+
+Each skill goes through the same steps. These are the words a child and a teacher see on screen:
+
+| On screen | What it means |
+| --- | --- |
+| **Not started** | The skill is not open for this child yet. It opens when the skills before it are mastered, or when the teacher opens it for the class. |
+| **Practising** | The child solves questions with their own numbers. A wrong answer shows the exact line of working to look at again, and a hint ladder helps. |
+| **Taught the Shishya** | The child found and fixed the first wrong line in the Shishya's working on 3 questions. Code checks every fixed line. |
+| **Show it alone** | 4 questions with the child's own numbers, no hints and no AI help, only while the teacher has opened proofs in class. |
+| **Next try opens tomorrow** | The child missed the proof. The next try opens after the class's wait: tomorrow, next period or straight away (the teacher chooses). |
+| **Mastered** | The child showed the skill alone. Only code decides this, never an AI. |
+
+On the class board, the teacher sees where children's working first goes wrong. A wrong answer that no mistake in the
+library explains is shown as **Not matched to a known mistake**. When there are enough of these, the **mistake finder
+(an AI helper)**, called the Misconception Miner below, proposes a new mistake. Code tests it, and the teacher reads it
+on the board as a **New mistake found in your class** and approves or rejects it. Children never see the AI's words.
+
 ## Run it locally
 
 Needs Node.js 22.18 or newer (24 recommended).

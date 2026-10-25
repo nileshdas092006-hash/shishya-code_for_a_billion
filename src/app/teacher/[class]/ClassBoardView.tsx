@@ -12,11 +12,14 @@ import { PatternGrid, SlipList } from "./PatternGrid";
 import { Equation } from "../../_components/Equation";
 import { StudentCodeSheet } from "../CreateClassForm";
 import { PrintButton } from "../PrintButton";
+import { stateWord } from "../../_lib/state-words";
 
 // The teacher's class board itself (the page checks the PIN first). Also shown, unchanged, as stop 5 of the Judge
 // Tour for the tour's made-up class. Shows student CODES only, never names.
 
 const EXAMPLE_SEED = 20261018;
+/** The Progress columns, in the order a child goes through them. */
+const STATES = ["LOCKED", "OPEN", "KEY1", "NOT_YET", "MASTERED"] as const;
 
 type Query = Record<string, string | string[] | undefined>;
 
@@ -73,18 +76,18 @@ export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Que
 
       <section className="flex flex-col gap-3 no-print" aria-labelledby="progress">
         <h2 id="progress" className="text-2xl font-bold">
-          Progress
+          {t("board.progress.title")}
         </h2>
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-lg">
             <thead>
               <tr className="border-b-2 border-gray-400 text-left">
-                <th className="py-2 pr-3">Skill</th>
-                <th className="py-2 pr-3">Locked</th>
-                <th className="py-2 pr-3">Open</th>
-                <th className="py-2 pr-3">Key 1</th>
-                <th className="py-2 pr-3">Not yet</th>
-                <th className="py-2 pr-3">Mastered</th>
+                <th className="py-2 pr-3">{t("board.progress.skill")}</th>
+                {STATES.map((s) => (
+                  <th key={s} className="py-2 pr-3">
+                    {t(...stateWord(s, proofCooldown.hours))}
+                  </th>
+                ))}
                 <th className="py-2 pr-3">{t("board.goneAhead.head")}</th>
                 <th className="py-2" />
               </tr>
@@ -93,17 +96,17 @@ export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Que
               {progress.map(({ skillId, counts, goneAhead }) => (
                 <tr key={skillId} className="border-b border-gray-300">
                   <td className="py-2 pr-3 font-semibold">{t(skillKey(skillId, "title"))}</td>
-                  <td className="py-2 pr-3">{counts.LOCKED}</td>
-                  <td className="py-2 pr-3">{counts.OPEN}</td>
-                  <td className="py-2 pr-3">{counts.KEY1}</td>
-                  <td className="py-2 pr-3">{counts.NOT_YET}</td>
-                  <td className="py-2 pr-3">{counts.MASTERED}</td>
+                  {STATES.map((s) => (
+                    <td key={s} className="py-2 pr-3">
+                      {counts[s]}
+                    </td>
+                  ))}
                   <td className={`py-2 pr-3 ${goneAhead > 0 ? "font-bold text-amber-900" : ""}`}>{goneAhead}</td>
                   <td className="py-2">
                     {counts.LOCKED > 0 && (
                       <form action={unlockSkillForClass.bind(null, cls.code, skillId)}>
                         <button type="submit" className="btn">
-                          Unlock for class
+                          {t("board.progress.open")}
                         </button>
                       </form>
                     )}
@@ -118,10 +121,10 @@ export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Que
 
       <section className="flex flex-col gap-3 no-print" aria-labelledby="mined">
         <h2 id="mined" className="text-2xl font-bold">
-          New mistakes found by the Misconception Miner
+          {t("board.mined.title")}
         </h2>
         {mined.length === 0 ? (
-          <p className="text-gray-700">Nothing waiting for your decision.</p>
+          <p className="text-gray-700">{t("board.mined.none")}</p>
         ) : (
           <ul className="flex flex-col gap-3">
             {mined.map((m) => (
@@ -294,7 +297,7 @@ function ProofWindow({ classCode, proof }: { classCode: string; proof: Board["pr
 type Draft = Awaited<ReturnType<Awaited<ReturnType<typeof getServices>>["listPendingMinedMistakes"]>>[number];
 
 /**
- * A tested draft from the Misconception Miner: what it says, how much data it explains, an example, the evidence
+ * A tested draft from the Misconception Miner ("the mistake finder" on screen): what it says, how much data it explains, an example, the evidence
  * (each logged wrong answer it explains) and the 4 code checks.
  */
 function MinedDraft({ draft, agentHref }: { draft: Draft; agentHref: string }) {
@@ -311,15 +314,11 @@ function MinedDraft({ draft, agentHref }: { draft: Draft; agentHref: string }) {
   } catch {
     example = null;
   }
-  if (!spec) return <p className="msg-bad">Draft {draft.id} could not be read. Reject it.</p>;
+  if (!spec) return <p className="msg-bad">{t("board.mined.unreadable")}</p>;
   return (
     <div className="flex flex-col gap-2">
-      <h3 className="text-xl font-bold">Draft from the Misconception Miner: {spec.id}</h3>
-      {draft.report && (
-        <p>
-          Explains {draft.report.reproduced} logged wrong answers · checked by code on {draft.report.checkedInstances} questions
-        </p>
-      )}
+      <h3 className="text-xl font-bold">{t("board.mined.draft", { label: spec.label })}</h3>
+      {draft.report && <p>{t("board.mined.explains", { n: draft.report.reproduced, checked: draft.report.checkedInstances })}</p>}
       {example && (
         <ol className="flex flex-col gap-1">
           {example.map((line, i) => (
@@ -382,10 +381,7 @@ function MinedDraft({ draft, agentHref }: { draft: Draft; agentHref: string }) {
       <Link href={agentHref} className="self-start underline">
         {t("review.howAgent")}
       </Link>
-      <p className="text-base text-gray-700">
-        Drafted by the AI Misconception Miner and checked by code. It is used only after you approve it, and it never changes
-        any child&apos;s mastery.
-      </p>
+      <p className="text-base text-gray-700">{t("board.mined.note")}</p>
     </div>
   );
 }
@@ -399,11 +395,9 @@ function StuckGroup({ group }: { group: Group }) {
   return (
     <article className="card flex flex-col gap-3">
       <h3 className="text-xl font-bold">
-        {group.count} {group.count === 1 ? "student" : "students"}: {group.label}
+        {group.count} {group.count === 1 ? "student" : "students"}: {group.mistakeId === "unknown" ? t("board.unknown.title") : group.label}
       </h3>
-      <p className="text-gray-700">
-        <span className="math">{group.mistakeId}</span> · {t(skillKey(group.skillId, "title"))}
-      </p>
+      <p className="text-gray-700">{t(skillKey(group.skillId, "title"))}</p>
       {example && (
         <div>
           <p className="font-semibold">Example of this mistake:</p>

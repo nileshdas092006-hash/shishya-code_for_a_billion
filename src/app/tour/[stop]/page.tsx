@@ -114,7 +114,7 @@ async function stopContent(stop: number) {
           <ol className="flex flex-col gap-3">
             {skills.map(({ skillId, state }) => (
               <li key={skillId} className={`card ${skillId === TOUR_SKILL ? "border-green-800" : ""}`}>
-                <SkillCardHeader skillId={skillId} state={state} />
+                <SkillCardHeader skillId={skillId} state={state} cooldownHours={student.proofCooldownHours} />
               </li>
             ))}
           </ol>

@@ -8,7 +8,7 @@ import { teacherClass } from "../../../_lib/auth";
 import { guardPage } from "../../../_lib/page-guard";
 import { TeacherPinForm } from "../../TeacherPinForm";
 
-// "How the agent worked": the last 10 runs of the AI Misconception Miner, from the run history in the database.
+// "How the agent worked": the last 10 runs of the AI Misconception Miner ("the mistake finder" on screen), from the run history in the database.
 // Each proposal with the code's verdict in plain words. Anonymous: no child data (the agent never saw any).
 
 export default function AgentRunsPage({ params }: PageProps<"/teacher/[class]/agent">) {
@@ -67,8 +67,7 @@ function AgentRuns({ params }: { params: Promise<{ class: string }> }) {
                   <ol className="flex flex-col gap-2 list-decimal pl-6">
                     {run.attempts.map((a, i) => (
                       <li key={i} className="break-words">
-                        <span className="math font-bold">x = {a.answerFormula.replace(/-/g, "−")}</span>{" "}
-                        <span className="text-gray-700">({a.id})</span>
+                        <span className="math font-bold">x = {a.answerFormula.replace(/-/g, "−")}</span>
                         <span className={`block font-semibold ${a.ok ? "text-green-800" : "text-red-800"}`}>
                           {t(a.verdict.key, a.verdict.params)}
                         </span>

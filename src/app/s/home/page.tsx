@@ -32,7 +32,7 @@ function SkillMap() {
             const path = encodeURIComponent(skillId);
             return (
               <li key={skillId} className="card flex flex-col gap-3">
-                <SkillCardHeader skillId={skillId} state={state} />
+                <SkillCardHeader skillId={skillId} state={state} cooldownHours={student.proofCooldownHours} />
                 {state === "LOCKED" ? (
                   <p className="text-lg">{t("map.locked")}</p>
                 ) : (

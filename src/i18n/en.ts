@@ -42,11 +42,11 @@ export const ui = {
   "tour.tip.6": "This is a recorded run of the AI agent. Nothing on this page is saved.",
   "tour.skip": "Skip ahead (in class this takes about 20 minutes)",
   "tour.skip.explain":
-    "In class, a child teaches the Shishya 3 questions before the proof. This button finishes your teaching with correct lines, sent through the same checks, so Key 1 is earned by the normal rule.",
+    "In class, a child teaches the Shishya 3 questions before the proof. This button finishes your teaching with correct lines, sent through the same checks, so \"Taught the Shishya\" is earned by the normal rule.",
   "tour.classmate.title": "A classmate's proof",
   "tour.classmate.intro": "{code} had these 4 questions: different numbers from yours.",
   "tour.mastered.none": "Finish the proof at stop 3 first. Then your receipts are shown here.",
-  "tour.agent.title": "How the Misconception Miner found a new mistake",
+  "tour.agent.title": "How the mistake finder (an AI helper) found a new mistake",
   "tour.agent.recorded": "Recorded run, {date}, on test answers",
   "tour.agent.input":
     "What it was given: wrong answers that no known mistake explained. Only the numbers of each question and the answer: no codes, no names.",
@@ -66,7 +66,7 @@ export const ui = {
   "tour.agent.approve": "Approve",
   "tour.agent.approveNote": "In a real class, the teacher's approval adds this mistake for every class. In the tour, nothing is saved.",
 
-  // the Misconception Miner's review card and run history (teacher only)
+  // the mistake finder's (the Misconception Miner's) review card and run history (teacher only)
   "review.childSees": "What the child will see",
   "review.childSeesNote": "A fixed message written by people, not by the AI. If you change it, the child sees your words instead.",
   "review.aiSuggestion": "AI's suggestion (only you see this)",
@@ -86,7 +86,7 @@ export const ui = {
   "review.howAgent": "How the agent worked",
   "agentRuns.title": "How the agent worked",
   "agentRuns.intro":
-    "The last 10 runs of the AI Misconception Miner. It saw only anonymous numbers: each question's numbers and the wrong answer. No child data is shown here.",
+    "The last 10 runs of the mistake finder (an AI helper). It saw only anonymous numbers: each question's numbers and the wrong answer. No child data is shown here.",
   "agentRuns.none": "No runs yet.",
   "agentRuns.recorded": "Recorded run: imported from our local records of a past run, on test answers",
   "agentRuns.meta": "{skill} · {turns} turns · {model}",
@@ -120,15 +120,19 @@ export const ui = {
   "login.againLink": "Type my codes",
 
   "map.title": "Your skills",
-  "map.state.LOCKED": "Locked",
-  "map.state.OPEN": "Open",
-  "map.state.KEY1": "Key 1 earned",
-  "map.state.NOT_YET": "Not yet",
+  "map.state.LOCKED": "Not started",
+  "map.state.OPEN": "Practising",
+  "map.state.KEY1": "Taught the Shishya",
+  "map.state.NOT_YET": "Next try opens tomorrow",
   "map.state.MASTERED": "Mastered",
   "map.locked": "Ask your teacher to open this skill.",
   "map.practise": "Practise",
   "map.teach": "Teach the Shishya",
-  "map.prove": "Prove it",
+  "map.prove": "Show it alone",
+  // after a missed proof, when the class's next try opens (the default, tomorrow, is map.state.NOT_YET)
+  "map.nextTry.1": "Next try opens next period",
+  "map.nextTry.0": "Next try is open now",
+  "map.nextTry.hours": "Next try opens {h} hours after the missed proof",
 
   "practise.title": "Practise",
   "practise.solve": "Solve for x.",
@@ -162,14 +166,14 @@ export const ui = {
   "teach.noTries": "No tries left for this one. Let's go on to the next one.",
   "teach.next": "Next",
   "teach.progress": "Fixed {n} of {total}",
-  "teach.done.key1": "You earned Key 1! Now you can prove it.",
+  "teach.done.key1": "You taught the Shishya! Now show it alone.",
   "teach.done.again": "Good effort! Practise a little more, then teach the Shishya again.",
   "teach.done.thanks": "Thank you for teaching the Shishya!",
   "teach.shishya.confused": "Hmm… where did I go wrong?",
   "teach.shishya.thinking": "Let me think about your line…",
   "teach.shishya.happy": "Oh, now I understand! Thank you!",
 
-  "prove.title": "Prove it",
+  "prove.title": "Show it alone",
   "prove.noAiHelp": "No AI help inside the proof.",
   "prove.teacherOpens": "It opens only when your teacher opens it in class.",
   "prove.windowClosed": "Your teacher opens the proof in class.",
@@ -180,12 +184,12 @@ export const ui = {
   "prove.wordProblem": "Word problem",
   "prove.submit": "Save my answer",
   "prove.timeLeft": "Time left: {min} min",
-  "prove.mastered": "Mastered! You have proved this skill.",
-  "prove.nextUnlocked": "Next skill unlocked: {skill}",
-  "prove.notYet": "Not yet. Here is what to practise:",
+  "prove.mastered": "Mastered! You showed this skill alone.",
+  "prove.nextUnlocked": "Next skill is open: {skill}",
+  "prove.notYet": "Here is what to practise before your next try:",
   "prove.practiseStepByStep": "Solve equations step by step, and check each line.",
-  "prove.retryAt": "Your next proof opens at {time}.",
-  "prove.notReady": "First teach the Shishya to earn Key 1.",
+  "prove.retryAt": "Your next try opens at {time}.",
+  "prove.notReady": "First teach the Shishya. Then you can show it alone.",
   "prove.alreadyMastered": "You have already mastered this skill.",
   "prove.running": "Your proof is already open on another screen.",
 
@@ -232,7 +236,7 @@ export const ui = {
 
   "common.back": "Back to your skills",
   "common.error": "Something went wrong. Please try again.",
-  "common.locked": "This skill is locked. Ask your teacher.",
+  "common.locked": "This skill has not started yet. Ask your teacher to open it.",
   "common.notFound": "We could not find that page.",
   "common.loading": "Loading…",
   "keypad.label": "Maths keypad",
@@ -247,6 +251,7 @@ export const ui = {
   "board.patterns.none": "No mistake patterns yet. A pattern is the same mistake on 2 different questions.",
   "board.patterns.evidence": "same step on {n} questions",
   "board.unknown.evidence": "wrong on {n} questions",
+  "board.unknown.title": "Not matched to a known mistake",
   "board.slips.title": "One slip, watching",
   "board.slips.intro": "These children matched a known mistake on only one question. One match can be a careless slip, so they are not in a group yet.",
   "board.slips.at": "{code} at line {n}",
@@ -267,6 +272,16 @@ export const ui = {
   "board.codes.yes": "Yes, give new codes",
   "board.codes.cancel": "Cancel",
   "board.codes.done": "New codes are ready. Print them and hand them out: the old codes no longer work.",
+  "board.progress.title": "Progress",
+  "board.progress.skill": "Skill",
+  "board.progress.open": "Open for the class",
+  "board.mined.title": "New mistakes found in your class",
+  "board.mined.none": "Nothing waiting for your decision.",
+  "board.mined.draft": "New mistake found in your class: {label}",
+  "board.mined.explains": "Explains {n} logged wrong answers · checked by code on {checked} questions",
+  "board.mined.unreadable": "This draft could not be read. Reject it.",
+  "board.mined.note":
+    "Drafted by the mistake finder (an AI helper) and checked by code. It is used only after you approve it, and it never changes any child's mastery.",
   "board.export.impact": "Counted for impact: real classes only. Test and tour classes are never counted.",
 
   // F7: consent record, deleting a class, PIN recovery, the proof cooldown and "gone ahead" (teachers only)
@@ -287,7 +302,7 @@ export const ui = {
   "board.cooldown.now": "Now: the next try opens {h} h after a missed proof.",
   "board.goneAhead.head": "Gone ahead",
   "board.goneAhead.intro":
-    "Gone ahead: children who have not mastered this skill yet, while a later skill that needs it is already open for them (for example, unlocked for the class).",
+    "Gone ahead: children who have not mastered this skill yet, while a later skill that needs it is already open for them (for example, opened for the class).",
   "board.delete.link": "Delete this class and all its data",
   "delete.title": "Delete class {code}?",
   "delete.explain":

@@ -28,9 +28,7 @@ export async function AgentRun() {
         <h2 className="text-2xl font-bold">{t("tour.agent.did")}</h2>
         <ol className="flex flex-col gap-1 list-decimal pl-6">
           {run.calls.map((c) => (
-            <li key={c.at}>
-              {t(`tour.agent.tool.${c.tool}` as MessageKey)} <span className="text-gray-700 math">({c.tool})</span>
-            </li>
+            <li key={c.at}>{t(`tour.agent.tool.${c.tool}` as MessageKey)}</li>
           ))}
         </ol>
         <p className="text-gray-700">{t("tour.agent.calls", { n: run.calls.length, seconds: run.seconds, model: run.model })}</p>

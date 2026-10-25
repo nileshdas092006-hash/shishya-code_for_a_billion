@@ -41,11 +41,11 @@ export const hi: Record<string, string> = {
   "tour.tip.6": "यह AI एजेंट का एक रिकॉर्ड किया हुआ रन है। इस पेज पर कुछ भी सहेजा नहीं जाता।",
   "tour.skip": "आगे बढ़ें (कक्षा में इसमें लगभग 20 मिनट लगते हैं)",
   "tour.skip.explain":
-    "कक्षा में बच्चा परीक्षा से पहले शिष्य को 3 प्रश्न सिखाता है। यह बटन सही पंक्तियों से आपका सिखाना पूरा करता है, उन्हीं जाँचों से होकर, इसलिए चाबी 1 सामान्य नियम से ही मिलती है।",
+    "कक्षा में बच्चा परीक्षा से पहले शिष्य को 3 प्रश्न सिखाता है। यह बटन सही पंक्तियों से आपका सिखाना पूरा करता है, उन्हीं जाँचों से होकर, इसलिए \"शिष्य को सिखा दिया\" सामान्य नियम से ही मिलता है।", // HINDI-REVIEW
   "tour.classmate.title": "एक सहपाठी की परीक्षा",
   "tour.classmate.intro": "{code} को ये 4 प्रश्न मिले थे: आपसे अलग संख्याएँ।",
   "tour.mastered.none": "पहले पड़ाव 3 पर परीक्षा पूरी करें। फिर आपकी रसीदें यहाँ दिखेंगी।",
-  "tour.agent.title": "Misconception Miner ने एक नई गलती कैसे खोजी",
+  "tour.agent.title": "गलती खोजने वाले (एक AI सहायक) ने एक नई गलती कैसे खोजी", // HINDI-REVIEW
   "tour.agent.recorded": "रिकॉर्ड किया हुआ रन, {date}, जाँच वाले उत्तरों पर",
   "tour.agent.input":
     "इसे क्या दिया गया: ऐसे गलत उत्तर जिन्हें कोई जानी हुई गलती नहीं समझाती थी। केवल हर प्रश्न की संख्याएँ और उत्तर: कोई कोड नहीं, कोई नाम नहीं।",
@@ -65,7 +65,7 @@ export const hi: Record<string, string> = {
   "tour.agent.approve": "स्वीकार करें",
   "tour.agent.approveNote": "असली कक्षा में शिक्षक की स्वीकृति से यह गलती हर कक्षा के लिए जुड़ जाती है। टूर में कुछ भी सहेजा नहीं जाता।",
 
-  // HINDI-REVIEW (the Misconception Miner's review card and run history, all lines below; teachers only)
+  // HINDI-REVIEW (the mistake finder's review card and run history, all lines below; teachers only)
   "review.childSees": "बच्चा यह देखेगा",
   "review.childSeesNote": "लोगों का लिखा एक तय संदेश, AI का नहीं। अगर आप इसे बदलते हैं, तो बच्चा आपके शब्द देखेगा।",
   "review.aiSuggestion": "AI का सुझाव (केवल आप देखते हैं)",
@@ -85,7 +85,7 @@ export const hi: Record<string, string> = {
   "review.howAgent": "एजेंट ने कैसे काम किया",
   "agentRuns.title": "एजेंट ने कैसे काम किया",
   "agentRuns.intro":
-    "AI मिसकंसेप्शन माइनर के पिछले 10 रन। इसने केवल बिना नाम की संख्याएँ देखीं: हर प्रश्न की संख्याएँ और गलत उत्तर। यहाँ किसी बच्चे का कोई डेटा नहीं दिखाया जाता।",
+    "गलती खोजने वाले (एक AI सहायक) के पिछले 10 रन। इसने केवल बिना नाम की संख्याएँ देखीं: हर प्रश्न की संख्याएँ और गलत उत्तर। यहाँ किसी बच्चे का कोई डेटा नहीं दिखाया जाता।",
   "agentRuns.none": "अभी कोई रन नहीं।",
   "agentRuns.recorded": "दर्ज किया गया रन: पिछले एक रन के हमारे स्थानीय रिकॉर्ड से, जाँच वाले उत्तरों पर",
   "agentRuns.meta": "{skill} · {turns} बारी · {model}",
@@ -121,15 +121,18 @@ export const hi: Record<string, string> = {
   "login.againLink": "मेरे कोड लिखो",
 
   "map.title": "तुम्हारे कौशल",
-  "map.state.LOCKED": "बंद",
-  "map.state.OPEN": "खुला",
-  "map.state.KEY1": "चाबी 1 मिली",
-  "map.state.NOT_YET": "अभी नहीं",
+  "map.state.LOCKED": "अभी शुरू नहीं हुआ", // HINDI-REVIEW
+  "map.state.OPEN": "अभ्यास चल रहा है", // HINDI-REVIEW
+  "map.state.KEY1": "शिष्य को सिखा दिया", // HINDI-REVIEW
+  "map.state.NOT_YET": "अगली कोशिश कल खुलेगी", // HINDI-REVIEW
   "map.state.MASTERED": "महारत हासिल",
   "map.locked": "यह कौशल खोलने के लिए अपने शिक्षक से कहो।",
   "map.practise": "अभ्यास करो",
   "map.teach": "शिष्य को सिखाओ",
-  "map.prove": "साबित करो",
+  "map.prove": "अकेले करके दिखाओ", // HINDI-REVIEW
+  "map.nextTry.1": "अगली कोशिश अगले पीरियड में खुलेगी", // HINDI-REVIEW
+  "map.nextTry.0": "अगली कोशिश अभी खुली है", // HINDI-REVIEW
+  "map.nextTry.hours": "अगली कोशिश चूकी हुई परीक्षा के {h} घंटे बाद खुलेगी", // HINDI-REVIEW
 
   "practise.title": "अभ्यास",
   "practise.solve": "x का मान ज्ञात करो।",
@@ -163,14 +166,14 @@ export const hi: Record<string, string> = {
   "teach.noTries": "इसके लिए प्रयास खत्म हो गए। चलो अगले प्रश्न पर चलते हैं।",
   "teach.next": "अगला",
   "teach.progress": "{total} में से {n} ठीक किए",
-  "teach.done.key1": "तुम्हें चाबी 1 मिल गई! अब तुम इसे साबित कर सकते हो।",
+  "teach.done.key1": "तुमने शिष्य को सिखा दिया! अब अकेले करके दिखाओ।", // HINDI-REVIEW
   "teach.done.again": "अच्छी कोशिश! थोड़ा और अभ्यास करो, फिर शिष्य को दोबारा सिखाओ।",
   "teach.done.thanks": "शिष्य को सिखाने के लिए धन्यवाद!",
   "teach.shishya.confused": "हम्म… मुझसे गलती कहाँ हुई?",
   "teach.shishya.thinking": "मुझे तुम्हारी पंक्ति के बारे में सोचने दो…",
   "teach.shishya.happy": "अच्छा, अब मैं समझ गया! धन्यवाद!",
 
-  "prove.title": "साबित करो",
+  "prove.title": "अकेले करके दिखाओ", // HINDI-REVIEW
   // HINDI-REVIEW (3 lines)
   "prove.noAiHelp": "परीक्षा के अंदर AI की कोई मदद नहीं।",
   "prove.teacherOpens": "यह तभी खुलती है जब तुम्हारे शिक्षक इसे कक्षा में खोलते हैं।",
@@ -182,12 +185,12 @@ export const hi: Record<string, string> = {
   "prove.wordProblem": "शाब्दिक प्रश्न",
   "prove.submit": "मेरा उत्तर सहेजो",
   "prove.timeLeft": "बचा हुआ समय: {min} मिनट",
-  "prove.mastered": "महारत हासिल! तुमने यह कौशल साबित कर दिया।",
+  "prove.mastered": "महारत हासिल! तुमने यह कौशल अकेले करके दिखा दिया।", // HINDI-REVIEW
   "prove.nextUnlocked": "अगला कौशल खुल गया: {skill}",
-  "prove.notYet": "अभी नहीं। इनका अभ्यास करो:",
+  "prove.notYet": "अगली कोशिश से पहले इनका अभ्यास करो:", // HINDI-REVIEW
   "prove.practiseStepByStep": "समीकरण चरण-दर-चरण हल करो, और हर पंक्ति जाँचो।",
-  "prove.retryAt": "तुम्हारी अगली परीक्षा {time} पर खुलेगी।",
-  "prove.notReady": "पहले शिष्य को सिखाकर चाबी 1 पाओ।",
+  "prove.retryAt": "तुम्हारी अगली कोशिश {time} पर खुलेगी।", // HINDI-REVIEW
+  "prove.notReady": "पहले शिष्य को सिखाओ। फिर तुम अकेले करके दिखा सकते हो।", // HINDI-REVIEW
   "prove.alreadyMastered": "तुम इस कौशल में पहले ही महारत हासिल कर चुके हो।",
   "prove.running": "तुम्हारी परीक्षा पहले से किसी दूसरी स्क्रीन पर खुली है।",
 
@@ -235,7 +238,7 @@ export const hi: Record<string, string> = {
 
   "common.back": "अपने कौशलों पर वापस जाओ",
   "common.error": "कुछ गलत हो गया। कृपया फिर से कोशिश करो।",
-  "common.locked": "यह कौशल बंद है। अपने शिक्षक से कहो।",
+  "common.locked": "यह कौशल अभी शुरू नहीं हुआ है। इसे खोलने के लिए अपने शिक्षक से कहो।", // HINDI-REVIEW
   "common.notFound": "वह पेज नहीं मिला।",
   "common.loading": "लोड हो रहा है…",
   "keypad.label": "गणित कीपैड", // HINDI-REVIEW
@@ -251,6 +254,7 @@ export const hi: Record<string, string> = {
   "board.patterns.none": "अभी कोई गलती का पैटर्न नहीं है। पैटर्न का मतलब है 2 अलग-अलग प्रश्नों पर एक ही गलती।",
   "board.patterns.evidence": "{n} प्रश्नों पर एक ही चरण",
   "board.unknown.evidence": "{n} प्रश्नों पर गलत",
+  "board.unknown.title": "किसी जानी हुई गलती से मेल नहीं खाता", // HINDI-REVIEW
   "board.slips.title": "एक चूक, नज़र रखें",
   "board.slips.intro": "इन बच्चों की एक जानी-पहचानी गलती केवल एक प्रश्न पर मिली। एक बार की गलती लापरवाही की चूक हो सकती है, इसलिए वे अभी किसी समूह में नहीं हैं।",
   "board.slips.at": "{code} पंक्ति {n} पर",
@@ -272,6 +276,17 @@ export const hi: Record<string, string> = {
   "board.codes.yes": "हाँ, नए कोड दें",
   "board.codes.cancel": "रद्द करें",
   "board.codes.done": "नए कोड तैयार हैं। इन्हें छापकर बाँट दें: पुराने कोड अब काम नहीं करते।",
+  // HINDI-REVIEW (F8: the board's progress table and the mistake finder's drafts, all lines below)
+  "board.progress.title": "प्रगति",
+  "board.progress.skill": "कौशल",
+  "board.progress.open": "पूरी कक्षा के लिए खोलें",
+  "board.mined.title": "आपकी कक्षा में मिली नई गलतियाँ",
+  "board.mined.none": "आपके निर्णय के लिए कुछ भी बाकी नहीं है।",
+  "board.mined.draft": "आपकी कक्षा में मिली नई गलती: {label}",
+  "board.mined.explains": "दर्ज किए गए {n} गलत उत्तर समझाती है · कोड ने {checked} प्रश्नों पर जाँचा",
+  "board.mined.unreadable": "यह मसौदा पढ़ा नहीं जा सका। इसे अस्वीकार करें।",
+  "board.mined.note":
+    "गलती खोजने वाले (एक AI सहायक) ने इसका मसौदा बनाया और कोड ने इसे जाँचा। यह आपकी स्वीकृति के बाद ही इस्तेमाल होता है, और यह किसी भी बच्चे की महारत कभी नहीं बदलता।",
   // HINDI-REVIEW
   "board.export.impact": "असर के आँकड़ों में केवल असली कक्षाएँ गिनी जाती हैं। जाँच वाली और टूर वाली कक्षाएँ कभी नहीं गिनी जातीं।",
 
