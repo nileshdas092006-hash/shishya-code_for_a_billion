@@ -67,6 +67,7 @@ function ClassBoard({ params, searchParams }: { params: Promise<{ class: string 
             </a>
           </div>
         </div>
+        <p className="text-base text-gray-700 no-print">{t("board.export.impact")}</p>
         {!cls.aiAllowed && <p className="msg-note no-print">Class 7: AI chat is switched off for this class, always.</p>}
 
         <ProofWindow classCode={cls.code} proof={proofWindow} />

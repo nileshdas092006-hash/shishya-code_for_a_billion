@@ -176,6 +176,7 @@ export const ui = {
   "board.codes.yes": "Yes, give new codes",
   "board.codes.cancel": "Cancel",
   "board.codes.done": "New codes are ready. Print them and hand them out: the old codes no longer work.",
+  "board.export.impact": "Counted for impact: real classes only. Test and tour classes are never counted.",
 
   "skill.alg.integers.ops.title": "Adding and subtracting integers",
   "skill.alg.integers.ops.example": "like −7 + 3 and 5 − (−4)",

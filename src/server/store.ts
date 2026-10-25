@@ -15,6 +15,8 @@ export const DEFAULT_DATABASE_URL = "file:data/shishya.db";
 export type MasteryState = "LOCKED" | "OPEN" | "KEY1" | "NOT_YET" | "MASTERED";
 export type ItemKind = "practice" | "teach" | "proof";
 export type ItemFormat = "solve" | "apply";
+/** real: a school class. test: our own test classes (all 8Q-…). sandbox: a Judge Tour class, deleted when it expires. */
+export type ClassKind = "real" | "test" | "sandbox";
 
 export type ClassRow = {
   id: string;
@@ -26,6 +28,22 @@ export type ClassRow = {
   proofWindowRequired: boolean;
   /** Until when the teacher opened the proof window (null: closed). */
   proofWindowOpenUntil: string | null;
+  /** Only 'real' classes count for anything pooled across classes (the Miner's input, impact numbers). */
+  kind: ClassKind;
+  /** When a sandbox class is deleted (null for real and test classes). */
+  expiresAt: string | null;
+};
+/** A new class: real, with no expiry, unless it says otherwise. */
+export type NewClass = Omit<ClassRow, "kind" | "expiresAt"> & Partial<Pick<ClassRow, "kind" | "expiresAt">>;
+/** How many rows deleteClassCascade removed, per table. */
+export type DeletedCounts = {
+  students: number;
+  items: number;
+  attempts: number;
+  teachTraces: number;
+  proofRuns: number;
+  mastery: number;
+  events: number;
 };
 export type StudentRow = { id: string; classId: string; code: string };
 export type ItemRow = {
@@ -135,7 +153,9 @@ CREATE TABLE IF NOT EXISTS classes (
   teacherPinHash TEXT,
   -- 1: a proof starts only while the teacher has opened the proof window (until proofWindowOpenUntil)
   proofWindowRequired INTEGER NOT NULL DEFAULT 1 CHECK (proofWindowRequired IN (0, 1)),
-  proofWindowOpenUntil TEXT
+  proofWindowOpenUntil TEXT,
+  kind TEXT NOT NULL DEFAULT 'real' CHECK (kind IN ('real', 'test', 'sandbox')),
+  expiresAt TEXT
 );
 CREATE TABLE IF NOT EXISTS students (
   id TEXT PRIMARY KEY,
@@ -247,8 +267,10 @@ const toClass = (r: Row): ClassRow => ({
   aiAllowed: bool(r.aiAllowed),
   proofWindowRequired: bool(r.proofWindowRequired),
   proofWindowOpenUntil: (r.proofWindowOpenUntil as string | null) ?? null,
+  kind: r.kind as ClassKind,
+  expiresAt: (r.expiresAt as string | null) ?? null,
 });
-const CLASS_COLUMNS = "id, code, grade, section, aiAllowed, proofWindowRequired, proofWindowOpenUntil";
+const CLASS_COLUMNS = "id, code, grade, section, aiAllowed, proofWindowRequired, proofWindowOpenUntil, kind, expiresAt";
 const CLASS_COLUMNS_OF_C = CLASS_COLUMNS.split(", ").map((c) => `c.${c}`).join(", ");
 /**
  * How many failed logins of this type the class c has had since a time, as a subquery (it uses the
@@ -341,6 +363,17 @@ async function migrate(client: Client) {
     await client.execute("ALTER TABLE classes ADD COLUMN proofWindowRequired INTEGER NOT NULL DEFAULT 0 CHECK (proofWindowRequired IN (0, 1))");
   }
   if (!classColumns.includes("proofWindowOpenUntil")) await client.execute("ALTER TABLE classes ADD COLUMN proofWindowOpenUntil TEXT");
+  // Class kinds: classes that already exist are real, except our test classes (every 8Q-… class), which become 'test'.
+  if (!classColumns.includes("kind")) {
+    await client.batch(
+      [
+        "ALTER TABLE classes ADD COLUMN kind TEXT NOT NULL DEFAULT 'real' CHECK (kind IN ('real', 'test', 'sandbox'))",
+        "UPDATE classes SET kind = 'test' WHERE code LIKE '8Q-%'",
+      ],
+      "write",
+    );
+  }
+  if (!classColumns.includes("expiresAt")) await client.execute("ALTER TABLE classes ADD COLUMN expiresAt TEXT");
 
   // Mined mistake statuses were draft/approved/rejected; now DRAFT_TESTED/APPROVED/REJECTED.
   const mined = await client.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'minedMistakes'");
@@ -442,38 +475,89 @@ export async function openStore(config: StoreConfig | string = {}) {
     else await lock.run(() => client.batch(statements, "write"));
   };
 
+  /** BEGIN IMMEDIATE … COMMIT, rolled back on error. Nested calls join the outer transaction. */
+  async function transaction<T>(fn: () => Promise<T>): Promise<T> {
+    if (inTx.getStore()) return fn();
+    return lock.run(async () => {
+      trip();
+      const tx = await client.transaction("write");
+      try {
+        const out = await inTx.run(tx, fn);
+        trip();
+        await tx.commit();
+        return out;
+      } catch (e) {
+        trip();
+        await tx.rollback().catch(() => undefined);
+        throw e;
+      } finally {
+        tx.close();
+      }
+    });
+  }
+
   return {
     close: () => client.close(),
 
-    /** BEGIN IMMEDIATE … COMMIT, rolled back on error. Nested calls join the outer transaction. */
-    async transaction<T>(fn: () => Promise<T>): Promise<T> {
-      if (inTx.getStore()) return fn();
-      return lock.run(async () => {
-        trip();
-        const tx = await client.transaction("write");
-        try {
-          const out = await inTx.run(tx, fn);
-          trip();
-          await tx.commit();
-          return out;
-        } catch (e) {
-          trip();
-          await tx.rollback().catch(() => undefined);
-          throw e;
-        } finally {
-          tx.close();
-        }
-      });
-    },
+    transaction,
 
     // ----- classes and students -----
     /** False if the class code is already taken. */
-    insertClass(c: ClassRow, teacherPinHash: string | null = null): Promise<boolean> {
+    insertClass(c: NewClass, teacherPinHash: string | null = null): Promise<boolean> {
       return tryInsert(
-        `INSERT INTO classes (id, code, grade, section, aiAllowed, teacherPinHash, proofWindowRequired, proofWindowOpenUntil)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO classes (id, code, grade, section, aiAllowed, teacherPinHash, proofWindowRequired, proofWindowOpenUntil, kind, expiresAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         c.id, c.code, c.grade, c.section, c.aiAllowed ? 1 : 0, teacherPinHash, c.proofWindowRequired ? 1 : 0, c.proofWindowOpenUntil,
+        c.kind ?? "real", c.expiresAt ?? null,
       );
+    },
+    /** Sandbox classes whose expiry time has passed (real and test classes never expire). */
+    async listExpiredSandboxes(now: string): Promise<string[]> {
+      return (await all("SELECT id FROM classes WHERE kind = 'sandbox' AND expiresAt IS NOT NULL AND expiresAt <= ?", now)).map((r) => r.id as string);
+    },
+    /**
+     * Deletes a class and EVERY row of its students (items, attempts, teach traces, proof runs, mastery, their
+     * events), all or nothing, and logs one class_deleted event with counts only. Null if there is no such class.
+     */
+    deleteClassCascade(classId: string, at: string): Promise<DeletedCounts | null> {
+      const ofClass = "(SELECT id FROM students WHERE classId = ?)";
+      return transaction(async () => {
+        const r = await one(
+          `SELECT c.kind,
+             (SELECT COUNT(*) FROM students WHERE classId = c.id) AS students,
+             (SELECT COUNT(*) FROM items WHERE studentId IN ${ofClass}) AS items,
+             (SELECT COUNT(*) FROM attempts WHERE studentId IN ${ofClass}) AS attempts,
+             (SELECT COUNT(*) FROM teachTraces WHERE studentId IN ${ofClass}) AS teachTraces,
+             (SELECT COUNT(*) FROM proofRuns WHERE studentId IN ${ofClass}) AS proofRuns,
+             (SELECT COUNT(*) FROM mastery WHERE studentId IN ${ofClass}) AS mastery,
+             (SELECT COUNT(*) FROM events WHERE studentId IN ${ofClass}) AS events
+           FROM classes c WHERE c.id = ?`,
+          ...Array<InValue>(7).fill(classId),
+        );
+        if (!r) return null;
+        const counts: DeletedCounts = {
+          students: Number(r.students),
+          items: Number(r.items),
+          attempts: Number(r.attempts),
+          teachTraces: Number(r.teachTraces),
+          proofRuns: Number(r.proofRuns),
+          mastery: Number(r.mastery),
+          events: Number(r.events),
+        };
+        const del = (table: string) => ({ sql: `DELETE FROM ${table} WHERE studentId IN ${ofClass}`, args: [classId] as InValue[] });
+        await writeBatch([
+          del("teachTraces"),
+          del("attempts"),
+          del("items"),
+          del("proofRuns"),
+          del("mastery"),
+          del("events"),
+          { sql: "DELETE FROM students WHERE classId = ?", args: [classId] },
+          { sql: "DELETE FROM classes WHERE id = ?", args: [classId] },
+          eventStatement({ studentId: null, type: "class_deleted", payload: { kind: r.kind, ...counts }, at }),
+        ]);
+        return counts;
+      });
     },
     async getClass(id: string): Promise<ClassRow | undefined> {
       const r = await one(`SELECT ${CLASS_COLUMNS} FROM classes WHERE id = ?`, id);
@@ -693,11 +777,21 @@ export async function openStore(config: StoreConfig | string = {}) {
     },
 
     // ----- unknown errors (input for the Misconception Miner) -----
-    async recordUnknownError(skillId: string, paramsJson: string, wrongAnswer: string) {
+    /** Logs an unexplained wrong answer. With a student, only if that child's class is a REAL class (same round trip). */
+    async recordUnknownError(skillId: string, paramsJson: string, wrongAnswer: string, studentId?: string) {
+      if (studentId === undefined) {
+        await write(
+          `INSERT INTO unknownErrors (skillId, paramsJson, wrongAnswer, count) VALUES (?, ?, ?, 1)
+           ON CONFLICT (skillId, paramsJson, wrongAnswer) DO UPDATE SET count = count + 1`,
+          skillId, paramsJson, wrongAnswer,
+        );
+        return;
+      }
       await write(
-        `INSERT INTO unknownErrors (skillId, paramsJson, wrongAnswer, count) VALUES (?, ?, ?, 1)
+        `INSERT INTO unknownErrors (skillId, paramsJson, wrongAnswer, count)
+         SELECT ?, ?, ?, 1 WHERE EXISTS (SELECT 1 FROM students s JOIN classes c ON c.id = s.classId WHERE s.id = ? AND c.kind = 'real')
          ON CONFLICT (skillId, paramsJson, wrongAnswer) DO UPDATE SET count = count + 1`,
-        skillId, paramsJson, wrongAnswer,
+        skillId, paramsJson, wrongAnswer, studentId,
       );
     },
     async listUnknownErrors(skillId: string): Promise<UnknownErrorRow[]> {

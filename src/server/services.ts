@@ -10,7 +10,7 @@ import { applies, type Instance } from "../core/types";
 import * as mastery from "./mastery";
 import { minedMistakes, unknownErrors } from "./miner-ports";
 import { defaultRegistry, getEntry, instanceFor, type Registry, type SkillEntry } from "./skills";
-import type { ClassRow, ItemFormat, ItemKind, ItemRow, MistakeHitRow, ProofRunRow, Store, StudentRow } from "./store";
+import type { ClassKind, ClassRow, ItemFormat, ItemKind, ItemRow, MistakeHitRow, ProofRunRow, Store, StudentRow } from "./store";
 
 // Session services: what the student and teacher screens call. Correct answers and mistake answers come only
 // from src/core; mastery changes only through src/server/mastery.ts. Every action logs an event row.
@@ -63,6 +63,13 @@ export const PATTERN_MIN_QUESTIONS = 2;
 /** Columns of the stuck board's grid: the working line where a pattern first goes wrong (L1 is the question). */
 const GRID_LINES = [2, 3, 4, 5];
 const SMALL_SAMPLE = 30;
+/** Sandbox (tour) classes are deleted this long after they are made; the clean-up runs at most this often. */
+export const SANDBOX_HOURS = 24;
+const CLEANUP_EVERY_MS = 3600_000;
+const NOT_COUNTED: Record<Exclude<ClassKind, "real">, string> = {
+  test: "test class: not counted for impact",
+  sandbox: "tour class: not counted for impact",
+};
 const UNKNOWN_LABEL = "Wrong answer that no known mistake explains yet";
 
 const MAX_STUDENTS = 60;
@@ -356,7 +363,21 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     return (await entryOf(skillId)).spec.mistakes.find((m) => m.id === mistakeId)?.label;
   }
 
+  let lastCleanUp = -Infinity;
+
   return {
+    /**
+     * Deletes sandbox (tour) classes whose time is up, with everything in them. Lazy: it runs at most once an hour
+     * per server (when a tour starts). Real and test classes are never touched.
+     */
+    async cleanUpSandboxes(): Promise<{ ran: boolean; deleted: number }> {
+      if (now().getTime() - lastCleanUp < CLEANUP_EVERY_MS) return { ran: false, deleted: 0 };
+      lastCleanUp = now().getTime();
+      let deleted = 0;
+      for (const id of await store.listExpiredSandboxes(iso())) if (await store.deleteClassCascade(id, iso())) deleted++;
+      return { ran: true, deleted };
+    },
+
     // ----- set-up (pseudonymous codes only) -----
     async createClass(code: string, grade: number): Promise<ClassRow> {
       if (!CLASS_CODE.test(code)) throw new Error("Class codes look like KV8B.");
@@ -370,6 +391,8 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         aiAllowed: grade >= 8,
         proofWindowRequired: false,
         proofWindowOpenUntil: null,
+        kind: "real",
+        expiresAt: null,
       };
       if (!(await store.insertClass(row))) throw new Error(`Class code ${code} is already taken.`);
       await log(null, "class_created", { classId: row.id, grade, aiAllowed: row.aiAllowed });
@@ -434,7 +457,8 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
           mistakeId,
           createdAt: iso(),
         });
-        if (mistakeId === "unknown") await store.recordUnknownError(item.skillId, item.paramsJson, answerText(typed.value));
+        // logged for the Misconception Miner only from real classes (never test or tour classes)
+        if (mistakeId === "unknown") await store.recordUnknownError(item.skillId, item.paramsJson, answerText(typed.value), item.studentId);
         await log(item.studentId, "practice_answered", { skillId: item.skillId, itemId: item.id, correct, mistakeId });
         // A first match may be a slip: point to the line only; name the mistake from the 2nd different question on.
         const mistake = entry.spec.mistakes.find((m) => m.id === mistakeId);
@@ -638,7 +662,8 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
           createdAt: iso(),
         });
         if (!saved) return fail("This question was already answered.", "already_answered");
-        if (mistakeId === "unknown") await store.recordUnknownError(item.skillId, item.paramsJson, answerText(typed.value));
+        // logged for the Misconception Miner only from real classes (never test or tour classes)
+        if (mistakeId === "unknown") await store.recordUnknownError(item.skillId, item.paramsJson, answerText(typed.value), item.studentId);
         await log(item.studentId, "proof_answered", { skillId: item.skillId, runId: run.id, itemId: item.id, correct });
 
         const runItems = await store.listRunItems(run.id);
@@ -729,6 +754,8 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
             aiAllowed: grade >= 8,
             proofWindowRequired: true,
             proofWindowOpenUntil: null,
+            kind: "real",
+            expiresAt: null,
           };
           if (await store.insertClass(candidate, hashPin(pin))) cls = candidate;
         }
@@ -808,6 +835,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         grade: cls.grade,
         aiAllowed: cls.aiAllowed,
         proofWindowRequired: cls.proofWindowRequired,
+        classKind: cls.kind,
       };
     },
 
@@ -973,7 +1001,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
           c.proofsPassed,
           c.studentsKey1,
           c.studentsMastered,
-          students < SMALL_SAMPLE ? "small sample" : "",
+          cls.kind !== "real" ? NOT_COUNTED[cls.kind] : students < SMALL_SAMPLE ? "small sample" : "",
         ].join(","),
       );
       await log(null, "pilot_export", { classId, rows: rows.length });

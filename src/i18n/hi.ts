@@ -177,6 +177,8 @@ export const hi: Record<string, string> = {
   "board.codes.yes": "हाँ, नए कोड दें",
   "board.codes.cancel": "रद्द करें",
   "board.codes.done": "नए कोड तैयार हैं। इन्हें छापकर बाँट दें: पुराने कोड अब काम नहीं करते।",
+  // HINDI-REVIEW
+  "board.export.impact": "असर के आँकड़ों में केवल असली कक्षाएँ गिनी जाती हैं। जाँच वाली और टूर वाली कक्षाएँ कभी नहीं गिनी जातीं।",
 
   "skill.alg.linear.both-sides.title": "दोनों पक्षों में x",
   "skill.alg.linear.both-sides.example": "जैसे 4x − 3 = 2x + 7",
