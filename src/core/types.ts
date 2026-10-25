@@ -30,6 +30,8 @@ export type Mistake = {
   label: string;
   /** For the child, in the NCERT textbook's language. */
   childLabel: string;
+  /** A mined mistake shown with the fixed message for its step type: the message key and numbers, so screens can translate it. */
+  childText?: { key: `child.step.${StepType}`; params: Record<string, number> };
   stepType: StepType;
   origin: "authored" | "mined";
   /** Some mistakes only make sense for some questions (e.g. "minus a negative" needs a − (−n)). Default: all. */

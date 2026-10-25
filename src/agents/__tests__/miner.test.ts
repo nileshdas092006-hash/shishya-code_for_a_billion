@@ -1,15 +1,16 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { parseAnswer } from "../../core/answer";
 import { diagnose } from "../../core/diagnose";
+import { childMessage } from "../../core/childMessages";
 import { frac, toString } from "../../core/fraction";
-import type { MinedMistakeSpec } from "../../core/minedMistake";
+import type { MinedMistakeSpec, UnknownError } from "../../core/minedMistake";
 import { createRng } from "../../core/rng";
 import { linearBothSides } from "../../core/skills/linear-both-sides";
 import { createMinerPorts } from "../../server/miner-ports";
 import { createServices } from "../../server/services";
 import { correctFix, SKILL, setup } from "../../server/__tests__/helpers";
 import { finalAnswer, scriptedModel, toolCall } from "../fake-model";
-import { runMiner } from "../miner";
+import { groupUnknownErrors, MAX_ERROR_GROUPS, runMiner } from "../miner";
 
 const DIVIDE_BY_A: MinedMistakeSpec = {
   id: "divided-by-a",
@@ -102,7 +103,10 @@ describe("the Misconception Miner (FAKE model)", () => {
     expect(await svc.decideMinedMistake(ctx.cls.id, pending[0].id, "approved")).toEqual({ ok: true });
     // the first match only points to its line; the second different question names it
     expect(await answerDivideByA()).toMatchObject({ mistakeId: null, checkLine: 5, feedback: "Check line 5 again." });
-    expect(await answerDivideByA()).toMatchObject({ mistakeId: "divided-by-a", feedback: DIVIDE_BY_A.childLabel });
+    // approved without edits: the child sees the fixed message for its step type, never the AI's words
+    const named = await answerDivideByA();
+    expect(named).toMatchObject({ mistakeId: "divided-by-a", feedback: childMessage("divide", 5), feedbackKey: "child.step.divide" });
+    expect(JSON.stringify(named)).not.toContain(DIVIDE_BY_A.childLabel);
 
     // the stuck board names it (a pattern: 2 different questions)
     const board = await svc.getStuckBoard(ctx.cls.id);
@@ -235,5 +239,59 @@ describe("the Misconception Miner (FAKE model)", () => {
     expect(await ctx.svc.decideMinedMistake(ctx.cls.id, "tampered", "approved")).toMatchObject({ ok: false });
     expect(await ctx.svc.decideMinedMistake(ctx.cls.id, draft.id, "rejected")).toEqual({ ok: true });
     expect(await ctx.svc.decideMinedMistake(ctx.cls.id, draft.id, "approved")).toMatchObject({ ok: false });
+  });
+});
+
+describe("smaller prompts: unknown errors are sent grouped", () => {
+  it("100 raw errors with repeats → at most 40 groups, each (question, wrong answer) once with its total count, most frequent first", () => {
+    const rng = createRng(7);
+    const questions = Array.from({ length: 30 }, (_, i) => ({ a: 2 + (i % 7), b: -3 + i, c: 1, d: 5 + (i % 4) }));
+    const raw: UnknownError[] = [];
+    const expected = new Map<string, number>();
+    for (let i = 0; i < 100; i++) {
+      const params = questions[Math.floor(rng.next() * questions.length)];
+      const wrongAnswer = String(Math.floor(rng.next() * 3));
+      const count = 1 + Math.floor(rng.next() * 3);
+      // the same params written with keys in another order are the same question
+      raw.push({ params: i % 2 ? params : { d: params.d, c: params.c, b: params.b, a: params.a }, wrongAnswer, count });
+      const key = `${params.a},${params.b},${params.c},${params.d}|${wrongAnswer}`;
+      expected.set(key, (expected.get(key) ?? 0) + count);
+    }
+    expect(expected.size).toBeGreaterThan(MAX_ERROR_GROUPS); // so the cut at 40 is tested
+
+    const groups = groupUnknownErrors(raw);
+    expect(MAX_ERROR_GROUPS).toBe(40);
+    expect(groups.length).toBe(40);
+    const keys = groups.map((g) => `${g.params.a},${g.params.b},${g.params.c},${g.params.d}|${g.wrongAnswer}`);
+    expect(new Set(keys).size).toBe(groups.length); // each once
+    for (const [i, g] of groups.entries()) expect(g.count, keys[i]).toBe(expected.get(keys[i]));
+    const counts = groups.map((g) => g.count!);
+    expect(counts).toEqual([...counts].sort((p, q) => q - p));
+    // the 40 kept are the most frequent ones
+    const smallestKept = counts[counts.length - 1];
+    const dropped = [...expected.entries()].filter(([k]) => !keys.includes(k)).map(([, n]) => n);
+    for (const n of dropped) expect(n).toBeLessThanOrEqual(smallestKept);
+  });
+
+  it("an error without a count counts once; 5/2 and 10/4 are the same wrong answer", () => {
+    const p = { a: 4, b: -3, c: 2, d: 7 };
+    expect(groupUnknownErrors([{ params: p, wrongAnswer: "5/2" }, { params: p, wrongAnswer: "10/4", count: 2 }, { params: p, wrongAnswer: "6" }])).toEqual([
+      { params: p, wrongAnswer: "5/2", count: 3 },
+      { params: p, wrongAnswer: "6", count: 1 },
+    ]);
+  });
+
+  it("the Miner sends the model at most 40 groups, sorted by count", async () => {
+    ctx = await setup();
+    for (let i = 0; i < 60; i++) {
+      const params = { a: 3, b: i, c: 1, d: 100 };
+      for (let k = 0; k <= i % 3; k++) await ctx.store.recordUnknownError(SKILL, JSON.stringify(params), "999");
+    }
+    const model = scriptedModel([toolCall("get_unknown_errors", {}), finalAnswer("nothing fits")]);
+    await runMiner({ model, ports: createMinerPorts(ctx.store), skillId: SKILL });
+    const sent = JSON.parse(model.requests[1].messages.find((m) => m.role === "tool")!.content!) as { count: number }[];
+    expect(sent).toHaveLength(40);
+    expect(sent.map((e) => e.count)).toEqual([...sent.map((e) => e.count)].sort((p, q) => q - p));
+    expect(sent[0].count).toBe(3);
   });
 });

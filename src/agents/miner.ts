@@ -1,4 +1,4 @@
-import { asFraction } from "../core/answer";
+import { asFraction, parseAnswer } from "../core/answer";
 import { formatEquation, fracText } from "../core/format";
 import { validateMinedMistake, type MinedMistakeSpec, type UnknownError, type ValidationResult } from "../core/minedMistake";
 import { createRng } from "../core/rng";
@@ -29,13 +29,52 @@ export type MinerResult = {
   validations: number;
   turns: number;
   draftId?: string;
-  /** Every proposal it validated: the formula, whether it passed, and why not. */
-  attempts: { id: string; answerFormula: string; ok: boolean; reproduced: number; errors: string[] }[];
+  /** Every proposal it validated: the formula, whether it passed, and why not (with the validator's counts). */
+  attempts: MinerAttempt[];
   agentStatus?: string;
   finalText?: string;
 };
 
+/** One validated proposal. The counts are optional so older records (without them) still read. */
+export type MinerAttempt = {
+  id: string;
+  answerFormula: string;
+  ok: boolean;
+  reproduced: number;
+  errors: string[];
+  /** How many generated questions were checked. */
+  checked?: number;
+  rightAnswerOn?: number;
+  divideByZeroOn?: number;
+  overlaps?: Record<string, number>;
+};
+
 const MIN_UNKNOWN = 3;
+/** At most this many (question, wrong answer) groups go to the model, so prompts fit free rate limits. */
+export const MAX_ERROR_GROUPS = 40;
+
+/** The same question's numbers, whatever order the keys were written in. */
+const paramsKey = (p: UnknownError["params"]) =>
+  Object.keys(p)
+    .sort()
+    .map((k) => `${k}=${p[k]}`)
+    .join(",");
+
+/**
+ * Each (question, wrong answer) once, with its total count, most frequent first, at most `max` groups.
+ * Equal answers count as one (5/2 and 10/4); the first way it was written is kept.
+ */
+export function groupUnknownErrors(errors: UnknownError[], max = MAX_ERROR_GROUPS): UnknownError[] {
+  const groups = new Map<string, UnknownError & { count: number }>();
+  for (const e of errors) {
+    const typed = parseAnswer(e.wrongAnswer);
+    const key = `${paramsKey(e.params)}|${typed.ok ? fracText(asFraction(typed.value)) : e.wrongAnswer.trim()}`;
+    const g = groups.get(key);
+    if (g) g.count += e.count ?? 1;
+    else groups.set(key, { params: e.params, wrongAnswer: e.wrongAnswer, count: e.count ?? 1 });
+  }
+  return [...groups.values()].sort((p, q) => q.count - p.count).slice(0, max); // sort is stable: ties keep their order
+}
 
 function systemPrompt(skill: SkillSpec): string {
   return `You are the Misconception Miner for Shishya, a maths practice app for Indian school children (NCERT).
@@ -122,6 +161,8 @@ export async function runMiner(opts: {
     return { status: "not_enough_data", unknownErrors: unknownErrors.length, validations: 0, turns: 0, attempts: [] };
   }
   const existing = await opts.ports.existingMistakes(skill.id);
+  // the model sees the most frequent groups only; the validator still checks against every logged answer
+  const groups = groupUnknownErrors(unknownErrors);
 
   let validations = 0;
   const attempts: MinerResult["attempts"] = [];
@@ -143,7 +184,7 @@ export async function runMiner(opts: {
           parameters: { type: "object", properties: {} },
         },
       },
-      run: () => ({ content: JSON.stringify(unknownErrors.map((e) => describeError(skill, e))) }),
+      run: () => ({ content: JSON.stringify(groups.map((e) => describeError(skill, e))) }),
     },
     {
       def: {
@@ -164,6 +205,10 @@ export async function runMiner(opts: {
           ok: report.ok,
           reproduced: report.reproduced,
           errors: report.errors,
+          checked: report.checkedInstances,
+          rightAnswerOn: report.rightAnswerOn,
+          divideByZeroOn: report.divideByZeroOn,
+          overlaps: report.overlaps,
         });
         lastPassing = report.ok ? canonical(spec) : lastPassing;
         const content = JSON.stringify({ ok: report.ok, errors: report.errors, reproduced: report.reproduced });
@@ -200,7 +245,7 @@ export async function runMiner(opts: {
     result = await runAgent({
       model: opts.model,
       system: systemPrompt(skill),
-      user: `Find a new misconception for ${skill.id}. ${unknownErrors.length} kinds of unknown wrong answers are logged. Start with get_unknown_errors.`,
+      user: `Find a new misconception for ${skill.id}. ${groups.length < unknownErrors.length ? `The ${groups.length} most frequent of ${unknownErrors.length}` : unknownErrors.length} kinds of unknown wrong answers are logged. Start with get_unknown_errors.`,
       tools,
       maxTurns: opts.maxTurns ?? 12,
     });

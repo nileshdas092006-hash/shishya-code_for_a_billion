@@ -1,4 +1,5 @@
 import { asFraction, parseAnswer, sameAnswer } from "./answer";
+import { childMessage, childMessageKey, childMessageParams } from "./childMessages";
 import { equivalent, parseEquation } from "./equation";
 import { formatEquation, fracText } from "./format";
 import { add, div, equals, frac, mul, sub, type Fraction } from "./fraction";
@@ -26,9 +27,12 @@ export type MinedMistakeSpec = {
 /** A logged wrong answer that no known mistake explains (anonymous: only the question's numbers). */
 export type UnknownError = { params: Params; wrongAnswer: string; count?: number };
 
+/** Who wrote the child message of a mined mistake: the AI (never shown: children see the fixed message) or the teacher. */
+export type ChildLabelSource = "ai" | "teacher";
+
 const MAX_TEXT = 200;
 const STEP_TYPES: StepType[] = ["move-x", "move-const", "simplify", "divide"];
-const NOT_NCERT = /\bmov(e|es|ed|ing)\b|change (the|its) sign/i;
+export const NOT_NCERT =/\bmov(e|es|ed|ing)\b|change (the|its) sign/i;
 
 // ---------------- the evaluator ----------------
 
@@ -166,14 +170,20 @@ export function renderLine(template: string, params: Params): string {
 
 // ---------------- turning the data into a Mistake ----------------
 
-/** The Shishya's wrong trace: correct lines before firstWrongLine, then the mined templates. */
-export function toMistake(spec: MinedMistakeSpec, skill: SkillSpec): Mistake {
+/**
+ * The Shishya's wrong trace: correct lines before firstWrongLine, then the mined templates.
+ * The child label is NEVER the AI's words: it is the fixed message for the step type, unless a teacher wrote
+ * the child message when approving it (childLabelSource "teacher").
+ */
+export function toMistake(spec: MinedMistakeSpec, skill: SkillSpec, childLabelSource: ChildLabelSource = "ai"): Mistake {
   const formula = parseFormula(spec.answerFormula);
   for (const template of Object.values(spec.lines)) checkTemplate(template);
+  const fromTeacher = childLabelSource === "teacher";
   return {
     id: spec.id,
     label: spec.label,
-    childLabel: spec.childLabel,
+    childLabel: fromTeacher ? spec.childLabel : childMessage(spec.stepType, spec.firstWrongLine),
+    ...(fromTeacher ? {} : { childText: { key: childMessageKey(spec.stepType), params: childMessageParams(spec.firstWrongLine) } }),
     stepType: spec.stepType,
     origin: "mined",
     apply(instance) {
@@ -203,6 +213,10 @@ export type ValidationResult = {
   checkedInstances: number;
   /** Per existing mistake: on how many questions both give the same answer. */
   overlaps: Record<string, number>;
+  /** On how many of the generated questions it gives the correct answer (must be 0). */
+  rightAnswerOn: number;
+  /** On how many of the generated questions it divides by zero (must be 0). */
+  divideByZeroOn: number;
 };
 
 const MIN_REPRODUCED = 3;
@@ -253,7 +267,7 @@ function shapeErrors(x: Record<string, unknown>, ctx: ValidationContext, lineCou
  */
 export function validateMinedMistake(input: unknown, ctx: ValidationContext): ValidationResult {
   const seeds = ctx.seeds ?? 1000;
-  const result: ValidationResult = { ok: false, errors: [], reproduced: 0, checkedInstances: 0, overlaps: {} };
+  const result: ValidationResult = { ok: false, errors: [], reproduced: 0, checkedInstances: 0, overlaps: {}, rightAnswerOn: 0, divideByZeroOn: 0 };
   const stop = (message: string) => {
     result.errors.push(message);
     return result;
@@ -280,17 +294,28 @@ export function validateMinedMistake(input: unknown, ctx: ValidationContext): Va
 
     const mined = toMistake(spec, ctx.skill);
     const fwl = spec.firstWrongLine;
+    // the right answer and division by zero are counted over every question (the teacher sees how often)
+    let firstRight = "";
+    let firstZero = "";
     for (let seed = 1; seed <= seeds; seed++) {
       const inst = ctx.skill.generate(createRng(seed));
       const q = inst.text;
+      result.checkedInstances++;
       let out;
       try {
         out = mined.apply(inst);
       } catch (e) {
-        return stop(`for ${q}: ${(e as Error).message}`);
+        const message = (e as Error).message;
+        if (message !== "division by zero") return stop(`for ${q}: ${message}`);
+        result.divideByZeroOn++;
+        firstZero ||= q;
+        continue;
       }
-      result.checkedInstances++;
-      if (sameAnswer(out.answer, inst.answer)) return stop(`it gives the correct answer for ${q}, so it is not a mistake`);
+      if (sameAnswer(out.answer, inst.answer)) {
+        result.rightAnswerOn++;
+        firstRight ||= q;
+        continue;
+      }
       for (const ex of ctx.existing) {
         if (applies(ex, inst) && sameAnswer(ex.apply(inst).answer, out.answer)) result.overlaps[ex.id] = (result.overlaps[ex.id] ?? 0) + 1;
       }
@@ -306,6 +331,10 @@ export function validateMinedMistake(input: unknown, ctx: ValidationContext): Va
         return stop(`line ${fwl} ("${wrongLine}") is still equivalent to the question ${q}, so it is not wrong`);
       }
     }
+    if (result.rightAnswerOn) {
+      result.errors.push(`it gives the correct answer on ${result.rightAnswerOn} of ${seeds} questions (e.g. ${firstRight}), so it is not a mistake`);
+    }
+    if (result.divideByZeroOn) result.errors.push(`it divides by zero on ${result.divideByZeroOn} of ${seeds} questions (e.g. ${firstZero})`);
     for (const [id, n] of Object.entries(result.overlaps)) {
       if (n > seeds * MAX_OVERLAP_SHARE) result.errors.push(`it gives the same answer as the existing mistake "${id}" on ${n} of ${seeds} questions`);
     }
@@ -314,4 +343,45 @@ export function validateMinedMistake(input: unknown, ctx: ValidationContext): Va
   }
   result.ok = result.errors.length === 0;
   return result;
+}
+
+// ---------------- evidence for the teacher's review card ----------------
+
+/** The validator's numbers as stored with a draft. Older drafts lack the two counts; they passed, so both were 0. */
+export type ReportNumbers = Pick<ValidationResult, "reproduced" | "checkedInstances" | "overlaps"> &
+  Partial<Pick<ValidationResult, "rightAnswerOn" | "divideByZeroOn">>;
+export type CheckId = "explains" | "neverRight" | "noDivideByZero" | "different";
+
+/**
+ * The 4 ticks on the review card: explains 3 or more real answers · never gives the right answer on the generated
+ * questions · never divides by zero · different from every known mistake. n is the number each tick talks about.
+ */
+export function validationChecks(r: ReportNumbers): { id: CheckId; ok: boolean; n: number }[] {
+  const checked = r.checkedInstances;
+  return [
+    { id: "explains", ok: r.reproduced >= MIN_REPRODUCED, n: r.reproduced },
+    { id: "neverRight", ok: (r.rightAnswerOn ?? 0) === 0, n: checked },
+    { id: "noDivideByZero", ok: (r.divideByZeroOn ?? 0) === 0, n: checked },
+    { id: "different", ok: Object.values(r.overlaps ?? {}).every((n) => n <= checked * MAX_OVERLAP_SHARE), n: checked },
+  ];
+}
+
+/** Each logged wrong answer the mined mistake explains: the question, the answer given, what it predicts, how often. */
+export function explainedErrors(spec: MinedMistakeSpec, errors: UnknownError[]) {
+  const rows: { question: string; wrongAnswer: string; predicted: string; count: number }[] = [];
+  for (const e of errors) {
+    const typed = parseAnswer(e.wrongAnswer);
+    if (!typed.ok) continue;
+    let predicted: Fraction;
+    try {
+      predicted = evaluate(spec.answerFormula, e.params);
+    } catch {
+      continue; // a bad formula, or division by zero on this question: it explains nothing here
+    }
+    if (!equals(predicted, typed.value)) continue;
+    const { a, b, c, d } = e.params;
+    const question = formatEquation([[a, true], [b, false]], [[c, true], [d, false]]);
+    rows.push({ question, wrongAnswer: e.wrongAnswer, predicted: fracText(predicted), count: e.count ?? 1 });
+  }
+  return rows.sort((p, q) => q.count - p.count);
 }

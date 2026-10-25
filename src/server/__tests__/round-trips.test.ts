@@ -72,8 +72,22 @@ describe("database round trips stay small and do not grow with the class", () =>
     if (!proof.ok) throw new Error(proof.reason);
     await answerProof(svc, store, proof.items.map((i) => i.itemId));
 
+    // a Miner draft waiting for review: its evidence (the explained wrong answers) is one more read, however many
+    for (const id of ["d1", "d2"]) {
+      await store.insertMinedMistake({
+        id,
+        skillId: SKILL,
+        source: JSON.stringify({ id, label: "l", childLabel: "c", stepType: "divide", firstWrongLine: 5, lines: { "5": "x = {(d - b) / a}" }, answerFormula: "(d - b) / a" }),
+        testsJson: JSON.stringify({ reproduced: 3, checkedInstances: 1000, overlaps: {} }),
+        status: "DRAFT_TESTED",
+        approver: null,
+        createdAt: "2026-10-20T09:00:00.000Z",
+      });
+    }
+
     await svc.getClassBoard(room.classId); // first view may open skills whose prerequisites are mastered
     const { n, out } = await trips(() => svc.getClassBoard(room.classId));
+    expect(out.mined.map((m) => m.checks.length)).toEqual([4, 4]);
     expect(n).toBeLessThanOrEqual(LIMITS.classBoard);
     expect(out.codes).toHaveLength(CLASS_SIZE);
     const row = out.progress.find((p) => p.skillId === SKILL)!;

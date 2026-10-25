@@ -3,12 +3,14 @@ import { answerText, parseAnswerFor, sameAnswer } from "../core/answer";
 import { diagnose } from "../core/diagnose";
 import { createRng } from "../core/rng";
 import type { ApplyItem } from "../core/skills/linear-both-sides-apply";
-import { validateMinedMistake, type MinedMistakeSpec } from "../core/minedMistake";
+import { childMessage } from "../core/childMessages";
+import { explainedErrors, validateMinedMistake, validationChecks, type ChildLabelSource, type MinedMistakeSpec, type ReportNumbers } from "../core/minedMistake";
 import { answerReceipt, type AnswerReceipt } from "../core/receipt";
 import { checkTeachStep, type TeachResult } from "../core/teach";
-import { applies, type Instance } from "../core/types";
+import { applies, type Instance, type StepType } from "../core/types";
+import { agentRunView, RECORDED_MINER_RUN } from "./agent-runs";
 import * as mastery from "./mastery";
-import { minedMistakes, unknownErrors } from "./miner-ports";
+import { minedMistakes, toUnknownError, unknownErrors } from "./miner-ports";
 import { defaultRegistry, getEntry, instanceFor, type Registry, type SkillEntry } from "./skills";
 import type { AttemptRow, ClassKind, ClassRow, ItemFormat, ItemKind, ItemRow, MistakeHitRow, ProofRunRow, Store, StudentRow } from "./store";
 import { TOUR_CLASSMATE_CODE, TOUR_GRADE, TOUR_JUDGE_CODE, TOUR_JUDGE_STATES, TOUR_MAX_PER_HOUR, TOUR_SECTION, TOUR_SKILL, tourPlan } from "./tour";
@@ -60,6 +62,8 @@ const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O, 1/I/L
 const STUDENT_CODE = new RegExp(`^[A-Z0-9]{1,8}-([0-9]{1,3}|[${CODE_ALPHABET}]{4})$`);
 const CLASS_CODE = /^[A-Z0-9-]{1,16}$/;
 const FRESH_TRIES = 50;
+/** How many agent runs the teacher page "How the agent worked" shows. */
+const AGENT_RUNS_SHOWN = 10;
 const STUCK_WINDOW_DAYS = 7;
 /** A child shows a mistake PATTERN only when the same mistake explained their answers on this many different questions; one is a slip. */
 export const PATTERN_MIN_QUESTIONS = 2;
@@ -224,7 +228,11 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     return next.filter((e) => !before.has(e.spec.id) && states.get(e.spec.id) !== "LOCKED").map((e) => e.spec.id);
   }
 
-  /** Tested drafts waiting for a teacher, with the mistake data and the validator's report. */
+  /**
+   * Tested drafts waiting for a teacher, with the mistake data, the validator's report and the evidence: the logged
+   * wrong answers it explains, the 4 checks, what the child would see (the fixed message) and the AI's own suggestion
+   * (for the teacher only). The unknown errors are read once, and only when there are drafts.
+   */
   async function pendingMined() {
     const parse = <T>(text: string): T | null => {
       try {
@@ -233,13 +241,34 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         return null;
       }
     };
-    return (await store.listMinedMistakes("DRAFT_TESTED")).map((r) => ({
-      id: r.id,
-      skillId: r.skillId,
-      createdAt: r.createdAt,
-      spec: parse<MinedMistakeSpec>(r.source),
-      report: parse<{ reproduced: number; checkedInstances: number; overlaps: Record<string, number> }>(r.testsJson),
-    }));
+    const rows = await store.listMinedMistakes("DRAFT_TESTED");
+    const errors = await store.listUnknownErrorsFor([...new Set(rows.map((r) => r.skillId))]);
+    return rows.map((r) => {
+      const spec = parse<MinedMistakeSpec>(r.source);
+      const report = parse<ReportNumbers & { runId?: string }>(r.testsJson);
+      let evidence: ReturnType<typeof explainedErrors> = [];
+      let childText: string | null = null;
+      try {
+        if (spec) {
+          evidence = explainedErrors(spec, errors.filter((e) => e.skillId === r.skillId).map(toUnknownError));
+          childText = childMessage(spec.stepType, spec.firstWrongLine);
+        }
+      } catch {
+        // a damaged draft shows no evidence (the card asks the teacher to reject it)
+      }
+      return {
+        id: r.id,
+        skillId: r.skillId,
+        createdAt: r.createdAt,
+        spec,
+        report,
+        runId: report?.runId ?? null,
+        childText,
+        aiChildLabel: spec?.childLabel ?? null,
+        evidence,
+        checks: report && typeof report.reproduced === "number" ? validationChecks(report) : [],
+      };
+    });
   }
 
   /** Each student's state for every skill, from one read of the class's mastery rows (opening skills whose prerequisites are mastered). */
@@ -450,7 +479,18 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       itemId: string,
       typedText: string,
     ): Promise<
-      { ok: true; correct: boolean; mistakeId: string | null; checkLine: number | null; feedback: string; receipt: AnswerReceipt | null } | Fail
+      | {
+          ok: true;
+          correct: boolean;
+          mistakeId: string | null;
+          checkLine: number | null;
+          feedback: string;
+          /** Only for a mined mistake shown with the fixed message for its step type. */
+          feedbackKey?: `child.step.${StepType}`;
+          feedbackParams?: Record<string, number>;
+          receipt: AnswerReceipt | null;
+        }
+      | Fail
     > {
       const item = await requireItem(itemId, "practice");
       const entry = await entryOf(item.skillId);
@@ -491,10 +531,13 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
           : checkLine !== null
             ? `Check line ${checkLine} again.`
             : (mistake?.childLabel ?? entry.spec.hintLadder[0]);
+        // a mined mistake's child label is the fixed message for its step type (or the teacher's own words), never
+        // the AI's; the fixed message also comes as a key, so the screen can show it in the child's language
+        const fixed = checkLine === null && mistake?.childText ? { feedbackKey: mistake.childText.key, feedbackParams: mistake.childText.params } : {};
         // the child is told only what the server decided to show: no mistake id for a first match
         // the receipt puts the child's own answer back in: it never shows the correct answer
         const receipt = answerReceipt(instance, typed.value);
-        return { ok: true as const, correct, mistakeId: checkLine === null ? mistakeId : null, checkLine, feedback, receipt };
+        return { ok: true as const, correct, mistakeId: checkLine === null ? mistakeId : null, checkLine, feedback, ...fixed, receipt };
       });
     },
 
@@ -946,6 +989,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       if (!row || row.status !== "DRAFT_TESTED") return { ok: false, reason: "This is not a draft waiting for review." };
       let edited = false;
       let newSource: string | undefined;
+      let childLabelSource: ChildLabelSource | undefined;
       if (decision === "approved") {
         const base = registry[row.skillId];
         if (!base) return { ok: false, reason: "Unknown skill." };
@@ -956,8 +1000,15 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
           return { ok: false, reason: "The draft could not be read." };
         }
         const label = edits?.label?.trim();
-        const childLabel = edits?.childLabel?.trim();
-        edited = (label !== undefined && label !== spec.label) || (childLabel !== undefined && childLabel !== spec.childLabel);
+        // the child box starts with the fixed message: leaving it (or clearing it) is not the teacher writing one
+        let childLabel = edits?.childLabel?.trim() || undefined;
+        try {
+          if (childLabel === childMessage(spec.stepType as StepType, Number(spec.firstWrongLine))) childLabel = undefined;
+        } catch {
+          // a damaged draft: the validator below refuses it
+        }
+        childLabelSource = childLabel !== undefined ? "teacher" : "ai";
+        edited = (label !== undefined && label !== spec.label) || childLabel !== undefined;
         if (edited) {
           spec = { ...spec, ...(label !== undefined ? { label } : {}), ...(childLabel !== undefined ? { childLabel } : {}) };
           newSource = JSON.stringify(spec);
@@ -967,11 +1018,24 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         if (!report.ok) return { ok: false, reason: `It no longer passes the checks: ${report.errors.join("; ")}` };
       }
       const approver = `teacher of class ${cls.code}${edited ? " (edited the labels)" : ""}`;
-      const done = await store.decideMinedMistake(id, decision === "approved" ? "APPROVED" : "REJECTED", approver, newSource);
+      const done = await store.decideMinedMistake(id, decision === "approved" ? "APPROVED" : "REJECTED", approver, newSource, childLabelSource);
       minedCache.delete(row.skillId);
-      await log(null, "mined_mistake_decided", { classId, id, decision, done, edited });
+      await log(null, "mined_mistake_decided", { classId, id, decision, done, edited, childLabelSource });
       return done ? { ok: true } : { ok: false, reason: "Someone else decided it first." };
     },
+
+    /**
+     * "How the agent worked": the last 10 agent runs, each proposal with the validator's verdict in plain words.
+     * Anonymous (no child data). A tour class sees only the recorded run, never the real Miner's drafts.
+     */
+    async listAgentRuns(classId: string) {
+      const cls = await requireClass(classId);
+      const rows = await store.listAgentRuns(AGENT_RUNS_SHOWN, { recordedOnly: cls.kind === "sandbox" });
+      return { runs: rows.map(agentRunView) };
+    },
+
+    /** The recorded real Miner run, read from the run history (the Judge Tour's stop 6). */
+    recordedMinerRun: () => store.getAgentRun(RECORDED_MINER_RUN.id),
 
     // ----- teacher -----
     /** Mistake patterns (2+ different questions), single slips and the line grid, for the last 7 days. */

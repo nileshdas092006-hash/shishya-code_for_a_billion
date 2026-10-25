@@ -1,5 +1,6 @@
 import { ANSWER_MESSAGES } from "../core/answer";
 import { PARSE_MESSAGES } from "../core/equation";
+import { CHILD_MESSAGES_EN, type ChildMessageKey } from "../core/childMessages";
 import { SKILLS } from "../core/skills";
 import { TEACH_MESSAGES } from "../core/teach";
 
@@ -64,6 +65,46 @@ export const ui = {
   "tour.agent.why": "This is why a teacher must read and approve every draft before any class uses it.",
   "tour.agent.approve": "Approve",
   "tour.agent.approveNote": "In a real class, the teacher's approval adds this mistake for every class. In the tour, nothing is saved.",
+
+  // the Misconception Miner's review card and run history (teacher only)
+  "review.childSees": "What the child will see",
+  "review.childSeesNote": "A fixed message written by people, not by the AI. If you change it, the child sees your words instead.",
+  "review.aiSuggestion": "AI's suggestion (only you see this)",
+  "review.aiSuggestionNote": "Children never see this text.",
+  "review.evidence.title": "The logged wrong answers it explains",
+  "review.evidence.question": "Question",
+  "review.evidence.answer": "Child's answer",
+  "review.evidence.predicted": "This mistake gives",
+  "review.evidence.match": "Same?",
+  "review.evidence.times": "Times given",
+  "review.evidence.none": "None of the logged wrong answers match it now.",
+  "review.checks.title": "Checked by code",
+  "review.check.explains": "Explains 3 or more real answers (it explains {n})",
+  "review.check.neverRight": "Never gives the right answer on {n} random questions",
+  "review.check.noDivideByZero": "Never divides by zero on {n} random questions",
+  "review.check.different": "Different from every known mistake",
+  "review.howAgent": "How the agent worked",
+  "agentRuns.title": "How the agent worked",
+  "agentRuns.intro":
+    "The last 10 runs of the AI Misconception Miner. It saw only anonymous numbers: each question's numbers and the wrong answer. No child data is shown here.",
+  "agentRuns.none": "No runs yet.",
+  "agentRuns.recorded": "Recorded run: imported from our local records of a past run, on test answers",
+  "agentRuns.meta": "{skill} · {turns} turns · {model}",
+  "agentRuns.noModel": "no AI call",
+  "agentRuns.proposals": "What it proposed, and what the code checks said:",
+  "agentRuns.noProposals": "No proposals.",
+  "agentRuns.back": "Back to the class board",
+  "agentRuns.status.draft_saved": "Saved a tested draft for a teacher to review",
+  "agentRuns.status.no_draft": "No draft: no proposal passed the checks",
+  "agentRuns.status.not_enough_data": "Not enough data: fewer than 3 unexplained wrong answers",
+  "agentRuns.status.failed": "Failed: {error}",
+  "agentRuns.status.other": "Ended: {status}",
+  "agentRuns.verdict.accepted": "Accepted: explains {n} real answers",
+  "agentRuns.verdict.right": "Rejected: gives the right answer on {n} of {total} questions",
+  "agentRuns.verdict.zero": "Rejected: divides by zero on {n} of {total} questions",
+  "agentRuns.verdict.few": "Rejected: explains only {n} real answers (it needs 3)",
+  "agentRuns.verdict.known": "Rejected: gives the same answer as the known mistake \"{id}\" on {n} of {total} questions",
+  "agentRuns.verdict.other": "Rejected: {reason}",
 
   "login.title": "Hello! Type your codes",
   "login.classCode": "Class code",
@@ -259,7 +300,8 @@ export type MessageKey =
   | keyof typeof ANSWER_MESSAGES
   | SkillTextKey
   | HintKey
-  | MistakeKey;
+  | MistakeKey
+  | ChildMessageKey;
 
 const fromSkills = Object.fromEntries(
   SKILLS.flatMap(({ spec }) => [
@@ -273,5 +315,7 @@ export const en: Record<string, string> = {
   ...TEACH_MESSAGES,
   ...PARSE_MESSAGES,
   ...ANSWER_MESSAGES,
+  // a mined mistake's fixed child message (src/core/childMessages.ts)
+  ...CHILD_MESSAGES_EN,
   ...fromSkills,
 };

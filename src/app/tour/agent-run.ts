@@ -2,39 +2,47 @@ import { answerText } from "@/core/answer";
 import { toMistake, type MinedMistakeSpec } from "@/core/minedMistake";
 import { linearBothSides, makeInstance } from "@/core/skills/linear-both-sides";
 import { t } from "@/i18n";
+import type { MinerAttempt } from "@/agents/miner";
 import run from "@/agents/__fixtures__/miner-run-2026-10-19.json";
+import { RECORDED_MINER_RUN } from "@/server/recorded-runs";
+import type { AgentRunRow } from "@/server/store";
 
-// The Judge Tour's stop 6: ONE recorded, real Misconception Miner run (a fixture copied from the local records of
-// that run; see its "sources"). Read-only: nothing here calls the AI or writes to the database. The example
-// working is not stored: it is worked out again by src/core from the recorded proposal.
+// The Judge Tour's stop 6: ONE recorded, real Misconception Miner run, read from the run history (the agentRuns
+// row marked recorded, imported from the local records of that run). The row has the date, model, turns and the
+// proposal with its verdict; the details the table does not keep (the AI calls, the logged question, the AI's
+// child message) come from the same fixture the row was built from. Read-only: nothing here calls the AI or
+// writes to the database. The example working is not stored: it is worked out again by src/core.
 
 export type RecordedRun = ReturnType<typeof recordedRun>;
 
-export function recordedRun() {
+export function recordedRun(row: AgentRunRow = RECORDED_MINER_RUN) {
+  if (!row.recorded || row.id !== RECORDED_MINER_RUN.id) throw new Error("Stop 6 shows only the recorded Miner run.");
+  const [attempt] = JSON.parse(row.attemptsJson) as MinerAttempt[];
   const p = run.proposal;
   // the records do not keep the AI's teacher label, so the mistake's id stands in for it (it is never shown as a label)
   const spec: MinedMistakeSpec = {
-    id: p.id,
-    label: p.id,
+    id: attempt.id,
+    label: attempt.id,
     childLabel: p.childLabelExcerpt,
     stepType: p.stepType as MinedMistakeSpec["stepType"],
     firstWrongLine: p.firstWrongLine,
     lines: p.lines,
-    answerFormula: p.answerFormula,
+    answerFormula: attempt.answerFormula,
   };
   const { a, b, c, d } = run.input.example.params;
   const question = makeInstance({ a, b, c, d }, 0);
   const wrong = toMistake(spec, linearBothSides).apply(question);
   const ms = run.calls.reduce((sum, call) => sum + call.ms, 0);
+  const date = row.startedAt.slice(0, 10);
   return {
-    label: t("tour.agent.recorded", { date: run.date }),
-    date: run.date,
-    model: run.model,
+    label: t("tour.agent.recorded", { date }),
+    date,
+    model: row.model ?? run.model,
     calls: run.calls,
     seconds: Math.round(ms / 1000),
     otherWrongAnswers: run.input.otherWrongAnswers,
-    proposal: p,
-    validation: run.validation,
+    proposal: { ...p, id: attempt.id, answerFormula: attempt.answerFormula },
+    validation: { ...run.validation, explained: attempt.reproduced, checkedQuestions: attempt.checked ?? run.validation.checkedQuestions },
     example: {
       question: question.text,
       trace: wrong.trace.map((l) => l.text),

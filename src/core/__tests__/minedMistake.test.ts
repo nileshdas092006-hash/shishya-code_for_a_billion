@@ -2,7 +2,17 @@ import { describe, expect, it } from "vitest";
 import { parseAnswer } from "../answer";
 import { diagnose } from "../diagnose";
 import { frac, toString } from "../fraction";
-import { evaluate, renderLine, toMistake, validateMinedMistake, type MinedMistakeSpec, type UnknownError } from "../minedMistake";
+import { childMessage } from "../childMessages";
+import {
+  evaluate,
+  explainedErrors,
+  renderLine,
+  toMistake,
+  validateMinedMistake,
+  validationChecks,
+  type MinedMistakeSpec,
+  type UnknownError,
+} from "../minedMistake";
 import { createRng } from "../rng";
 import { linearBothSides, makeInstance } from "../skills/linear-both-sides";
 
@@ -86,6 +96,20 @@ describe("toMistake", () => {
     expect(out.answer).toEqual(frac(5, 2));
     expect(out.firstWrongLine).toBe(5);
   });
+
+  it("a child never sees the AI's words: by default the child label is the fixed message for its step type", () => {
+    const m = toMistake(DIVIDE_BY_A, linearBothSides);
+    expect(m.childLabel).toBe(childMessage("divide", 5));
+    expect(m.childLabel).not.toBe(DIVIDE_BY_A.childLabel);
+    expect(m.childText).toEqual({ key: "child.step.divide", params: { line: 5, prev: 4 } });
+    expect(toMistake(DIVIDE_BY_A, linearBothSides, "ai").childLabel).toBe(childMessage("divide", 5));
+  });
+
+  it("the teacher's own wording (written at approval) is shown as it is", () => {
+    const m = toMistake(DIVIDE_BY_A, linearBothSides, "teacher");
+    expect(m.childLabel).toBe(DIVIDE_BY_A.childLabel);
+    expect(m.childText).toBeUndefined();
+  });
 });
 
 describe("validateMinedMistake", () => {
@@ -108,7 +132,17 @@ describe("validateMinedMistake", () => {
       { ...ctx, unknownErrors: unknownErrorsFor((p) => toString(frac(p.d - p.b, p.a - p.c))) },
     );
     expect(r.ok).toBe(false);
-    expect(r.errors.join(" ")).toMatch(/correct answer/);
+    expect(r.errors.join(" ")).toMatch(/correct answer on 1000 of 1000 questions/);
+    expect(r).toMatchObject({ rightAnswerOn: 1000, divideByZeroOn: 0, checkedInstances: 1000 });
+  });
+
+  it("counts on how many of the 1,000 questions a formula gives the right answer", () => {
+    // "(d - b) / 2" is right exactly when a − c = 2
+    const r = validateMinedMistake({ ...DIVIDE_BY_A, id: "halved", lines: { "5": "x = {(d - b) / 2}" }, answerFormula: "(d - b) / 2" }, { ...ctx, existing: [] });
+    expect(r.ok).toBe(false);
+    expect(r.rightAnswerOn).toBeGreaterThan(0);
+    expect(r.rightAnswerOn).toBeLessThan(1000);
+    expect(r.errors.join(" ")).toMatch(new RegExp(`correct answer on ${r.rightAnswerOn} of 1000 questions`));
   });
 
   it("rejects a copy of an existing mistake (forgot-to-divide: d − b)", () => {
@@ -124,6 +158,12 @@ describe("validateMinedMistake", () => {
     const r = validateMinedMistake({ ...DIVIDE_BY_A, lines: { "5": "x = {(d - b) / (a + b)}" }, answerFormula: "(d - b) / (a + b)" }, ctx);
     expect(r.ok).toBe(false);
     expect(r.errors.join(" ")).toMatch(/zero|reproduce/);
+  });
+
+  it("counts on how many questions a formula divides by zero", () => {
+    const r = validateMinedMistake({ ...DIVIDE_BY_A, lines: { "5": "x = {(d - b) / (a + b)}" }, answerFormula: "(d - b) / (a + b)" }, ctx);
+    expect(r.divideByZeroOn).toBeGreaterThan(0);
+    expect(r.errors.join(" ")).toMatch(new RegExp(`divides by zero on ${r.divideByZeroOn} of 1000 questions`));
   });
 
   it("rejects symbols outside a, b, c, d, numbers, + − × ÷ and brackets", () => {
@@ -176,5 +216,41 @@ describe("validateMinedMistake", () => {
     const inst = makeInstance(P, 0);
     expect(diagnose(skill, inst, frac(5, 2))).toBe("divided-by-a");
     expect(diagnose(skill, inst, frac(5, 3))).toBe("kept-x-sign");
+  });
+});
+
+describe("the evidence on the teacher's review card", () => {
+  it("validationChecks: the 4 ticks from a passing report", () => {
+    const r = validateMinedMistake(DIVIDE_BY_A, ctx);
+    expect(validationChecks(r)).toEqual([
+      { id: "explains", ok: true, n: 6 },
+      { id: "neverRight", ok: true, n: 1000 },
+      { id: "noDivideByZero", ok: true, n: 1000 },
+      { id: "different", ok: true, n: 1000 },
+    ]);
+  });
+
+  it("validationChecks: a failing report shows which ticks fail; an older report without counts (a passed draft) passes", () => {
+    const bad = { reproduced: 2, checkedInstances: 1000, overlaps: { "forgot-to-divide": 150 }, rightAnswerOn: 3, divideByZeroOn: 1 };
+    expect(validationChecks(bad).map((c) => [c.id, c.ok])).toEqual([
+      ["explains", false],
+      ["neverRight", false],
+      ["noDivideByZero", false],
+      ["different", false],
+    ]);
+    const old = { reproduced: 6, checkedInstances: 1000, overlaps: { "forgot-to-divide": 59 } };
+    expect(validationChecks(old).every((c) => c.ok)).toBe(true);
+  });
+
+  it("explainedErrors: each logged wrong answer the draft explains, with what it predicts and how often it was given", () => {
+    const errors: UnknownError[] = [
+      ...ERRORS,
+      { params: { a: 5, b: 1, c: 2, d: 7 }, wrongAnswer: "99", count: 4 }, // not explained
+    ];
+    const rows = explainedErrors(DIVIDE_BY_A, errors);
+    expect(rows).toHaveLength(6);
+    expect(rows[0]).toEqual({ question: "4x − 3 = 2x + 7", wrongAnswer: "5/2", predicted: "5/2", count: 3 });
+    for (const row of rows) expect(parseAnswer(row.wrongAnswer)).toEqual(parseAnswer(row.predicted));
+    expect(rows.map((r) => r.count)).toEqual([...rows.map((r) => r.count)].sort((p, q) => q - p));
   });
 });

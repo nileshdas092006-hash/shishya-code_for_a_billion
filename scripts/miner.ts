@@ -1,14 +1,14 @@
 // npm run miner -- alg.linear.both-sides [--fake] [--db file:data/demo.db]
 // Runs the Misconception Miner once. It reads the anonymous unknown wrong answers, asks the AI for ONE new mistake
-// (as data), checks it with code, and saves a tested draft for a teacher to approve on the class board.
+// (as data), checks it with code, and saves a tested draft for a teacher to approve on the class board. Every run,
+// also one that ends early or fails, is written to the run history (the agentRuns table) in the same database.
 //   --fake  use the offline FAKE model (no key, no network): it proposes "(d - b) / a".
 //   --db    which database (default: DATABASE_URL, else file:data/shishya.db).
 // Keys come from .env.local (GROQ_API_KEY / OPENROUTER_API_KEY) and are never printed.
 
 import { finalAnswer, scriptedModel, toolCall } from "../src/agents/fake-model";
 import { createLlmClient, providersFromEnv } from "../src/agents/llm";
-import { runMiner } from "../src/agents/miner";
-import { createMinerPorts } from "../src/server/miner-ports";
+import { runMinerRecorded } from "../src/server/agent-runs";
 import { openStore } from "../src/server/store";
 import { loadEnv } from "./load-env";
 
@@ -50,7 +50,8 @@ const model = fake
 const store = await openStore({ url, authToken: process.env.DATABASE_AUTH_TOKEN || undefined });
 try {
   console.log(`Misconception Miner: skill ${skillId}, ${fake ? "FAKE model" : `AI providers: ${providersFromEnv().map((p) => `${p.name} (${p.model})`).join(", ")}`}`);
-  const result = await runMiner({ model, ports: createMinerPorts(store), skillId });
+  // writes one row to the run history (agentRuns) in this database, shown on the teacher page "How the agent worked"
+  const result = await runMinerRecorded({ store, model, skillId });
   console.log(`  unknown wrong answers (kinds): ${result.unknownErrors}`);
   console.log(`  result: ${result.status}${result.draftId ? ` → draft ${result.draftId} (waiting for a teacher on the class board)` : ""}`);
   console.log(`  validations: ${result.validations}, turns: ${result.turns}${result.agentStatus ? `, stopped: ${result.agentStatus}` : ""}`);
@@ -60,6 +61,7 @@ try {
   }
   if (result.error) console.log(`  error: ${result.error}`);
   if (result.finalText) console.log(`  the model said: ${result.finalText.slice(0, 300)}`);
+  console.log(`  run ${result.runId} saved in the run history (teacher page: How the agent worked)`);
   if (!fake) console.log("  each AI call is logged (no keys, no messages) in data/agent-runs.jsonl");
 } catch (e) {
   console.error(`Miner failed: ${e instanceof Error ? e.message : "unknown error"}`);

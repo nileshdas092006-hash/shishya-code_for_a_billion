@@ -1,10 +1,13 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { t } from "@/i18n";
 import { ReadyButton } from "../../_components/ReadyButton";
 
 // The teacher's review of a mistake the AI Misconception Miner found. The teacher may rewrite the teacher label and
-// the child message before approving; the formula cannot be changed here. Approving runs the code checks again.
+// what the child will see before approving; the formula cannot be changed here. Approving runs the code checks again.
+// The child box starts with the fixed, human-written message for the mistake's step type: children never see the
+// AI's own child message, which is shown in a separate, read-only box for the teacher only.
 
 export const REVIEW_WARNING = "Check the child message: the AI can be wrong about advice.";
 
@@ -14,15 +17,19 @@ export type Decide = (
   edits?: LabelEdits,
 ) => Promise<{ ok: true } | { ok: false; reason: string }>;
 
-export function MinedReviewForm({
-  draft,
-  decide,
-}: {
-  draft: { id: string; label: string; childLabel: string; answerFormula: string };
-  decide: Decide;
-}) {
+export type ReviewDraft = {
+  id: string;
+  label: string;
+  /** What the child will see: the fixed message for the step type. */
+  childText: string;
+  /** The AI's own child message: shown to the teacher only. */
+  aiChildLabel: string;
+  answerFormula: string;
+};
+
+export function MinedReviewForm({ draft, decide }: { draft: ReviewDraft; decide: Decide }) {
   const [label, setLabel] = useState(draft.label);
-  const [childLabel, setChildLabel] = useState(draft.childLabel);
+  const [childLabel, setChildLabel] = useState(draft.childText);
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -41,17 +48,25 @@ export function MinedReviewForm({
         Teacher label (names the mistake)
         <textarea name="label" value={label} onChange={(e) => setLabel(e.target.value)} rows={2} maxLength={300} className="field text-base" />
       </label>
-      <label className="flex flex-col gap-1 font-semibold">
-        Child message (what went wrong and the correct step, in NCERT words)
-        <textarea
-          name="childLabel"
-          value={childLabel}
-          onChange={(e) => setChildLabel(e.target.value)}
-          rows={3}
-          maxLength={300}
-          className="field text-base"
-        />
-      </label>
+      <div className="grid gap-3 md:grid-cols-2">
+        <label className="flex flex-col gap-1 font-semibold">
+          {t("review.childSees")}
+          <textarea
+            name="childLabel"
+            value={childLabel}
+            onChange={(e) => setChildLabel(e.target.value)}
+            rows={4}
+            maxLength={300}
+            className="field text-base"
+          />
+          <span className="text-base font-normal text-gray-700">{t("review.childSeesNote")}</span>
+        </label>
+        <div className="flex flex-col gap-1">
+          <p className="font-semibold">{t("review.aiSuggestion")}</p>
+          <p className="rounded border-2 border-dashed border-gray-400 p-2 text-base break-words">{draft.aiChildLabel}</p>
+          <p className="text-base text-gray-700">{t("review.aiSuggestionNote")}</p>
+        </div>
+      </div>
       <p className="text-base">
         Wrong answer it predicts (cannot be edited here): <span className="math font-bold">x = {draft.answerFormula}</span>
       </p>

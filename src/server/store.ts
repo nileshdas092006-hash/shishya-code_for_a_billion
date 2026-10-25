@@ -3,6 +3,8 @@ import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient, type Client, type InValue, type Transaction } from "@libsql/client";
+import type { ChildLabelSource } from "../core/minedMistake";
+import { RECORDED_MINER_RUN } from "./recorded-runs";
 
 // The data store. ALL SQL lives in this file, behind plain async functions.
 // It uses libSQL (SQLite-compatible): a local file on a laptop (DATABASE_URL=file:data/shishya.db) or Turso's
@@ -115,6 +117,29 @@ export type MinedMistakeRow = {
   status: MinedStatus;
   approver: string | null;
   createdAt: string;
+  /** Who wrote the child message: 'ai' (children see the fixed message for its step type) or 'teacher'. */
+  childLabelSource: ChildLabelSource;
+};
+export type AgentName = "miner" | "author";
+/** One run of an AI agent: what it proposed and what the code checks said. Never any child data. */
+export type AgentRunRow = {
+  id: string;
+  agent: AgentName;
+  skillId: string;
+  startedAt: string;
+  finishedAt: string;
+  /** e.g. draft_saved, no_draft, not_enough_data, failed */
+  status: string;
+  turns: number;
+  /** null when no AI call was made (e.g. not enough data). */
+  provider: string | null;
+  model: string | null;
+  /** Each proposal: its formula, whether it passed, how many answers it explained, the validator's errors and counts. */
+  attemptsJson: string;
+  draftId: string | null;
+  error: string | null;
+  /** true: a past run imported from local records (BUILD_LOG / data files), not written by the run itself. */
+  recorded: boolean;
 };
 export type EventRow = { id: number; studentId: string | null; type: string; payloadJson: string; createdAt: string };
 export type MistakeHitRow = {
@@ -243,8 +268,26 @@ CREATE TABLE IF NOT EXISTS minedMistakes (
   testsJson TEXT NOT NULL,
   status TEXT NOT NULL CHECK (status IN ('DRAFT_TESTED', 'APPROVED', 'REJECTED')),
   approver TEXT,
-  createdAt TEXT NOT NULL
+  createdAt TEXT NOT NULL,
+  childLabelSource TEXT NOT NULL DEFAULT 'ai' CHECK (childLabelSource IN ('ai', 'teacher'))
 );
+-- The AI agents' run history (anonymous: proposals and validator verdicts only).
+CREATE TABLE IF NOT EXISTS agentRuns (
+  id TEXT PRIMARY KEY,
+  agent TEXT NOT NULL CHECK (agent IN ('miner', 'author')),
+  skillId TEXT NOT NULL,
+  startedAt TEXT NOT NULL,
+  finishedAt TEXT NOT NULL,
+  status TEXT NOT NULL,
+  turns INTEGER NOT NULL,
+  provider TEXT,
+  model TEXT,
+  attemptsJson TEXT NOT NULL,
+  draftId TEXT,
+  error TEXT,
+  recorded INTEGER NOT NULL DEFAULT 0 CHECK (recorded IN (0, 1))
+);
+CREATE INDEX IF NOT EXISTS agentRuns_time ON agentRuns (startedAt);
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   studentId TEXT,
@@ -335,7 +378,27 @@ const toMined = (r: Row): MinedMistakeRow => ({
   status: r.status as MinedStatus,
   approver: (r.approver as string | null) ?? null,
   createdAt: r.createdAt as string,
+  childLabelSource: r.childLabelSource === "teacher" ? "teacher" : "ai",
 });
+const toAgentRun = (r: Row): AgentRunRow => ({
+  id: r.id as string,
+  agent: r.agent as AgentName,
+  skillId: r.skillId as string,
+  startedAt: r.startedAt as string,
+  finishedAt: r.finishedAt as string,
+  status: r.status as string,
+  turns: Number(r.turns),
+  provider: (r.provider as string | null) ?? null,
+  model: (r.model as string | null) ?? null,
+  attemptsJson: r.attemptsJson as string,
+  draftId: (r.draftId as string | null) ?? null,
+  error: (r.error as string | null) ?? null,
+  recorded: bool(r.recorded),
+});
+const AGENT_RUN_COLUMNS = "id, agent, skillId, startedAt, finishedAt, status, turns, provider, model, attemptsJson, draftId, error, recorded";
+const agentRunArgs = (a: AgentRunRow): InValue[] => [
+  a.id, a.agent, a.skillId, a.startedAt, a.finishedAt, a.status, a.turns, a.provider, a.model, a.attemptsJson, a.draftId, a.error, a.recorded ? 1 : 0,
+];
 const toStudent = (r: Row): StudentRow => ({ id: r.id as string, classId: r.classId as string, code: r.code as string });
 const toMastery = (r: Row): MasteryRow => ({
   studentId: r.studentId as string,
@@ -393,6 +456,17 @@ async function migrate(client: Client) {
       "write",
     );
   }
+  // Who wrote a mined mistake's child message. Rows that already exist are 'ai', so children see the fixed message.
+  const minedColumns = (await client.execute("PRAGMA table_info(minedMistakes)")).rows.map((r) => r.name);
+  if (!minedColumns.includes("childLabelSource")) {
+    await client.execute("ALTER TABLE minedMistakes ADD COLUMN childLabelSource TEXT NOT NULL DEFAULT 'ai' CHECK (childLabelSource IN ('ai', 'teacher'))");
+  }
+
+  // The one real past Miner run we have records of, marked recorded (added once; never changed or invented).
+  await client.execute({
+    sql: `INSERT OR IGNORE INTO agentRuns (${AGENT_RUN_COLUMNS}) VALUES (${marks(13)})`,
+    args: agentRunArgs(RECORDED_MINER_RUN),
+  });
 }
 
 // ---------- connections, write lock and transactions ----------
@@ -873,10 +947,10 @@ export async function openStore(config: StoreConfig | string = {}) {
     },
 
     // ----- mined mistakes (drafts from the Misconception Miner, decided by a teacher) -----
-    async insertMinedMistake(m: MinedMistakeRow) {
+    async insertMinedMistake(m: Omit<MinedMistakeRow, "childLabelSource"> & { childLabelSource?: ChildLabelSource }) {
       await write(
-        "INSERT INTO minedMistakes (id, skillId, source, testsJson, status, approver, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        m.id, m.skillId, m.source, m.testsJson, m.status, m.approver, m.createdAt,
+        "INSERT INTO minedMistakes (id, skillId, source, testsJson, status, approver, createdAt, childLabelSource) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        m.id, m.skillId, m.source, m.testsJson, m.status, m.approver, m.createdAt, m.childLabelSource ?? "ai",
       );
     },
     async listMinedMistakes(status: MinedStatus, skillId?: string): Promise<MinedMistakeRow[]> {
@@ -891,12 +965,51 @@ export async function openStore(config: StoreConfig | string = {}) {
       const r = await one("SELECT * FROM minedMistakes WHERE id = ?", id);
       return r && toMined(r);
     },
-    /** Approve or reject a tested draft (optionally saving the teacher's edited JSON). False if it was not a draft any more. */
-    decideMinedMistake(id: string, status: "APPROVED" | "REJECTED", approver: string, source?: string): Promise<boolean> {
+    /**
+     * Approve or reject a tested draft (optionally saving the teacher's edited JSON, and who wrote the child message).
+     * False if it was not a draft any more.
+     */
+    decideMinedMistake(
+      id: string,
+      status: "APPROVED" | "REJECTED",
+      approver: string,
+      source?: string,
+      childLabelSource?: ChildLabelSource,
+    ): Promise<boolean> {
       return changed(
-        "UPDATE minedMistakes SET status = ?, approver = ?, source = COALESCE(?, source) WHERE id = ? AND status = 'DRAFT_TESTED'",
-        status, approver, source ?? null, id,
+        `UPDATE minedMistakes SET status = ?, approver = ?, source = COALESCE(?, source), childLabelSource = COALESCE(?, childLabelSource)
+         WHERE id = ? AND status = 'DRAFT_TESTED'`,
+        status, approver, source ?? null, childLabelSource ?? null, id,
       );
+    },
+    /** Every unknown wrong answer for these skills, in one read. */
+    async listUnknownErrorsFor(skillIds: string[]): Promise<UnknownErrorRow[]> {
+      if (skillIds.length === 0) return [];
+      return (await all(`SELECT * FROM unknownErrors WHERE skillId IN (${marks(skillIds.length)}) ORDER BY count DESC, id`, ...skillIds)).map((r) => ({
+        id: Number(r.id),
+        skillId: r.skillId as string,
+        paramsJson: r.paramsJson as string,
+        wrongAnswer: r.wrongAnswer as string,
+        count: Number(r.count),
+      }));
+    },
+
+    // ----- AI agent run history -----
+    async insertAgentRun(run: AgentRunRow) {
+      await write(`INSERT INTO agentRuns (${AGENT_RUN_COLUMNS}) VALUES (${marks(13)})`, ...agentRunArgs(run));
+    },
+    /** The newest runs first. recordedOnly: only runs imported from past records. */
+    async listAgentRuns(limit: number, opts: { recordedOnly?: boolean } = {}): Promise<AgentRunRow[]> {
+      return (
+        await all(
+          `SELECT ${AGENT_RUN_COLUMNS} FROM agentRuns WHERE (? = 0 OR recorded = 1) ORDER BY startedAt DESC, id LIMIT ?`,
+          opts.recordedOnly ? 1 : 0, limit,
+        )
+      ).map(toAgentRun);
+    },
+    async getAgentRun(id: string): Promise<AgentRunRow | undefined> {
+      const r = await one(`SELECT ${AGENT_RUN_COLUMNS} FROM agentRuns WHERE id = ?`, id);
+      return r && toAgentRun(r);
     },
 
     // ----- events (pilot metrics) -----

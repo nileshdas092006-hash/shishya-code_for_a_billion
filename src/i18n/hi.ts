@@ -3,7 +3,11 @@
 // "दोनों पक्षों पर एक ही संक्रिया करें" (do the same operation on both sides).
 // To be checked by a Hindi-medium maths teacher before children see it.
 
+import { CHILD_MESSAGES_HI } from "../core/childMessages";
+
 export const hi: Record<string, string> = {
+  // a mined mistake's fixed child message (src/core/childMessages.ts; HINDI-REVIEW there)
+  ...CHILD_MESSAGES_HI,
   "app.name": "शिष्य",
   "app.isProgram": "शिष्य एक कंप्यूटर प्रोग्राम है, कोई व्यक्ति नहीं।",
   "app.demo": "डेमो: केवल अभ्यास का डेटा, असली पायलट डेटा नहीं",
@@ -60,6 +64,46 @@ export const hi: Record<string, string> = {
   "tour.agent.why": "इसीलिए हर मसौदे को किसी भी कक्षा में इस्तेमाल होने से पहले शिक्षक को पढ़कर स्वीकार करना होता है।",
   "tour.agent.approve": "स्वीकार करें",
   "tour.agent.approveNote": "असली कक्षा में शिक्षक की स्वीकृति से यह गलती हर कक्षा के लिए जुड़ जाती है। टूर में कुछ भी सहेजा नहीं जाता।",
+
+  // HINDI-REVIEW (the Misconception Miner's review card and run history, all lines below; teachers only)
+  "review.childSees": "बच्चा यह देखेगा",
+  "review.childSeesNote": "लोगों का लिखा एक तय संदेश, AI का नहीं। अगर आप इसे बदलते हैं, तो बच्चा आपके शब्द देखेगा।",
+  "review.aiSuggestion": "AI का सुझाव (केवल आप देखते हैं)",
+  "review.aiSuggestionNote": "बच्चे यह लेख कभी नहीं देखते।",
+  "review.evidence.title": "दर्ज किए गए गलत उत्तर जिन्हें यह समझाती है",
+  "review.evidence.question": "प्रश्न",
+  "review.evidence.answer": "बच्चे का उत्तर",
+  "review.evidence.predicted": "यह गलती देती है",
+  "review.evidence.match": "समान?",
+  "review.evidence.times": "कितनी बार",
+  "review.evidence.none": "अभी दर्ज किया गया कोई गलत उत्तर इससे मेल नहीं खाता।",
+  "review.checks.title": "कोड से जाँचा गया",
+  "review.check.explains": "3 या अधिक असली उत्तर समझाती है (यह {n} समझाती है)",
+  "review.check.neverRight": "{n} यादृच्छिक प्रश्नों में कभी सही उत्तर नहीं देती",
+  "review.check.noDivideByZero": "{n} यादृच्छिक प्रश्नों में कभी शून्य से भाग नहीं देती",
+  "review.check.different": "हर जानी हुई गलती से अलग है",
+  "review.howAgent": "एजेंट ने कैसे काम किया",
+  "agentRuns.title": "एजेंट ने कैसे काम किया",
+  "agentRuns.intro":
+    "AI मिसकंसेप्शन माइनर के पिछले 10 रन। इसने केवल बिना नाम की संख्याएँ देखीं: हर प्रश्न की संख्याएँ और गलत उत्तर। यहाँ किसी बच्चे का कोई डेटा नहीं दिखाया जाता।",
+  "agentRuns.none": "अभी कोई रन नहीं।",
+  "agentRuns.recorded": "दर्ज किया गया रन: पिछले एक रन के हमारे स्थानीय रिकॉर्ड से, जाँच वाले उत्तरों पर",
+  "agentRuns.meta": "{skill} · {turns} बारी · {model}",
+  "agentRuns.noModel": "कोई AI कॉल नहीं",
+  "agentRuns.proposals": "इसने क्या सुझाया, और कोड की जाँच ने क्या कहा:",
+  "agentRuns.noProposals": "कोई सुझाव नहीं।",
+  "agentRuns.back": "कक्षा बोर्ड पर वापस",
+  "agentRuns.status.draft_saved": "शिक्षक की समीक्षा के लिए एक जाँचा हुआ मसौदा सहेजा",
+  "agentRuns.status.no_draft": "कोई मसौदा नहीं: कोई सुझाव जाँच में पास नहीं हुआ",
+  "agentRuns.status.not_enough_data": "पर्याप्त डेटा नहीं: 3 से कम बिना समझाए गलत उत्तर",
+  "agentRuns.status.failed": "विफल: {error}",
+  "agentRuns.status.other": "समाप्त: {status}",
+  "agentRuns.verdict.accepted": "स्वीकार: {n} असली उत्तर समझाती है",
+  "agentRuns.verdict.right": "अस्वीकार: {total} में से {n} प्रश्नों पर सही उत्तर देती है",
+  "agentRuns.verdict.zero": "अस्वीकार: {total} में से {n} प्रश्नों पर शून्य से भाग देती है",
+  "agentRuns.verdict.few": "अस्वीकार: केवल {n} असली उत्तर समझाती है (3 चाहिए)",
+  "agentRuns.verdict.known": "अस्वीकार: {total} में से {n} प्रश्नों पर जानी हुई गलती \"{id}\" जैसा ही उत्तर देती है",
+  "agentRuns.verdict.other": "अस्वीकार: {reason}",
 
   "login.title": "नमस्ते! अपने कोड लिखो",
   "login.classCode": "कक्षा कोड",

@@ -13,3 +13,9 @@ export async function resolve(specifier, context, nextResolve) {
     }
   }
 }
+
+// Our source imports JSON files (fixtures) the way Next.js and Vitest do, without `with { type: "json" }`.
+export async function load(url, context, nextLoad) {
+  if (url.endsWith(".json")) return nextLoad(url, { ...context, importAttributes: { ...context.importAttributes, type: "json" } });
+  return nextLoad(url, context);
+}

@@ -118,16 +118,27 @@ export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Que
           <ul className="flex flex-col gap-3">
             {mined.map((m) => (
               <li key={m.id} className="card flex flex-col gap-3">
-                <MinedDraft draft={m} />
-                {m.spec ? (
+                <MinedDraft draft={m} agentHref={`${base}/agent${m.runId ? `#run-${m.runId}` : ""}`} />
+                {m.spec && m.childText ? (
                   <MinedDecision
                     classCode={cls.code}
-                    draft={{ id: m.id, label: m.spec.label, childLabel: m.spec.childLabel, answerFormula: m.spec.answerFormula }}
+                    draft={{
+                      id: m.id,
+                      label: m.spec.label,
+                      childText: m.childText,
+                      aiChildLabel: m.spec.childLabel,
+                      answerFormula: m.spec.answerFormula,
+                    }}
                   />
                 ) : null}
               </li>
             ))}
           </ul>
+        )}
+        {cls.kind !== "sandbox" && (
+          <Link href={`${base}/agent`} className="self-start underline text-lg">
+            {t("review.howAgent")}
+          </Link>
         )}
       </section>
 
@@ -203,8 +214,11 @@ function ProofWindow({ classCode, proof }: { classCode: string; proof: Board["pr
 
 type Draft = Awaited<ReturnType<Awaited<ReturnType<typeof getServices>>["listPendingMinedMistakes"]>>[number];
 
-/** A tested draft from the Misconception Miner: what it says, how much data it explains, and an example. */
-function MinedDraft({ draft }: { draft: Draft }) {
+/**
+ * A tested draft from the Misconception Miner: what it says, how much data it explains, an example, the evidence
+ * (each logged wrong answer it explains) and the 4 code checks.
+ */
+function MinedDraft({ draft, agentHref }: { draft: Draft; agentHref: string }) {
   const entry = getSkillEntry(draft.skillId);
   const spec = draft.spec;
   let example: { text: string }[] | null = null;
@@ -240,6 +254,55 @@ function MinedDraft({ draft }: { draft: Draft }) {
           ))}
         </ol>
       )}
+      <h4 className="text-lg font-bold">{t("review.evidence.title")}</h4>
+      {draft.evidence.length === 0 ? (
+        <p className="text-gray-700">{t("review.evidence.none")}</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-base">
+            <thead>
+              <tr className="border-b-2 border-gray-400 text-left">
+                <th className="py-1 pr-3">{t("review.evidence.question")}</th>
+                <th className="py-1 pr-3">{t("review.evidence.answer")}</th>
+                <th className="py-1 pr-3">{t("review.evidence.predicted")}</th>
+                <th className="py-1 pr-3">{t("review.evidence.match")}</th>
+                <th className="py-1">{t("review.evidence.times")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {draft.evidence.map((e, i) => (
+                <tr key={i} className="border-b border-gray-300">
+                  <td className="py-1 pr-3 math whitespace-nowrap">{e.question}</td>
+                  <td className="py-1 pr-3 math whitespace-nowrap">x = {e.wrongAnswer.replace(/-/g, "−")}</td>
+                  <td className="py-1 pr-3 math whitespace-nowrap">x = {e.predicted}</td>
+                  <td className="py-1 pr-3 font-bold text-green-800" aria-label="yes">
+                    ✓
+                  </td>
+                  <td className="py-1">{e.count}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {draft.checks.length > 0 && (
+        <>
+          <h4 className="text-lg font-bold">{t("review.checks.title")}</h4>
+          <ul className="flex flex-col gap-1">
+            {draft.checks.map((c) => (
+              <li key={c.id} className={`flex gap-2 ${c.ok ? "text-green-800" : "text-red-800"}`}>
+                <span aria-hidden="true" className="font-bold">
+                  {c.ok ? "✓" : "✗"}
+                </span>
+                <span>{t(`review.check.${c.id}`, { n: c.n.toLocaleString("en-IN") })}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      <Link href={agentHref} className="self-start underline">
+        {t("review.howAgent")}
+      </Link>
       <p className="text-base text-gray-700">
         Drafted by the AI Misconception Miner and checked by code. It is used only after you approve it, and it never changes
         any child&apos;s mastery.

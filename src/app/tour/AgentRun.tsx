@@ -1,12 +1,15 @@
 import { t, type MessageKey } from "@/i18n";
+import { getServices } from "@/server/instance";
 import { Equation } from "../_components/Equation";
 import { recordedRun } from "./agent-run";
 import { TourApprove } from "./TourApprove";
 
-// Stop 6: how the Misconception Miner found a new mistake, from ONE recorded real run (never a live AI call).
+// Stop 6: how the Misconception Miner found a new mistake, from ONE recorded real run (never a live AI call),
+// read from the run history (its row is marked recorded).
 
-export function AgentRun() {
-  const run = recordedRun();
+export async function AgentRun() {
+  const row = await (await getServices()).recordedMinerRun();
+  const run = recordedRun(row);
   const ex = run.example;
   return (
     <div className="flex flex-col gap-5">

@@ -67,8 +67,13 @@ export function PractiseScreen({ skillId, answerKind }: { skillId: string; answe
             ? {
                 kind: "bad",
                 text: t("practise.wrongKnown"),
-                // a teacher-approved mined mistake has no translation yet: use its own child label
-                detail: hasMessage(mistakeKey(skillId, r.mistakeId)) ? t(mistakeKey(skillId, r.mistakeId)) : keepMathTogether(r.feedback),
+                // a teacher-approved mined mistake: the fixed message for its step type (translated), or the
+                // teacher's own words; never the AI's
+                detail: hasMessage(mistakeKey(skillId, r.mistakeId))
+                  ? t(mistakeKey(skillId, r.mistakeId))
+                  : r.feedbackKey
+                    ? t(r.feedbackKey, r.feedbackParams)
+                    : keepMathTogether(r.feedback),
               }
             : { kind: "bad", text: t("practise.wrongUnknown") };
         setFeedback({ ...verdict, receipt: r.receipt });

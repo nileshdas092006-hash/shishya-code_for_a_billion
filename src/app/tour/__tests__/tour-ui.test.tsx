@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { en } from "@/i18n/en";
+import { RECORDED_MINER_RUN } from "@/server/agent-runs";
 import { recordedRun } from "../agent-run";
 import { TourApprove } from "../TourApprove";
 import { TourBanner } from "../TourBanner";
@@ -46,6 +47,14 @@ describe("the recorded Misconception Miner run (stop 6)", () => {
     expect(run.model).toBe("openai/gpt-oss-120b");
     expect(run.calls.map((c) => c.tool)).toEqual(["get_unknown_errors", "validate_mined_mistake", "submit_draft"]);
     expect(run.seconds).toBe(8); // 1166 + 6132 + 949 ms
+  });
+
+  it("is read from the run history's recorded row (the same run, still labelled as recorded)", () => {
+    expect(RECORDED_MINER_RUN.recorded).toBe(true);
+    expect(recordedRun(RECORDED_MINER_RUN)).toEqual(recordedRun());
+    expect(recordedRun(RECORDED_MINER_RUN).label).toBe("Recorded run, 2026-10-19, on test answers");
+    // a live (not recorded) row is never shown as the recorded run
+    expect(() => recordedRun({ ...RECORDED_MINER_RUN, recorded: false })).toThrow(/recorded/);
   });
 
   it("the proposed mistake, worked out by src/core, gives exactly the recorded wrong answer for the recorded question", () => {
