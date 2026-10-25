@@ -46,11 +46,14 @@ export type FailCode =
   | "wrong_codes"
   | "wrong_pin"
   | "locked_out"
+  | "window_closed"
   | "none";
 type Fail = { ok: false; reason: string; code: FailCode; retryAt?: string; errorKey?: string };
 const fail = (reason: string, code: FailCode, extra: Partial<Fail> = {}): Fail => ({ ok: false, reason, code, ...extra });
 
-const STUDENT_CODE = /^[A-Z0-9]{1,8}-[0-9]{1,3}$/; // e.g. 8B-17 or KV8B-17
+const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O, 1/I/L
+/** e.g. 8B-K7QM (random, made now), or the older 8B-17 / KV8B-17 (in order), which keep working. */
+const STUDENT_CODE = new RegExp(`^[A-Z0-9]{1,8}-([0-9]{1,3}|[${CODE_ALPHABET}]{4})$`);
 const CLASS_CODE = /^[A-Z0-9-]{1,16}$/;
 const FRESH_TRIES = 50;
 const STUCK_WINDOW_DAYS = 7;
@@ -62,11 +65,26 @@ const SMALL_SAMPLE = 30;
 const UNKNOWN_LABEL = "Wrong answer that no known mistake explains yet";
 
 const MAX_STUDENTS = 60;
-const PIN_MAX_FAILURES = 10;
+// Failed log-ins are counted from the events table, so every server instance sees the same count.
+const PIN_MAX_FAILURES = 5;
 const PIN_LOCKOUT_MINUTES = 15;
-const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // no 0/O, 1/I/L
+const LOGIN_MAX_FAILURES = 5; // wrong student codes per class code
+const LOGIN_LOCKOUT_MINUTES = 10;
+const PROOF_WINDOW_MINUTES = 15;
 
 class NoFreshQuestion extends Error {}
+
+const randomSuffix = () => Array.from({ length: 4 }, () => CODE_ALPHABET[randomInt(0, CODE_ALPHABET.length)]).join("");
+
+/** count random student codes like 8B-K7QM, all different and none in avoid. */
+function randomStudentCodes(prefix: string, count: number, avoid: Set<string> = new Set()): string[] {
+  const codes = new Set<string>();
+  while (codes.size < count) {
+    const code = `${prefix}-${randomSuffix()}`;
+    if (!avoid.has(code)) codes.add(code);
+  }
+  return [...codes];
+}
 
 function hashPin(pin: string): string {
   const salt = randomBytes(16);
@@ -171,8 +189,20 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     return { passed: verdict.passed, state };
   }
 
-  /** Wrong-PIN times per class, for the lockout. Kept in memory: a restart clears it. */
-  const pinFailures = new Map<string, number[]>();
+  const minutesAgo = (m: number) => new Date(now().getTime() - m * 60_000).toISOString();
+
+  /** The teacher's proof window: whether this class needs one, until when it is open, and the minutes left (0 when closed). */
+  function proofWindowOf(cls: ClassRow) {
+    const left = cls.proofWindowOpenUntil ? Date.parse(cls.proofWindowOpenUntil) - now().getTime() : 0;
+    return { required: cls.proofWindowRequired, openUntil: cls.proofWindowOpenUntil, minutesLeft: Math.max(0, Math.ceil(left / 60_000)) };
+  }
+
+  /** False when the child's class needs the teacher to open the proof window and it is not open now. */
+  async function proofWindowOpen(student: StudentRow): Promise<boolean> {
+    const cls = await requireClass(student.classId);
+    return !cls.proofWindowRequired || proofWindowOf(cls).minutesLeft > 0;
+  }
+  const windowClosed = () => fail("Your teacher opens the proof in class.", "window_closed");
 
   /** After a skill is MASTERED, open the skills that needed it. Returns the newly opened skill ids. */
   async function unlockAfter(studentId: string, skillId: string): Promise<string[]> {
@@ -328,14 +358,23 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     async createClass(code: string, grade: number): Promise<ClassRow> {
       if (!CLASS_CODE.test(code)) throw new Error("Class codes look like KV8B.");
       if (!Number.isInteger(grade) || grade < 1 || grade > 12) throw new Error("Grade must be 1 to 12.");
-      const row: ClassRow = { id: randomUUID(), code, grade, section: "", aiAllowed: grade >= 8 };
+      // the older set-up path (tests and scripts): no proof window, like classes made before windows existed
+      const row: ClassRow = {
+        id: randomUUID(),
+        code,
+        grade,
+        section: "",
+        aiAllowed: grade >= 8,
+        proofWindowRequired: false,
+        proofWindowOpenUntil: null,
+      };
       if (!(await store.insertClass(row))) throw new Error(`Class code ${code} is already taken.`);
       await log(null, "class_created", { classId: row.id, grade, aiAllowed: row.aiAllowed });
       return row;
     },
 
     async createStudent(classId: string, code: string): Promise<StudentRow> {
-      if (!STUDENT_CODE.test(code)) throw new Error("Student codes look like 8B-17. Never use names.");
+      if (!STUDENT_CODE.test(code)) throw new Error("Student codes look like 8B-K7QM. Never use names.");
       await requireClass(classId);
       const row: StudentRow = { id: randomUUID(), classId, code };
       await store.insertStudent(row);
@@ -499,7 +538,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       studentId: string,
       skillId: string,
     ): Promise<{ ok: true; runId: string; aiOff: true; deadline: string; items: ProofItemView[] } | Fail> {
-      await requireStudent(studentId);
+      const student = await requireStudent(studentId);
       const entry = await entryOf(skillId);
       try {
         return await store.transaction(async () => {
@@ -511,6 +550,8 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
           }
           const eligible = await mastery.proofEligibility(store, studentId, entry, now(), cooldownHours);
           if (!eligible.ok) return fail(eligible.reason, eligible.code, { retryAt: eligible.retryAt });
+          // a proof starts only while the teacher has the window open; once started it keeps its own 30 minutes
+          if (!(await proofWindowOpen(student))) return windowClosed();
 
           const runId = randomUUID();
           const startedAt = iso();
@@ -623,7 +664,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
 
     /** Can this child start a proof now? (An abandoned, expired proof is closed first.) */
     async proofStatus(studentId: string, skillId: string): Promise<{ canStart: true } | { canStart: false; code: FailCode; retryAt?: string }> {
-      await requireStudent(studentId);
+      const student = await requireStudent(studentId);
       const entry = await entryOf(skillId);
       return store.transaction(async () => {
         await mastery.refreshUnlock(store, studentId, entry, now());
@@ -633,6 +674,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
           await finishRun(open, entry);
         }
         const eligible = await mastery.proofEligibility(store, studentId, entry, now(), cooldownHours);
+        if (eligible.ok && !(await proofWindowOpen(student))) return { canStart: false as const, code: "window_closed" as const };
         if (eligible.ok) return { canStart: true as const };
         return { canStart: false as const, code: eligible.code, ...(eligible.retryAt ? { retryAt: eligible.retryAt } : {}) };
       });
@@ -656,12 +698,20 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       return store.transaction(async () => {
         let cls: ClassRow | null = null;
         for (let i = 0; i < 20 && !cls; i++) {
-          const suffix = Array.from({ length: 4 }, () => CODE_ALPHABET[randomInt(0, CODE_ALPHABET.length)]).join("");
-          const candidate: ClassRow = { id: randomUUID(), code: `${prefix}-${suffix}`, grade, section, aiAllowed: grade >= 8 };
+          const candidate: ClassRow = {
+            id: randomUUID(),
+            code: `${prefix}-${randomSuffix()}`,
+            grade,
+            section,
+            aiAllowed: grade >= 8,
+            proofWindowRequired: true,
+            proofWindowOpenUntil: null,
+          };
           if (await store.insertClass(candidate, hashPin(pin))) cls = candidate;
         }
         if (!cls) throw new Error("Could not make a class code. Try again.");
-        const studentCodes = Array.from({ length: count }, (_, i) => `${prefix}-${String(i + 1).padStart(2, "0")}`);
+        // random, so knowing the class code and one child's code does not give a classmate's
+        const studentCodes = randomStudentCodes(prefix, count).sort();
         for (const code of studentCodes) await store.insertStudent({ id: randomUUID(), classId: cls.id, code });
         await log(null, "class_created", { classId: cls.id, grade, students: count, aiAllowed: cls.aiAllowed });
         return { classId: cls.id, classCode: cls.code, pin, studentCodes };
@@ -669,27 +719,58 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     },
 
     async verifyTeacherPin(classCode: string, pin: string): Promise<{ ok: true; classId: string } | Fail> {
-      const found = await store.getClassWithPinHashByCode(normaliseCode(classCode));
+      const found = await store.getClassWithPinHashByCode(normaliseCode(classCode), minutesAgo(PIN_LOCKOUT_MINUTES));
       if (!found) return fail("Wrong class code or PIN.", "wrong_pin");
-      const { cls, pinHash } = found;
-      const cutoff = now().getTime() - PIN_LOCKOUT_MINUTES * 60_000;
-      const recent = (pinFailures.get(cls.id) ?? []).filter((t) => t > cutoff);
-      if (recent.length >= PIN_MAX_FAILURES) {
+      const { cls, pinHash, recentFailures } = found;
+      if (recentFailures >= PIN_MAX_FAILURES) {
         await log(null, "teacher_login", { classId: cls.id, ok: false, lockedOut: true });
         return fail(`Too many wrong PINs. Try again in ${PIN_LOCKOUT_MINUTES} minutes.`, "locked_out");
       }
       const ok = pinMatches(String(pin ?? "").trim(), pinHash);
-      pinFailures.set(cls.id, ok ? [] : [...recent, now().getTime()]);
       await log(null, "teacher_login", { classId: cls.id, ok });
       return ok ? { ok: true, classId: cls.id } : fail("Wrong class code or PIN.", "wrong_pin");
     },
 
+    /** After LOGIN_MAX_FAILURES wrong student codes for a class in LOGIN_LOCKOUT_MINUTES, even a right one waits. No codes are logged. */
     async studentLogin(classCode: string, studentCode: string): Promise<{ ok: true; studentId: string } | Fail> {
-      const cls = await store.getClassByCode(normaliseCode(classCode));
-      const student = cls && (await store.findStudentByCode(cls.id, normaliseCode(studentCode)));
-      if (!cls || !student) return fail("We could not find these codes.", "wrong_codes");
-      await log(student.id, "student_login", { classId: cls.id });
-      return { ok: true, studentId: student.id };
+      const found = await store.findLogin(normaliseCode(classCode), normaliseCode(studentCode), minutesAgo(LOGIN_LOCKOUT_MINUTES));
+      if (!found) {
+        await log(null, "student_login", { classId: null, ok: false });
+        return fail("We could not find these codes.", "wrong_codes");
+      }
+      const { cls, student, recentFailures } = found;
+      if (recentFailures >= LOGIN_MAX_FAILURES) {
+        await log(null, "student_login", { classId: cls.id, ok: false, lockedOut: true });
+        return fail(`Too many wrong codes. Try again in ${LOGIN_LOCKOUT_MINUTES} minutes.`, "locked_out");
+      }
+      await log(student?.id ?? null, "student_login", { classId: cls.id, ok: Boolean(student) });
+      return student ? { ok: true, studentId: student.id } : fail("We could not find these codes.", "wrong_codes");
+    },
+
+    /** Replaces every student's code in the class with a new random one. Ids, mastery and history stay. Returns the new codes. */
+    async reissueStudentCodes(classId: string): Promise<string[]> {
+      const cls = await requireClass(classId);
+      const students = await store.listStudents(classId);
+      // never one of the old codes, so no child can log in as another during or after the change
+      const codes = randomStudentCodes(`${cls.grade}${cls.section}`, students.length, new Set(students.map((s) => s.code)));
+      const event = { studentId: null, type: "codes_reissued", payload: { classId, students: students.length }, at: iso() };
+      await store.setStudentCodes(classId, students.map((s, i) => ({ id: s.id, code: codes[i] })), event);
+      return [...codes].sort();
+    },
+
+    /** Lets this class start proofs for the next PROOF_WINDOW_MINUTES (a proof already started keeps its own time). */
+    async openProofWindow(classId: string): Promise<{ openUntil: string }> {
+      await requireClass(classId);
+      const openUntil = new Date(now().getTime() + PROOF_WINDOW_MINUTES * 60_000).toISOString();
+      await store.setProofWindow(classId, openUntil);
+      await log(null, "proof_window_opened", { classId, minutes: PROOF_WINDOW_MINUTES });
+      return { openUntil };
+    },
+
+    async closeProofWindow(classId: string) {
+      await requireClass(classId);
+      await store.setProofWindow(classId, null);
+      await log(null, "proof_window_closed", { classId });
     },
 
     async getStudentContext(studentId: string) {
@@ -703,6 +784,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         classCode: cls.code,
         grade: cls.grade,
         aiAllowed: cls.aiAllowed,
+        proofWindowRequired: cls.proofWindowRequired,
       };
     },
 
@@ -742,10 +824,10 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
 
     /** Everything the class board shows, reading the class and its students once (reads run side by side). */
     async getClassBoard(classId: string) {
-      await requireClass(classId);
+      const cls = await requireClass(classId);
       const [students, mined] = await Promise.all([store.listStudents(classId), pendingMined()]);
       const [states, stuck] = await Promise.all([classStates(classId, students), stuckGroups(classId)]);
-      return { stuck, progress: progressFrom(students, states), mined, codes: students.map((s) => s.code) };
+      return { stuck, progress: progressFrom(students, states), mined, codes: students.map((s) => s.code), proofWindow: proofWindowOf(cls) };
     },
 
     // ----- projector (class mode: no student accounts, never touches mastery) -----

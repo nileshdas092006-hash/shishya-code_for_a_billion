@@ -189,6 +189,7 @@ export function ProveScreen({ skillId, answerKind }: { skillId: string; answerKi
     not_ready: "prove.notReady",
     mastered: "prove.alreadyMastered",
     running: "prove.running",
+    window_closed: "prove.windowClosed",
   };
   return (
     <div className="flex flex-col items-start gap-4">

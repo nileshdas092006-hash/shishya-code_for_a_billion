@@ -6,7 +6,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Shishya",
-  description: "Teach the Shishya: find the exact algebra step, fix it, and prove it with AI off.",
+  description: "Teach the Shishya: find the exact algebra step, fix it, and prove it with no AI help inside the proof.",
 };
 
 export const viewport: Viewport = { width: "device-width", initialScale: 1 };

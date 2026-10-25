@@ -7,7 +7,7 @@ import { getSkillEntry } from "@/core/skills";
 import { skillKey, t } from "@/i18n";
 import { getServices } from "@/server/instance";
 import { toMistake } from "@/core/minedMistake";
-import { unlockSkillForClass } from "../../actions";
+import { closeProofs, giveNewCodes, openProofs, unlockSkillForClass } from "../../actions";
 import { MinedDecision } from "./MinedDecision";
 import { PatternGrid, SlipList } from "./PatternGrid";
 import { Equation } from "../../_components/Equation";
@@ -21,15 +21,17 @@ import { TeacherPinForm } from "../TeacherPinForm";
 
 const EXAMPLE_SEED = 20261018;
 
-export default function ClassBoardPage({ params }: PageProps<"/teacher/[class]">) {
+export default function ClassBoardPage({ params, searchParams }: PageProps<"/teacher/[class]">) {
   return (
     <Suspense fallback={<p className="text-xl">…</p>}>
-      <ClassBoard params={params} />
+      <ClassBoard params={params} searchParams={searchParams} />
     </Suspense>
   );
 }
 
-function ClassBoard({ params }: { params: Promise<{ class: string }> }) {
+type Query = Promise<Record<string, string | string[] | undefined>>;
+
+function ClassBoard({ params, searchParams }: { params: Promise<{ class: string }>; searchParams: Query }) {
   return guardPage("teacher", async () => {
     const classCode = decodeURIComponent((await params).class).toUpperCase();
     await connection();
@@ -45,7 +47,8 @@ function ClassBoard({ params }: { params: Promise<{ class: string }> }) {
       );
     }
   
-    const { stuck, progress, mined, codes } = await svc.getClassBoard(cls.id);
+    const { stuck, progress, mined, codes, proofWindow } = await svc.getClassBoard(cls.id);
+    const query = await searchParams;
     const base = `/teacher/${encodeURIComponent(cls.code)}`;
   
     return (
@@ -65,6 +68,8 @@ function ClassBoard({ params }: { params: Promise<{ class: string }> }) {
           </div>
         </div>
         {!cls.aiAllowed && <p className="msg-note no-print">Class 7: AI chat is switched off for this class, always.</p>}
+
+        <ProofWindow classCode={cls.code} proof={proofWindow} />
   
         <section className="flex flex-col gap-3 no-print" aria-labelledby="stuck">
           <h2 id="stuck" className="text-2xl font-bold">
@@ -153,15 +158,75 @@ function ClassBoard({ params }: { params: Promise<{ class: string }> }) {
           )}
         </section>
   
-        <section className="flex flex-col gap-3">
-          <div className="no-print">
+        <section id="codes" className="flex flex-col gap-3">
+          {query.codes === "new" && (
+            <p role="status" className="msg-good no-print">
+              {t("board.codes.done")}
+            </p>
+          )}
+          <div className="flex flex-wrap gap-3 no-print">
             <PrintButton label="Print student codes" />
+            {query.confirm !== "codes" && (
+              <Link href={`${base}?confirm=codes#codes`} className="btn">
+                {t("board.codes.give")}
+              </Link>
+            )}
           </div>
+          {query.confirm === "codes" && (
+            <div className="card flex flex-col gap-3 border-amber-700 no-print">
+              <p className="text-xl">{t("board.codes.confirm")}</p>
+              <form action={giveNewCodes.bind(null, cls.code)} className="flex flex-wrap gap-3">
+                <button type="submit" className="btn btn-primary">
+                  {t("board.codes.yes")}
+                </button>
+                <Link href={`${base}#codes`} className="btn">
+                  {t("board.codes.cancel")}
+                </Link>
+              </form>
+            </div>
+          )}
           <StudentCodeSheet classCode={cls.code} codes={codes} />
         </section>
       </div>
     );
   });
+}
+
+type Board = Awaited<ReturnType<Awaited<ReturnType<typeof getServices>>["getClassBoard"]>>;
+
+/** Open or close the proof window (classes made before windows existed show a note instead). */
+function ProofWindow({ classCode, proof }: { classCode: string; proof: Board["proofWindow"] }) {
+  return (
+    <section className="card flex flex-col gap-3 no-print" aria-labelledby="proofs">
+      <h2 id="proofs" className="text-2xl font-bold">
+        {t("board.proofs.title")}
+      </h2>
+      {!proof.required ? (
+        <p>{t("board.proofs.always")}</p>
+      ) : (
+        <>
+          <p className={`text-xl font-semibold ${proof.minutesLeft > 0 ? "text-green-800" : ""}`}>
+            {proof.minutesLeft > 0 ? t("board.proofs.openFor", { min: proof.minutesLeft }) : t("board.proofs.closed")}
+          </p>
+          <div className="flex flex-wrap gap-3">
+            <form action={openProofs.bind(null, classCode)}>
+              <button type="submit" className="btn btn-primary">
+                {t("board.proofs.open")}
+              </button>
+            </form>
+            {proof.minutesLeft > 0 && (
+              <form action={closeProofs.bind(null, classCode)}>
+                <button type="submit" className="btn">
+                  {t("board.proofs.close")}
+                </button>
+              </form>
+            )}
+          </div>
+          <p className="text-base text-gray-700">{t("board.proofs.started")}</p>
+        </>
+      )}
+    </section>
+  );
 }
 
 type Draft = Awaited<ReturnType<Awaited<ReturnType<typeof getServices>>["listPendingMinedMistakes"]>>[number];

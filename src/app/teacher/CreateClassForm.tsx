@@ -76,11 +76,11 @@ export function StudentCodeSheet({ classCode, codes }: { classCode: string; code
   return (
     <section aria-label="Student codes" className="flex flex-col gap-3">
       <h2 className="text-2xl font-bold">Student codes for class code {classCode}</h2>
-      <ul className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      <ul className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
         {codes.map((code) => (
           <li key={code} className="print-codes border-2 border-dashed border-gray-500 rounded-lg p-3 flex flex-col">
             <span className="text-sm text-gray-700">Class code: {classCode}</span>
-            <span className="math text-2xl font-bold">{code}</span>
+            <span className="math text-xl min-[400px]:text-2xl sm:text-3xl lg:text-4xl print:text-4xl font-bold whitespace-nowrap">{code}</span>
           </li>
         ))}
       </ul>

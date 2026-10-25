@@ -16,7 +16,17 @@ export type MasteryState = "LOCKED" | "OPEN" | "KEY1" | "NOT_YET" | "MASTERED";
 export type ItemKind = "practice" | "teach" | "proof";
 export type ItemFormat = "solve" | "apply";
 
-export type ClassRow = { id: string; code: string; grade: number; section: string; aiAllowed: boolean };
+export type ClassRow = {
+  id: string;
+  code: string;
+  grade: number;
+  section: string;
+  aiAllowed: boolean;
+  /** A proof can start only while the teacher has opened the proof window (false for classes made before windows existed). */
+  proofWindowRequired: boolean;
+  /** Until when the teacher opened the proof window (null: closed). */
+  proofWindowOpenUntil: string | null;
+};
 export type StudentRow = { id: string; classId: string; code: string };
 export type ItemRow = {
   id: string;
@@ -122,7 +132,10 @@ CREATE TABLE IF NOT EXISTS classes (
   section TEXT NOT NULL DEFAULT '',
   aiAllowed INTEGER NOT NULL CHECK (aiAllowed IN (0, 1)),
   -- salted scrypt hash of the teacher PIN; the PIN itself is never stored
-  teacherPinHash TEXT
+  teacherPinHash TEXT,
+  -- 1: a proof starts only while the teacher has opened the proof window (until proofWindowOpenUntil)
+  proofWindowRequired INTEGER NOT NULL DEFAULT 1 CHECK (proofWindowRequired IN (0, 1)),
+  proofWindowOpenUntil TEXT
 );
 CREATE TABLE IF NOT EXISTS students (
   id TEXT PRIMARY KEY,
@@ -232,7 +245,19 @@ const toClass = (r: Row): ClassRow => ({
   grade: Number(r.grade),
   section: (r.section as string) ?? "",
   aiAllowed: bool(r.aiAllowed),
+  proofWindowRequired: bool(r.proofWindowRequired),
+  proofWindowOpenUntil: (r.proofWindowOpenUntil as string | null) ?? null,
 });
+const CLASS_COLUMNS = "id, code, grade, section, aiAllowed, proofWindowRequired, proofWindowOpenUntil";
+const CLASS_COLUMNS_OF_C = CLASS_COLUMNS.split(", ").map((c) => `c.${c}`).join(", ");
+/**
+ * How many failed logins of this type the class c has had since a time, as a subquery (it uses the
+ * events_type_time index). Refusals during a lockout (lockedOut) are not counted again.
+ */
+const recentFailures = (type: "student_login" | "teacher_login") =>
+  `(SELECT COUNT(*) FROM events WHERE type = '${type}' AND createdAt >= ?
+     AND json_extract(payloadJson, '$.classId') = c.id AND json_extract(payloadJson, '$.ok') = 0
+     AND json_extract(payloadJson, '$.lockedOut') IS NULL)`;
 const toItem = (r: Row): ItemRow => ({
   id: r.id as string,
   studentId: r.studentId as string,
@@ -310,6 +335,13 @@ const eventStatement = (e: EventInput) => ({
 // ---------- migrations (each safe to run on every start-up) ----------
 
 async function migrate(client: Client) {
+  // Proof windows: classes that already exist keep working without one (0); new classes need one (insertClass).
+  const classColumns = (await client.execute("PRAGMA table_info(classes)")).rows.map((r) => r.name);
+  if (!classColumns.includes("proofWindowRequired")) {
+    await client.execute("ALTER TABLE classes ADD COLUMN proofWindowRequired INTEGER NOT NULL DEFAULT 0 CHECK (proofWindowRequired IN (0, 1))");
+  }
+  if (!classColumns.includes("proofWindowOpenUntil")) await client.execute("ALTER TABLE classes ADD COLUMN proofWindowOpenUntil TEXT");
+
   // Mined mistake statuses were draft/approved/rejected; now DRAFT_TESTED/APPROVED/REJECTED.
   const mined = await client.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'minedMistakes'");
   if (String(mined.rows[0]?.sql ?? "").includes("'draft'")) {
@@ -438,22 +470,45 @@ export async function openStore(config: StoreConfig | string = {}) {
     /** False if the class code is already taken. */
     insertClass(c: ClassRow, teacherPinHash: string | null = null): Promise<boolean> {
       return tryInsert(
-        "INSERT INTO classes (id, code, grade, section, aiAllowed, teacherPinHash) VALUES (?, ?, ?, ?, ?, ?)",
-        c.id, c.code, c.grade, c.section, c.aiAllowed ? 1 : 0, teacherPinHash,
+        `INSERT INTO classes (id, code, grade, section, aiAllowed, teacherPinHash, proofWindowRequired, proofWindowOpenUntil)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        c.id, c.code, c.grade, c.section, c.aiAllowed ? 1 : 0, teacherPinHash, c.proofWindowRequired ? 1 : 0, c.proofWindowOpenUntil,
       );
     },
     async getClass(id: string): Promise<ClassRow | undefined> {
-      const r = await one("SELECT id, code, grade, section, aiAllowed FROM classes WHERE id = ?", id);
+      const r = await one(`SELECT ${CLASS_COLUMNS} FROM classes WHERE id = ?`, id);
       return r && toClass(r);
     },
     async getClassByCode(code: string): Promise<ClassRow | undefined> {
-      const r = await one("SELECT id, code, grade, section, aiAllowed FROM classes WHERE code = ?", code);
+      const r = await one(`SELECT ${CLASS_COLUMNS} FROM classes WHERE code = ?`, code);
       return r && toClass(r);
     },
-    /** The class and its teacher PIN hash in one read (for the PIN check). */
-    async getClassWithPinHashByCode(code: string): Promise<{ cls: ClassRow; pinHash: string | null } | undefined> {
-      const r = await one("SELECT id, code, grade, section, aiAllowed, teacherPinHash FROM classes WHERE code = ?", code);
-      return r && { cls: toClass(r), pinHash: (r.teacherPinHash as string | null) ?? null };
+    /** The class, its teacher PIN hash and its failed PIN checks since a time, in one read (for the PIN check). */
+    async getClassWithPinHashByCode(
+      code: string,
+      failuresSince: string,
+    ): Promise<{ cls: ClassRow; pinHash: string | null; recentFailures: number } | undefined> {
+      const r = await one(`SELECT c.*, ${recentFailures("teacher_login")} AS failures FROM classes c WHERE c.code = ?`, failuresSince, code);
+      return r && { cls: toClass(r), pinHash: (r.teacherPinHash as string | null) ?? null, recentFailures: Number(r.failures) };
+    },
+    /** For a student log-in, in one read: the class, its student with that code (if any) and the class's failed log-ins since a time. */
+    async findLogin(
+      classCode: string,
+      studentCode: string,
+      failuresSince: string,
+    ): Promise<{ cls: ClassRow; student: StudentRow | undefined; recentFailures: number } | undefined> {
+      const r = await one(
+        `SELECT ${CLASS_COLUMNS_OF_C}, s.id AS studentId, ${recentFailures("student_login")} AS failures
+         FROM classes c LEFT JOIN students s ON s.classId = c.id AND s.code = ? WHERE c.code = ?`,
+        failuresSince, studentCode, classCode,
+      );
+      if (!r) return undefined;
+      const student = r.studentId ? { id: r.studentId as string, classId: r.id as string, code: studentCode } : undefined;
+      return { cls: toClass(r), student, recentFailures: Number(r.failures) };
+    },
+    /** Opens the proof window until a time, or closes it (null). */
+    async setProofWindow(classId: string, openUntil: string | null) {
+      await write("UPDATE classes SET proofWindowOpenUntil = ? WHERE id = ?", openUntil, classId);
     },
     async getClassPinHash(id: string): Promise<string | null> {
       return ((await one("SELECT teacherPinHash FROM classes WHERE id = ?", id))?.teacherPinHash as string | null) ?? null;
@@ -471,6 +526,13 @@ export async function openStore(config: StoreConfig | string = {}) {
     },
     async listStudents(classId: string): Promise<StudentRow[]> {
       return (await all("SELECT id, classId, code FROM students WHERE classId = ? ORDER BY code", classId)).map(toStudent);
+    },
+    /** Gives students new codes (ids and everything else stay) and logs the event, in one round trip, all or nothing. */
+    async setStudentCodes(classId: string, codes: { id: string; code: string }[], event: EventInput) {
+      await writeBatch([
+        ...codes.map((c) => ({ sql: "UPDATE students SET code = ? WHERE id = ? AND classId = ?", args: [c.code, c.id, classId] as InValue[] })),
+        eventStatement(event),
+      ]);
     },
     async countStudents(classId: string): Promise<number> {
       return Number((await one("SELECT COUNT(*) AS n FROM students WHERE classId = ?", classId))!.n);

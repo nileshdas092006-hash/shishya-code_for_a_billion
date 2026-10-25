@@ -1,7 +1,7 @@
 import { CreateClassForm } from "./CreateClassForm";
 import { TeacherPinForm } from "./TeacherPinForm";
 
-// Teacher start page. No names are ever entered: students get printed codes like 8B-01.
+// Teacher start page. No names are ever entered: students get printed codes like 8B-K7QM.
 
 export default function TeacherHome() {
   return (

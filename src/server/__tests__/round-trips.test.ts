@@ -37,6 +37,7 @@ async function counted() {
 
 async function classOf40(svc: Awaited<ReturnType<typeof counted>>["svc"]) {
   const room = await svc.createClassroom({ grade: 8, section: "Q", studentCount: CLASS_SIZE, pin: "123456" });
+  await svc.openProofWindow(room.classId); // a class made now needs the teacher to open proofs
   const ids = [];
   for (const code of room.studentCodes) {
     const r = await svc.studentLogin(room.classCode, code);

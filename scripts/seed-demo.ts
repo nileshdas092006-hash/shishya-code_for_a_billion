@@ -42,15 +42,17 @@ async function practise(studentCode: string, kind: string) {
   await svc.submitPracticeAnswer(served.itemId, answer);
 }
 
-const plan: Record<string, string[]> = {
-  "8D-01": ["kept-x-sign", "kept-x-sign", "kept-x-sign", "correct"],
-  "8D-02": ["kept-x-sign", "kept-x-sign", "correct", "correct"],
-  "8D-03": ["dropped-constant", "dropped-constant", "kept-x-sign"],
-  "8D-04": ["kept-const-sign", "forgot-to-divide", "kept-const-sign"],
-  "8D-05": ["made-up", "correct", "correct", "correct"],
-};
+// one plan per demo student, in the order of their (random) codes
+const plan: string[][] = [
+  ["kept-x-sign", "kept-x-sign", "kept-x-sign", "correct"],
+  ["kept-x-sign", "kept-x-sign", "correct", "correct"],
+  ["dropped-constant", "dropped-constant", "kept-x-sign"],
+  ["kept-const-sign", "forgot-to-divide", "kept-const-sign"],
+  ["made-up", "correct", "correct", "correct"],
+];
 let answers = 0;
-for (const [code, kinds] of Object.entries(plan)) {
+for (const [i, kinds] of plan.entries()) {
+  const code = room.studentCodes[i];
   for (const kind of kinds) {
     await practise(code, kind);
     answers++;

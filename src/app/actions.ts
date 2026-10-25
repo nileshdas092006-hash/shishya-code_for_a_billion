@@ -63,7 +63,7 @@ async function ownedItem(itemId: unknown) {
 export async function loginStudent(_prev: { error?: MessageKey }, form: FormData): Promise<{ error?: MessageKey }> {
   if (notSetUp("student login")) return { error: "setup.missing" };
   const result = await (await getServices()).studentLogin(str(form.get("classCode"), 20), str(form.get("studentCode"), 20));
-  if (!result.ok) return { error: "login.wrong" };
+  if (!result.ok) return { error: result.code === "locked_out" ? "login.tooMany" : "login.wrong" };
   await startStudentSession(result.studentId);
   redirect("/s/home");
 }
@@ -107,7 +107,7 @@ export async function submitTeach(itemId: string, tappedLine: number, typedLine:
   return (await getServices()).submitTeachStep(id, line, str(typedLine, 80));
 }
 
-// ---------------- student: prove it (AI off) ----------------
+// ---------------- student: prove it (no AI help; opens when the teacher opens it) ----------------
 
 export async function proofOverview(skillId: string) {
   const student = await studentOrNull();
@@ -213,4 +213,26 @@ export async function projectorCheckLine(
   if (!cls) return notAllowed();
   if (!skill) return notAllowed("not_found");
   return { ok: true as const, ...(await (await getServices()).projectorCheck(cls.id, skill, Number(seed), str(mistakeId, 64), Number(tappedLine), str(typedLine, 80))) };
+}
+
+export async function openProofs(classCode: string) {
+  const cls = await classOrNull(classCode);
+  if (!cls) return;
+  await (await getServices()).openProofWindow(cls.id);
+  refresh();
+}
+
+export async function closeProofs(classCode: string) {
+  const cls = await classOrNull(classCode);
+  if (!cls) return;
+  await (await getServices()).closeProofWindow(cls.id);
+  refresh();
+}
+
+/** Every child in the class gets a new random code (progress is kept); the board then shows the new list to print. */
+export async function giveNewCodes(classCode: string) {
+  const cls = await classOrNull(classCode);
+  if (!cls) return;
+  await (await getServices()).reissueStudentCodes(cls.id);
+  redirect(`/teacher/${encodeURIComponent(cls.code)}?codes=new#codes`);
 }

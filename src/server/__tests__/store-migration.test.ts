@@ -32,3 +32,31 @@ describe("store migration: mined mistake statuses", () => {
     again.close();
   });
 });
+
+describe("store migration: proof windows", () => {
+  it("adds the proof window columns; classes that already exist do not need a window, new ones do", async () => {
+    const tmp = tempDbUrl();
+    cleanup = tmp.cleanup;
+    const old = createClient({ url: tmp.url });
+    await old.executeMultiple(`
+      CREATE TABLE classes (
+        id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, grade INTEGER NOT NULL CHECK (grade BETWEEN 1 AND 12),
+        section TEXT NOT NULL DEFAULT '', aiAllowed INTEGER NOT NULL CHECK (aiAllowed IN (0, 1)), teacherPinHash TEXT);
+      INSERT INTO classes VALUES ('c1', '8B-OLD1', 8, 'B', 1, NULL);
+    `);
+    old.close();
+
+    const store = await openStore({ url: tmp.url });
+    expect(await store.getClass("c1")).toMatchObject({ code: "8B-OLD1", proofWindowRequired: false, proofWindowOpenUntil: null });
+    expect(
+      await store.insertClass({ id: "c2", code: "8C-NEW1", grade: 8, section: "C", aiAllowed: true, proofWindowRequired: true, proofWindowOpenUntil: null }),
+    ).toBe(true);
+    expect(await store.getClass("c2")).toMatchObject({ proofWindowRequired: true });
+    store.close();
+
+    const again = await openStore({ url: tmp.url }); // running the migration twice is safe
+    expect(await again.getClass("c1")).toMatchObject({ proofWindowRequired: false });
+    expect(await again.getClass("c2")).toMatchObject({ proofWindowRequired: true });
+    again.close();
+  });
+});

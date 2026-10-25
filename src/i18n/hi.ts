@@ -16,9 +16,11 @@ export const hi: Record<string, string> = {
   "login.classCode": "कक्षा कोड",
   "login.classCodeHint": "तुम्हारे शिक्षक इसे बोर्ड पर लिखेंगे, जैसे 8B-K7QM।",
   "login.studentCode": "तुम्हारा कोड",
-  "login.studentCodeHint": "जैसे 8B-17। यह तुम्हें तुम्हारे शिक्षक देंगे।",
+  "login.studentCodeHint": "जैसे 8B-R4TX। यह तुम्हें तुम्हारे शिक्षक देंगे।",
   "login.go": "शुरू करो",
   "login.wrong": "ये कोड नहीं मिले। अपने शिक्षक से जाँच लो।",
+  // HINDI-REVIEW
+  "login.tooMany": "बहुत बार गलत कोड लिखे गए। अपने शिक्षक से पूछो, या 10 मिनट बाद फिर कोशिश करो।",
   "login.logout": "समाप्त करो और लॉग आउट करो",
   "login.again": "कृपया अपने कोड फिर से लिखो।",
   "login.againLink": "मेरे कोड लिखो",
@@ -74,7 +76,10 @@ export const hi: Record<string, string> = {
   "teach.shishya.happy": "अच्छा, अब मैं समझ गया! धन्यवाद!",
 
   "prove.title": "साबित करो",
-  "prove.aiOff": "AI बंद है",
+  // HINDI-REVIEW (3 lines)
+  "prove.noAiHelp": "परीक्षा के अंदर AI की कोई मदद नहीं।",
+  "prove.teacherOpens": "यह तभी खुलती है जब तुम्हारे शिक्षक इसे कक्षा में खोलते हैं।",
+  "prove.windowClosed": "तुम्हारे शिक्षक परीक्षा कक्षा में खोलेंगे।",
   "prove.rules": "तुम्हारी अपनी संख्याओं वाले 4 प्रश्न: 3 समीकरण और 1 शाब्दिक प्रश्न। कोई संकेत नहीं। तुम्हारे पास 30 मिनट हैं।",
   "prove.start": "परीक्षा शुरू करो",
   "prove.continue": "अपनी परीक्षा जारी रखो",
@@ -115,6 +120,20 @@ export const hi: Record<string, string> = {
   "board.grid.intro": "हल की हर पंक्ति पर कितने बच्चों का पैटर्न पहली बार गलत होता है (L1 प्रश्न है)। एक बार की चूक नहीं गिनी जाती।",
   "board.grid.skill": "कौशल",
   "board.grid.line": "L{n}",
+
+  // HINDI-REVIEW (proof window and new codes on the teacher board, all lines below)
+  "board.proofs.title": "परीक्षाएँ",
+  "board.proofs.open": "15 मिनट के लिए परीक्षा खोलें",
+  "board.proofs.close": "अभी परीक्षा बंद करें",
+  "board.proofs.openFor": "परीक्षा खुली है: {min} मिनट बचे हैं।",
+  "board.proofs.closed": "परीक्षा बंद है। बच्चे अभ्यास कर सकते हैं और शिष्य को सिखा सकते हैं, पर परीक्षा शुरू नहीं कर सकते।",
+  "board.proofs.started": "जो परीक्षा शुरू हो चुकी है, उसे अपने पूरे 30 मिनट मिलते हैं, परीक्षा बंद होने के बाद भी।",
+  "board.proofs.always": "यह कक्षा परीक्षा-समय की सुविधा से पहले बनी थी, इसलिए बच्चे कभी भी परीक्षा शुरू कर सकते हैं।",
+  "board.codes.give": "नए कोड दें",
+  "board.codes.confirm": "हर बच्चे को नया कोड मिलेगा, और पुराने कोड तुरंत काम करना बंद कर देंगे। उनकी प्रगति बनी रहेगी।",
+  "board.codes.yes": "हाँ, नए कोड दें",
+  "board.codes.cancel": "रद्द करें",
+  "board.codes.done": "नए कोड तैयार हैं। इन्हें छापकर बाँट दें: पुराने कोड अब काम नहीं करते।",
 
   "skill.alg.linear.both-sides.title": "दोनों पक्षों में x",
   "skill.alg.linear.both-sides.example": "जैसे 4x − 3 = 2x + 7",
