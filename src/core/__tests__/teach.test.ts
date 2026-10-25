@@ -28,6 +28,13 @@ describe("checkTeachStep: 4x − 3 = 2x + 7 with kept-x-sign", () => {
     expect(r.feedback.toLowerCase()).toContain("right side");
   });
 
+  it("carries a receipt for the typed line, only when the right line was tapped", () => {
+    expect(check(2, "2x − 3 = 7").receipt).toMatchObject({ kind: "line", sameSolution: true, solution: "x = 5" });
+    expect(check(2, "4x + 2x − 3 = 7").receipt).toMatchObject({ kind: "line", sameSolution: false });
+    expect(check(2, "4x ==").receipt).toBeNull();
+    expect(check(3, "4x − 2x − 3 = 7").receipt).toBeNull();
+  });
+
   it("tapping line 3 is the wrong line", () => {
     const r = check(3, "4x − 2x − 3 = 7");
     expect(r.lineCorrect).toBe(false);

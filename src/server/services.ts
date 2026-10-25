@@ -4,6 +4,7 @@ import { diagnose } from "../core/diagnose";
 import { createRng } from "../core/rng";
 import type { ApplyItem } from "../core/skills/linear-both-sides-apply";
 import { validateMinedMistake, type MinedMistakeSpec } from "../core/minedMistake";
+import { answerReceipt, type AnswerReceipt } from "../core/receipt";
 import { checkTeachStep, type TeachResult } from "../core/teach";
 import { applies, type Instance } from "../core/types";
 import * as mastery from "./mastery";
@@ -107,6 +108,8 @@ const normaliseCode = (code: string) =>
 const MASTERY_STATES = ["LOCKED", "OPEN", "KEY1", "NOT_YET", "MASTERED"] as const;
 
 type ProofItemView = { itemId: string; format: ItemFormat; text: string; textHi?: string };
+/** "How we checked" for one proof item, shown only after the proof is finished (null: not answered in time). */
+type ProofReceipt = { itemId: string; question: string; receipt: AnswerReceipt | null };
 
 export function createServices(store: Store, opts: ServiceOptions = {}) {
   const registry = opts.registry ?? defaultRegistry;
@@ -410,7 +413,9 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     async submitPracticeAnswer(
       itemId: string,
       typedText: string,
-    ): Promise<{ ok: true; correct: boolean; mistakeId: string | null; checkLine: number | null; feedback: string } | Fail> {
+    ): Promise<
+      { ok: true; correct: boolean; mistakeId: string | null; checkLine: number | null; feedback: string; receipt: AnswerReceipt | null } | Fail
+    > {
       const item = await requireItem(itemId, "practice");
       const entry = await entryOf(item.skillId);
       const typed = parseAnswerFor(entry.spec.answerKind, typedText);
@@ -450,7 +455,9 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
             ? `Check line ${checkLine} again.`
             : (mistake?.childLabel ?? entry.spec.hintLadder[0]);
         // the child is told only what the server decided to show: no mistake id for a first match
-        return { ok: true as const, correct, mistakeId: checkLine === null ? mistakeId : null, checkLine, feedback };
+        // the receipt puts the child's own answer back in: it never shows the correct answer
+        const receipt = answerReceipt(instance, typed.value);
+        return { ok: true as const, correct, mistakeId: checkLine === null ? mistakeId : null, checkLine, feedback, receipt };
       });
     },
 
@@ -599,7 +606,15 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       typedText: string,
     ): Promise<
       | { ok: true; finished: false }
-      | { ok: true; finished: true; passed: boolean; state: mastery.MasteryState; practise: string[]; unlocked: string[] }
+      | {
+          ok: true;
+          finished: true;
+          passed: boolean;
+          state: mastery.MasteryState;
+          practise: string[];
+          unlocked: string[];
+          receipts: ProofReceipt[];
+        }
       | Fail
     > {
       const item = await requireItem(itemId, "proof");
@@ -632,9 +647,17 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         const out = await finishRun((await store.getProofRun(run.id))!, entry);
         if (!out) return fail("This proof is already finished.", "finished");
         const wrong: string[] = [];
-        for (const a of await store.listAttemptsForItems(runItems.map((i) => i.id))) if (!a.correct && a.mistakeId) wrong.push(a.mistakeId);
+        const attempts = await store.listAttemptsForItems(runItems.map((i) => i.id));
+        for (const a of attempts) if (!a.correct && a.mistakeId) wrong.push(a.mistakeId);
         const unlocked = out.state === "MASTERED" ? await unlockAfter(item.studentId, item.skillId) : [];
-        return { ok: true as const, finished: true as const, ...out, practise: [...new Set(wrong)], unlocked };
+        // receipts only now that the proof is finished; each puts the child's own answer back in
+        const receipts = runItems.map((ri): ProofReceipt => {
+          const inst = instanceFor(entry, ri);
+          const a = attempts.find((x) => x.itemId === ri.id);
+          const given = a ? parseAnswerFor(entry.spec.answerKind, a.answer) : null;
+          return { itemId: ri.id, question: inst.text, receipt: given?.ok ? answerReceipt(inst, given.value) : null };
+        });
+        return { ok: true as const, finished: true as const, ...out, practise: [...new Set(wrong)], unlocked, receipts };
       });
     },
 

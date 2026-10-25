@@ -8,11 +8,13 @@ import { Equation } from "../../../_components/Equation";
 import { Shishya } from "../../../_components/Shishya";
 import { ReadyButton } from "../../../_components/ReadyButton";
 import { MathKeypad } from "../../../_components/MathKeypad";
+import { Receipt } from "../../../_components/Receipt";
+import type { AnswerReceipt } from "@/core/receipt";
 
 const STREAK_FOR_TEACH = 5;
 const HINT_LEVELS = 4;
 
-type Feedback = { kind: "good" | "bad" | "note"; text: string; detail?: string } | null;
+type Feedback = { kind: "good" | "bad" | "note"; text: string; detail?: string; receipt?: AnswerReceipt | null } | null;
 
 export function PractiseScreen({ skillId, answerKind }: { skillId: string; answerKind: "number" | "expression" }) {
   const [item, setItem] = useState<{ itemId: string; text: string } | null>(null);
@@ -54,11 +56,11 @@ export function PractiseScreen({ skillId, answerKind }: { skillId: string; answe
       setAnswered(true);
       if (r.correct) {
         setStreak((s) => s + 1);
-        setFeedback({ kind: "good", text: t("practise.correct") });
+        setFeedback({ kind: "good", text: t("practise.correct"), receipt: r.receipt });
       } else {
         setStreak(0);
         // the server decides: a first match gets only "Check line N again." (it may be a slip); a pattern is named
-        setFeedback(
+        const verdict: Feedback =
           r.checkLine !== null
             ? { kind: "bad", text: t("practise.checkLine", { n: r.checkLine }), detail: t("practise.checkLine.detail") }
             : r.mistakeId && r.mistakeId !== "unknown"
@@ -68,8 +70,8 @@ export function PractiseScreen({ skillId, answerKind }: { skillId: string; answe
                 // a teacher-approved mined mistake has no translation yet: use its own child label
                 detail: hasMessage(mistakeKey(skillId, r.mistakeId)) ? t(mistakeKey(skillId, r.mistakeId)) : keepMathTogether(r.feedback),
               }
-            : { kind: "bad", text: t("practise.wrongUnknown") },
-        );
+            : { kind: "bad", text: t("practise.wrongUnknown") };
+        setFeedback({ ...verdict, receipt: r.receipt });
       }
     });
   }
@@ -123,6 +125,7 @@ export function PractiseScreen({ skillId, answerKind }: { skillId: string; answe
           </div>
         </div>
       )}
+      {feedback?.receipt && <Receipt receipt={feedback.receipt} />}
 
       {answered && (
         <ReadyButton type="button" className="btn btn-primary text-xl self-start" onClick={loadNext} disabled={pending}>

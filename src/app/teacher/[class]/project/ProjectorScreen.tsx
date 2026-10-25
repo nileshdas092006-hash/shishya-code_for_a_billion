@@ -6,6 +6,8 @@ import { projectorCheckLine, projectorNew } from "../../../actions";
 import { Shishya, type Mood } from "../../../_components/Shishya";
 import { TraceLines } from "../../../_components/TraceLines";
 import { ReadyButton } from "../../../_components/ReadyButton";
+import { Receipt } from "../../../_components/Receipt";
+import type { LineReceipt } from "@/core/receipt";
 
 type Trace = { seed: number; mistakeId: string; question: string; lines: string[] };
 
@@ -14,7 +16,7 @@ export function ProjectorScreen({ classCode, skillIds }: { classCode: string; sk
   const [trace, setTrace] = useState<Trace | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const [typed, setTyped] = useState("");
-  const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const [result, setResult] = useState<{ ok: boolean; text: string; receipt?: LineReceipt | null } | null>(null);
   const [mood, setMood] = useState<Mood>("confused");
   const [pending, startTransition] = useTransition();
 
@@ -45,7 +47,7 @@ export function ProjectorScreen({ classCode, skillIds }: { classCode: string; sk
       const r = await projectorCheckLine(classCode, skillId, trace.seed, trace.mistakeId, selected, typed);
       if (!r.ok) return setResult({ ok: false, text: t("common.error") });
       const good = r.lineCorrect && r.fixAccepted;
-      setResult({ ok: good, text: t(r.feedbackKey as MessageKey, r.feedbackParams) });
+      setResult({ ok: good, text: t(r.feedbackKey as MessageKey, r.feedbackParams), receipt: r.receipt });
       setMood(good ? "happy" : "confused");
     });
   }
@@ -94,6 +96,8 @@ export function ProjectorScreen({ classCode, skillIds }: { classCode: string; sk
               {result.text}
             </p>
           )}
+          {/* on the projector the check is open, so the whole class reads it */}
+          {result?.receipt && selected !== null && <Receipt receipt={result.receipt} line={selected - 1} open big />}
         </>
       )}
     </div>

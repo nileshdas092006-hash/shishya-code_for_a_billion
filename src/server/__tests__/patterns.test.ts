@@ -150,14 +150,16 @@ describe("practise: a first match gets only a neutral pointer", () => {
     ctx = await setup();
     await ctx.svc.teacherUnlock(ctx.student.id, SKILL);
     const keptX = mistakeOf("kept-x-sign");
+    // the receipt shows the check that does not hold; it names no mistake
+    const wrongReceipt = expect.objectContaining({ kind: "substitute", holds: false });
 
     const first = await practiseWith(ctx.student.id, "kept-x-sign");
-    expect(first).toEqual({ ok: true, correct: false, mistakeId: null, checkLine: 2, feedback: "Check line 2 again." });
+    expect(first).toEqual({ ok: true, correct: false, mistakeId: null, checkLine: 2, feedback: "Check line 2 again.", receipt: wrongReceipt });
     // another mistake does not count towards this one
     expect(await practiseWith(ctx.student.id, "dropped-constant")).toMatchObject({ mistakeId: null, checkLine: 3 });
 
     const second = await practiseWith(ctx.student.id, "kept-x-sign");
-    expect(second).toEqual({ ok: true, correct: false, mistakeId: "kept-x-sign", checkLine: null, feedback: keptX.childLabel });
+    expect(second).toEqual({ ok: true, correct: false, mistakeId: "kept-x-sign", checkLine: null, feedback: keptX.childLabel, receipt: wrongReceipt });
 
     // the teacher's data still records what really happened
     const attempts = (await ctx.store.listClassMistakesSince(ctx.cls.id, "2000-01-01")).map((h) => h.mistakeId);

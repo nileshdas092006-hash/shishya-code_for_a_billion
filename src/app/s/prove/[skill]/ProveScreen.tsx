@@ -8,11 +8,13 @@ import { Equation } from "../../../_components/Equation";
 import { Shishya } from "../../../_components/Shishya";
 import { ReadyButton } from "../../../_components/ReadyButton";
 import { MathKeypad } from "../../../_components/MathKeypad";
+import { Receipt } from "../../../_components/Receipt";
+import type { AnswerReceipt } from "@/core/receipt";
 
 type Item = { itemId: string; format: "solve" | "apply"; text: string; answered: boolean };
 type Run = { deadline: string; items: Item[] };
 type Status = { canStart: true } | { canStart: false; code: string; retryAt?: string };
-type Outcome = { passed: boolean; practise: string[]; unlocked: string[] };
+type Outcome = { passed: boolean; practise: string[]; unlocked: string[]; receipts: { itemId: string; question: string; receipt: AnswerReceipt | null }[] };
 
 const formatTime = (iso: string) =>
   new Date(iso).toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" });
@@ -77,7 +79,7 @@ export function ProveScreen({ skillId, answerKind }: { skillId: string; answerKi
       setAnswer("");
       setRun({ ...run, items: run.items.map((i) => (i.itemId === current.itemId ? { ...i, answered: true } : i)) });
       if (r.finished) {
-        setOutcome({ passed: r.passed, practise: r.practise, unlocked: r.unlocked });
+        setOutcome({ passed: r.passed, practise: r.practise, unlocked: r.unlocked, receipts: r.receipts });
         setRun(null);
         const after = await proofOverview(skillId);
         if (after.ok) setStatus(after.status);
@@ -109,6 +111,19 @@ export function ProveScreen({ skillId, answerKind }: { skillId: string; answerKi
               <li>{t("prove.practiseStepByStep")}</li>
             )}
           </ul>
+        )}
+        {/* receipts come from the server only once the proof is finished */}
+        {outcome.receipts.length > 0 && (
+          <section aria-label={t("prove.receipts")} className="flex flex-col gap-3">
+            <h2 className="text-2xl font-bold">{t("prove.receipts")}</h2>
+            {outcome.receipts.map((r, i) => (
+              <div key={r.itemId} className="flex flex-col gap-2">
+                <p className="text-xl font-semibold">{t("prove.question", { n: i + 1, total: outcome.receipts.length })}</p>
+                <Equation text={r.question} size="md" />
+                {r.receipt ? <Receipt receipt={r.receipt} /> : <p className="msg-note">{t("prove.notAnswered")}</p>}
+              </div>
+            ))}
+          </section>
         )}
         {!outcome.passed && status && !status.canStart && status.retryAt && (
           <p className="msg-note text-xl">{t("prove.retryAt", { time: formatTime(status.retryAt) })}</p>

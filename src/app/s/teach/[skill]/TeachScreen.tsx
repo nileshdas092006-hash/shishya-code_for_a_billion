@@ -8,9 +8,11 @@ import { Shishya, type Mood } from "../../../_components/Shishya";
 import { TraceLines } from "../../../_components/TraceLines";
 import { ReadyButton } from "../../../_components/ReadyButton";
 import { MathKeypad } from "../../../_components/MathKeypad";
+import { Receipt } from "../../../_components/Receipt";
+import type { LineReceipt } from "@/core/receipt";
 
 type Trace = { itemId: string; question: string; lines: string[] };
-type Result = { ok: boolean; text: string };
+type Result = { ok: boolean; text: string; receipt?: LineReceipt | null };
 
 const TRIES = 2;
 
@@ -74,7 +76,7 @@ export function TeachScreen({ skillId }: { skillId: string }) {
         return;
       }
       const good = r.lineCorrect && r.fixAccepted;
-      setResult({ ok: good, text: t(r.feedbackKey as MessageKey, r.feedbackParams) });
+      setResult({ ok: good, text: t(r.feedbackKey as MessageKey, r.feedbackParams), receipt: r.receipt });
       setTriesLeft(r.triesLeft);
       setMood(good ? "happy" : "confused");
       if (good) setFixed((f) => f + 1);
@@ -190,6 +192,7 @@ export function TeachScreen({ skillId }: { skillId: string }) {
           {result.text}
         </p>
       )}
+      {result?.receipt && selected !== null && <Receipt receipt={result.receipt} line={selected - 1} />}
       {!result?.ok && triesLeft === 0 && <p className="msg-note text-xl">{t("teach.noTries")}</p>}
       {traceDone && (
         <ReadyButton type="button" className="btn btn-primary text-xl self-start" onClick={next}>

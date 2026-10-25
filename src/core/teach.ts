@@ -1,5 +1,6 @@
 import { fill, type MessageParams, type ParseErrorKey } from "./equation";
 import { LINE_MESSAGES } from "./lineCheck";
+import { teachLineReceipt, type LineReceipt } from "./receipt";
 import { getSkillEntry } from "./skills";
 import type { Instance, Mistake } from "./types";
 
@@ -22,6 +23,8 @@ export type TeachResult = {
   feedback: string;
   feedbackKey: TeachMessageKey | ParseErrorKey | string;
   feedbackParams?: MessageParams;
+  /** How the typed line was checked (same solution or value as the line above); null unless the right line was tapped. */
+  receipt: LineReceipt | null;
 };
 
 /**
@@ -49,7 +52,7 @@ export function checkTeachStep(
   if (!lineCorrect) {
     const key = tappedLine < wrongLine ? "teach.tap.tooEarly" : "teach.tap.tooLate";
     const params = { line: tappedLine };
-    return { lineCorrect, fixAccepted: check.ok, feedback: fill(TEACH_MESSAGES[key], params), feedbackKey: key, feedbackParams: params };
+    return { lineCorrect, fixAccepted: check.ok, feedback: fill(TEACH_MESSAGES[key], params), feedbackKey: key, feedbackParams: params, receipt: null };
   }
-  return { lineCorrect, fixAccepted: check.ok, ...fix };
+  return { lineCorrect, fixAccepted: check.ok, ...fix, receipt: teachLineReceipt(instance, mistake, typedLine) };
 }
