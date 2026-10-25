@@ -113,7 +113,7 @@ async function rowsMentioning(url: string, ids: string[]): Promise<string[]> {
 
 describe("deleting a class", () => {
   it("needs the typed class code; then no row of that class remains, and the other class is untouched", async () => {
-    const { svc, store, url } = await fresh();
+    const { svc, store, url, clock } = await fresh();
     const make = async (section: string) => {
       const room = await svc.createClassroom({ grade: 8, section, studentCount: 3, pin: "123456" });
       await svc.recordConsent(room.classId, { allowed: true, slips: 3 });
@@ -140,6 +140,8 @@ describe("deleting a class", () => {
     };
     const gone = await make("B");
     const kept = await make("C");
+    clock.advanceHours(7 * 24); // a week after mastery: a quick check (P1b) for the child who mastered the skill
+    expect(await svc.startRecheck(gone.ids[1], SKILL)).toMatchObject({ ok: true });
     // a mistake this class's teacher approved stays in the library, but no longer names the class
     await store.insertMinedMistake({
       id: "m1", skillId: SKILL, source: "{}", testsJson: "{}", status: "APPROVED",
@@ -162,7 +164,7 @@ describe("deleting a class", () => {
     const logged = (await store.listEvents()).filter((e) => e.type === "class_deleted");
     expect(logged).toHaveLength(1);
     expect(Object.keys(JSON.parse(logged[0].payloadJson)).sort()).toEqual(
-      ["attempts", "events", "items", "kind", "mastery", "proofRuns", "students", "teachTraces", "worksheets"].sort(),
+      ["attempts", "events", "items", "kind", "mastery", "proofRuns", "students", "teachTraces", "worksheets", "rechecks"].sort(),
     );
     expect(await svc.deleteClass(gone.room.classId, gone.room.classCode)).toMatchObject({ ok: false, code: "none" });
   });

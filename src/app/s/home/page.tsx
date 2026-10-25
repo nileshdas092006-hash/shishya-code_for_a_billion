@@ -28,11 +28,18 @@ function SkillMap() {
       <>
         <p className="text-lg text-gray-700">{student.code}</p>
         <ol className="flex flex-col gap-4">
-          {skills.map(({ skillId, state }) => {
+          {skills.map(({ skillId, state, recheck }) => {
             const path = encodeURIComponent(skillId);
             return (
               <li key={skillId} className="card flex flex-col gap-3">
                 <SkillCardHeader skillId={skillId} state={state} cooldownHours={student.proofCooldownHours} />
+                {recheck === "passed" && <p className="text-lg font-bold text-green-800">{t("recheck.passed")}</p>}
+                {recheck === "again" && <p className="msg-note text-lg">{t("recheck.again.map")}</p>}
+                {recheck === "due" && (
+                  <Link href={`/s/recheck/${path}`} className="btn btn-primary self-start">
+                    {t("recheck.link")}
+                  </Link>
+                )}
                 {state === "LOCKED" ? (
                   <p className="text-lg">{t("map.locked")}</p>
                 ) : (

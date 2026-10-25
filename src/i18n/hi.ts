@@ -378,6 +378,25 @@ export const hi: Record<string, string> = {
   "paper.grid.busy": "अभी-अभी किसी और ने इस वर्कशीट के उत्तर सहेजे। कुछ नहीं सहेजा गया: वर्कशीट फिर से खोलें।",
   "paper.grid.auth": "पहले कक्षा का PIN डालें।",
 
+  // HINDI-REVIEW (P1b, all lines below up to board.recheck.needsLook)
+  "recheck.link": "छोटी जाँच: 2 प्रश्न",
+  "recheck.title": "छोटी जाँच",
+  "recheck.intro": "एक हफ़्ता पहले तुमने इस कौशल में महारत हासिल की थी। यह दिखाने के लिए कि यह याद है, 2 नए प्रश्नों के उत्तर दो। कोई संकेत नहीं। तुम्हारे पास 15 मिनट हैं।",
+  "recheck.start": "छोटी जाँच शुरू करो",
+  "recheck.question": "प्रश्न {n} / {total}",
+  "recheck.timeLeft": "बचा समय: {min} मिनट",
+  "recheck.submit": "मेरा उत्तर सहेजो",
+  "recheck.passed": "7 दिन बाद फिर से जाँचा गया ✓",
+  "recheck.again": "इसे एक बार और देखना है। इस कौशल का फिर से अभ्यास करो। अगली छोटी जाँच एक हफ़्ते बाद खुलेगी।",
+  "recheck.again.map": "एक बार और देखना है: इस कौशल का फिर से अभ्यास करो। अगली छोटी जाँच बाद में खुलेगी।",
+  "recheck.stays": "इस कौशल पर तुम्हारी महारत बनी रहेगी।",
+  "recheck.notDue": "अभी इस कौशल की कोई छोटी जाँच नहीं है।",
+  "board.recheck.head": "फिर से जाँचा गया",
+  "board.recheck.count": "महारत वाले {y} में से {x}",
+  "board.recheck.intro":
+    "फिर से जाँचा गया: जिन बच्चों ने कोई कौशल सीख लिया, उनमें से कितनों ने 7 या अधिक दिन बाद 2 नए प्रश्नों की छोटी जाँच सही की। छूटी हुई जाँच से \"महारत हासिल\" कभी नहीं हटता।",
+  "board.recheck.needsLook": "एक बार और देखना है ({skill}): {codes}",
+
   "skill.alg.linear.both-sides.title": "दोनों पक्षों में x",
   "skill.alg.linear.both-sides.example": "जैसे 4x − 3 = 2x + 7",
 

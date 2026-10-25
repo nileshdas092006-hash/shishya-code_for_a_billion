@@ -372,6 +372,25 @@ export const ui = {
   "paper.grid.busy": "Someone else saved answers for this worksheet just now. Nothing was saved: open the worksheet again.",
   "paper.grid.auth": "Enter the class PIN first.",
 
+  // P1b: the 7-day re-check of a mastered skill (child) and its column on the class board (teacher)
+  "recheck.link": "Quick check: 2 questions",
+  "recheck.title": "Quick check",
+  "recheck.intro": "You mastered this skill a week ago. Answer 2 new questions to show it stayed with you. No hints. You have 15 minutes.",
+  "recheck.start": "Start the quick check",
+  "recheck.question": "Question {n} of {total}",
+  "recheck.timeLeft": "Time left: {min} min",
+  "recheck.submit": "Save my answer",
+  "recheck.passed": "Checked again after 7 days ✓",
+  "recheck.again": "This needs another look. Practise this skill again. Another quick check opens in a week.",
+  "recheck.again.map": "Needs another look: practise this skill again. Another quick check opens later.",
+  "recheck.stays": "This skill stays Mastered.",
+  "recheck.notDue": "There is no quick check for this skill now.",
+  "board.recheck.head": "Checked again",
+  "board.recheck.count": "{x} of {y} mastered",
+  "board.recheck.intro":
+    "Checked again: of the children who mastered a skill, how many answered a quick check of 2 new questions correctly 7 days or more later. A missed check never takes Mastered away.",
+  "board.recheck.needsLook": "Needs another look ({skill}): {codes}",
+
   "skill.alg.integers.ops.title": "Adding and subtracting integers",
   "skill.alg.integers.ops.example": "like −7 + 3 and 5 − (−4)",
   "skill.alg.integers.ops.task": "Work out:",

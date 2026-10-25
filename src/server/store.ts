@@ -17,8 +17,12 @@ export const DEFAULT_DATABASE_URL = "file:data/shishya.db";
 export type MasteryState = "LOCKED" | "OPEN" | "KEY1" | "NOT_YET" | "MASTERED";
 export type ItemKind = "practice" | "teach" | "proof";
 export type ItemFormat = "solve" | "apply";
-/** Where an answer came from: typed in the app, or typed in by the teacher from a paper worksheet (P1a). */
-export type ItemSource = "app" | "paper";
+/**
+ * Where an answer came from: typed in the app, typed in by the teacher from a paper worksheet (P1a), or a question
+ * of a 7-day re-check (P1b: kind 'proof', single-use, runId is the re-check's id).
+ */
+export type ItemSource = "app" | "paper" | "recheck";
+const ITEM_SOURCES: readonly string[] = ["app", "paper", "recheck"];
 /** real: a school class. test: our own test classes (all 8Q-…). sandbox: a Judge Tour class, deleted when it expires. */
 export type ClassKind = "real" | "test" | "sandbox";
 
@@ -59,6 +63,7 @@ export type DeletedCounts = {
   mastery: number;
   events: number;
   worksheets: number;
+  rechecks: number;
 };
 export type StudentRow = { id: string; classId: string; code: string };
 export type ItemRow = {
@@ -122,6 +127,17 @@ export type ProofRunRow = {
   version: string;
   itemIds: string[];
   aiOff: boolean;
+  passed: boolean | null;
+  startedAt: string;
+  finishedAt: string | null;
+};
+/** A 7-day re-check of a MASTERED skill: 2 fresh questions, 15 minutes. Its result is evidence on the mastery row. */
+export type RecheckRow = {
+  id: string;
+  studentId: string;
+  skillId: string;
+  version: string;
+  itemIds: string[];
   passed: boolean | null;
   startedAt: string;
   finishedAt: string | null;
@@ -345,6 +361,19 @@ CREATE TABLE IF NOT EXISTS worksheets (
   createdAt TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS worksheets_class ON worksheets (classId, createdAt);
+-- 7-day re-checks of a MASTERED skill (P1b); the result is written to the mastery row only by mastery.ts.
+CREATE TABLE IF NOT EXISTS rechecks (
+  id TEXT PRIMARY KEY,
+  studentId TEXT NOT NULL REFERENCES students(id),
+  skillId TEXT NOT NULL,
+  version TEXT NOT NULL,
+  itemIds TEXT NOT NULL,
+  passed INTEGER CHECK (passed IN (0, 1)),
+  startedAt TEXT NOT NULL,
+  finishedAt TEXT
+);
+-- At most one unfinished re-check per student and skill.
+CREATE UNIQUE INDEX IF NOT EXISTS recheck_one_open ON rechecks (studentId, skillId) WHERE finishedAt IS NULL;
 `;
 
 type Row = Record<string, unknown>;
@@ -391,7 +420,17 @@ const toItem = (r: Row): ItemRow => ({
   answer: r.answer as string,
   servedAt: r.servedAt as string,
   answeredAt: (r.answeredAt as string | null) ?? null,
-  source: r.source === "paper" ? "paper" : "app",
+  source: ITEM_SOURCES.includes(r.source as string) ? (r.source as ItemSource) : "app",
+});
+const toRecheck = (r: Row): RecheckRow => ({
+  id: r.id as string,
+  studentId: r.studentId as string,
+  skillId: r.skillId as string,
+  version: r.version as string,
+  itemIds: JSON.parse(r.itemIds as string),
+  passed: r.passed === null || r.passed === undefined ? null : bool(r.passed),
+  startedAt: r.startedAt as string,
+  finishedAt: (r.finishedAt as string | null) ?? null,
 });
 const toWorksheet = (r: Row): WorksheetRow => ({
   id: r.id as string,
@@ -677,7 +716,8 @@ export async function openStore(config: StoreConfig | string = {}) {
          (SELECT COUNT(*) FROM proofRuns WHERE studentId IN ${ofClass}) AS proofRuns,
          (SELECT COUNT(*) FROM mastery WHERE studentId IN ${ofClass}) AS mastery,
          (SELECT COUNT(*) FROM events WHERE studentId IN ${ofClass} OR json_extract(payloadJson, '$.classId') = c.id) AS events,
-         (SELECT COUNT(*) FROM worksheets WHERE classId = c.id) AS worksheets
+         (SELECT COUNT(*) FROM worksheets WHERE classId = c.id) AS worksheets,
+         (SELECT COUNT(*) FROM rechecks WHERE studentId IN ${ofClass}) AS rechecks
        FROM classes c WHERE ${where}`,
       ...args,
     );
@@ -695,6 +735,7 @@ export async function openStore(config: StoreConfig | string = {}) {
         mastery: Number(r.mastery),
         events: Number(r.events),
         worksheets: Number(r.worksheets),
+        rechecks: Number(r.rechecks),
       }),
     );
     await writeBatch([
@@ -702,6 +743,7 @@ export async function openStore(config: StoreConfig | string = {}) {
       del("attempts"),
       del("items"),
       del("proofRuns"),
+      del("rechecks"),
       del("mastery"),
       {
         sql: `DELETE FROM events WHERE studentId IN ${ofIds} OR json_extract(payloadJson, '$.classId') IN (${marks(ids.length)})`,
@@ -1091,6 +1133,30 @@ export async function openStore(config: StoreConfig | string = {}) {
     /** False if the run was already finished. */
     finishProofRun(id: string, passed: boolean, at: string): Promise<boolean> {
       return changed("UPDATE proofRuns SET passed = ?, finishedAt = ? WHERE id = ? AND finishedAt IS NULL", passed ? 1 : 0, at, id);
+    },
+
+    // ----- 7-day re-checks (P1b) -----
+    /** False if the student already has an unfinished re-check for this skill. */
+    insertRecheck(r: Omit<RecheckRow, "passed" | "finishedAt">): Promise<boolean> {
+      return tryInsert(
+        "INSERT INTO rechecks (id, studentId, skillId, version, itemIds, startedAt) VALUES (?, ?, ?, ?, ?, ?)",
+        r.id, r.studentId, r.skillId, r.version, JSON.stringify(r.itemIds), r.startedAt,
+      );
+    },
+    async setRecheckItems(id: string, itemIds: string[]) {
+      await write("UPDATE rechecks SET itemIds = ? WHERE id = ? AND finishedAt IS NULL", JSON.stringify(itemIds), id);
+    },
+    async getRecheck(id: string): Promise<RecheckRow | undefined> {
+      const r = await one("SELECT * FROM rechecks WHERE id = ?", id);
+      return r && toRecheck(r);
+    },
+    async getOpenRecheck(studentId: string, skillId: string): Promise<RecheckRow | undefined> {
+      const r = await one("SELECT * FROM rechecks WHERE studentId = ? AND skillId = ? AND finishedAt IS NULL", studentId, skillId);
+      return r && toRecheck(r);
+    },
+    /** False if the re-check was already finished. */
+    finishRecheck(id: string, passed: boolean, at: string): Promise<boolean> {
+      return changed("UPDATE rechecks SET passed = ?, finishedAt = ? WHERE id = ? AND finishedAt IS NULL", passed ? 1 : 0, at, id);
     },
 
     // ----- mastery (ONLY src/server/mastery.ts may call writeMastery) -----

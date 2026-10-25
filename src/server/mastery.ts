@@ -1,7 +1,7 @@
 import { parseAnswerFor, sameAnswer } from "../core/answer";
 import { checkTeachStep } from "../core/teach";
 import { defaultRegistry, getEntry, instanceFor, type Registry, type SkillEntry } from "./skills";
-import type { AttemptRow, EventInput, ItemRow, MasteryRow, MasteryState, ProofRunRow, Store } from "./store";
+import type { AttemptRow, EventInput, ItemRow, MasteryRow, MasteryState, ProofRunRow, RecheckRow, Store } from "./store";
 
 // The mastery engine: the ONLY code allowed to write the mastery table (a test enforces this).
 //
@@ -9,6 +9,7 @@ import type { AttemptRow, EventInput, ItemRow, MasteryRow, MasteryState, ProofRu
 //   OPEN ──(teach rule met on the current version)──▶ KEY1
 //   KEY1 / NOT_YET ──(one fully correct proof run)──▶ MASTERED
 //   KEY1 / NOT_YET ──(failed proof run)──▶ NOT_YET (KEY1 kept; next proof after the cooldown)
+//   MASTERED ──(7-day re-check, passed or not)──▶ MASTERED, with the result as evidence (no punishment)
 //
 // It never trusts stored "correct" flags: every decision re-creates the questions from their seeds and
 // re-checks the child's own answers and typed lines with src/core. No AI output is read here.
@@ -17,12 +18,20 @@ export type { MasteryState } from "./store";
 
 export const PROOF_TIME_LIMIT_MINUTES = 30;
 export const DEFAULT_PROOF_COOLDOWN_HOURS = 24;
+/** The 7-day re-check: offered this many days after mastery (and again this long after a missed one). */
+export const RECHECK_AFTER_DAYS = 7;
+export const RECHECK_QUESTIONS = 2;
+export const RECHECK_TIME_LIMIT_MINUTES = 15;
 
 type Evidence = {
   unlock?: { by: "teacher" } | { by: "prerequisites"; prerequisites: string[] };
   key1?: { sessionId: string; itemIds: string[]; traceIds: string[]; version: string };
   proof?: { runId: string; itemIds: string[]; version: string };
   failedProofs?: { runId: string; version: string; reasons: string[] }[];
+  /** When the skill became MASTERED (rows mastered before P1b: their updatedAt). */
+  masteredAt?: string;
+  /** The latest 7-day re-check. The state stays MASTERED either way; a missed one asks for another look. */
+  recheck?: { passed: boolean; at: string; itemIds: string[]; runId: string; version: string; reasons: string[] };
   /** A made-up child's state in a Judge Tour (sandbox) class, written by seedSandboxMastery. */
   seeded?: { by: "judge tour" };
 };
@@ -288,10 +297,90 @@ export async function recordProof(store: Store, studentId: string, entry: SkillE
   const verdict = await verifyProofRun(store, entry, run);
   const evidence = evidenceOf(current);
   if (verdict.passed) {
-    await write(store, [change(studentId, entry, state, "MASTERED", { ...evidence, proof: { runId, itemIds: run.itemIds, version: run.version } }, now)]);
+    const proof = { runId, itemIds: run.itemIds, version: run.version };
+    await write(store, [change(studentId, entry, state, "MASTERED", { ...evidence, proof, masteredAt: now.toISOString() }, now)]);
     return "MASTERED";
   }
   const failedProofs = [...(evidence.failedProofs ?? []), { runId, version: run.version, reasons: verdict.reasons }];
   await write(store, [change(studentId, entry, state, "NOT_YET", { ...evidence, failedProofs }, now)]);
   return "NOT_YET";
+}
+
+// ---------- the 7-day re-check: "Mastered" means it stayed ----------
+
+export type RecheckInfo = {
+  /** May the child take the quick check now? */
+  due: boolean;
+  /** When it opens (null: not MASTERED, or the last one was passed). */
+  dueAt: string | null;
+  /** The latest re-check's result. */
+  last: { passed: boolean; at: string } | null;
+};
+
+/**
+ * From a mastery row read already (no database read): a MASTERED skill is due for a re-check RECHECK_AFTER_DAYS after
+ * it was mastered, and again that long after a missed re-check. A passed re-check is never asked again.
+ */
+export function recheckInfo(row: MasteryRow | undefined, now: Date): RecheckInfo {
+  if (!row || row.state !== "MASTERED") return { due: false, dueAt: null, last: null };
+  const ev = evidenceOf(row);
+  const last = ev.recheck ? { passed: ev.recheck.passed, at: ev.recheck.at } : null;
+  if (last?.passed) return { due: false, dueAt: null, last };
+  const from = last ? last.at : (ev.masteredAt ?? row.updatedAt);
+  const dueAt = new Date(Date.parse(from) + RECHECK_AFTER_DAYS * 86_400_000);
+  return { due: now >= dueAt, dueAt: dueAt.toISOString(), last };
+}
+
+/** Checks a re-check from scratch with src/core (the questions re-created from their seeds). Every reason it fails is listed. */
+export async function verifyRecheck(store: Store, entry: SkillEntry, run: RecheckRow): Promise<{ passed: boolean; reasons: string[] }> {
+  const reasons: string[] = [];
+  if (run.skillId !== entry.spec.id) reasons.push("wrong skill");
+  if (run.version !== entry.spec.version) reasons.push("old skill version");
+  if (run.itemIds.length !== RECHECK_QUESTIONS) reasons.push("wrong number of questions");
+  const deadline = Date.parse(run.startedAt) + RECHECK_TIME_LIMIT_MINUTES * 60_000;
+  const items = new Map((await store.getItems(run.itemIds)).map((i) => [i.id, i]));
+  const attemptsOf = new Map<string, AttemptRow[]>();
+  for (const a of await store.listAttemptsForItems(run.itemIds)) attemptsOf.set(a.itemId, [...(attemptsOf.get(a.itemId) ?? []), a]);
+  for (const [i, id] of run.itemIds.entries()) {
+    const item = items.get(id);
+    if (!item || item.kind !== "proof" || item.source !== "recheck" || item.runId !== run.id || item.studentId !== run.studentId || item.skillId !== run.skillId) {
+      reasons.push(`item ${i + 1} does not belong to this check`);
+      continue;
+    }
+    if (!paramsMatch(entry, item)) {
+      reasons.push(`item ${i + 1} does not match its seed`);
+      continue;
+    }
+    const attempts = attemptsOf.get(item.id) ?? [];
+    if (attempts.length !== 1) {
+      reasons.push(`item ${i + 1} not answered exactly once`);
+      continue;
+    }
+    const typed = parseAnswerFor(entry.spec.answerKind, attempts[0].answer);
+    if (!typed.ok || !sameAnswer(typed.value, instanceFor(entry, item).answer)) reasons.push(`item ${i + 1} wrong`);
+    if (Date.parse(attempts[0].createdAt) > deadline) reasons.push(`item ${i + 1} answered after ${RECHECK_TIME_LIMIT_MINUTES} minutes`);
+  }
+  return { passed: reasons.length === 0, reasons };
+}
+
+/**
+ * After a re-check is finished: its verdict (re-verified here) becomes evidence on the MASTERED row, which STAYS
+ * MASTERED whether it passed or not. Writes nothing for a skill that is not MASTERED. Returns the verdict.
+ */
+export async function recordRecheck(store: Store, studentId: string, entry: SkillEntry, runId: string, now: Date): Promise<{ passed: boolean }> {
+  const run = await store.getRecheck(runId);
+  if (!run || run.studentId !== studentId) throw new Error(`Re-check ${runId} not found for this student`);
+  if (!run.finishedAt) throw new Error(`Re-check ${runId} is not finished`);
+  const verdict = await verifyRecheck(store, entry, run);
+  const current = await store.getMastery(studentId, entry.spec.id);
+  if (!current || current.state !== "MASTERED") return { passed: verdict.passed };
+  const at = now.toISOString();
+  const ev = evidenceOf(current);
+  const recheck = { passed: verdict.passed, at, itemIds: run.itemIds, runId, version: run.version, reasons: verdict.reasons };
+  const evidence: Evidence = { ...ev, masteredAt: ev.masteredAt ?? current.updatedAt, recheck };
+  await store.writeMastery(
+    { ...current, state: "MASTERED", evidenceJson: JSON.stringify(evidence), updatedAt: at },
+    [{ studentId, type: "recheck_recorded", payload: { skillId: entry.spec.id, version: run.version, passed: verdict.passed, runId, reasons: verdict.reasons }, at }],
+  );
+  return { passed: verdict.passed };
 }

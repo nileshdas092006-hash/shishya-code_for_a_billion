@@ -75,6 +75,11 @@ people, or the teacher's own words. The page **How the agent worked** lists the 
   code, never a name). The teacher then types each child's final answer into a grid. The answers are checked by the
   same code as typed answers and feed the board and the Misconception Miner (real classes only); they never change
   a child's progress. The pilot CSV counts them (`paperAnswers`, `paperCorrect`).
+- **"Mastered" means it stayed.** 7 days after a skill is mastered, the child's skill map offers "Quick check: 2
+  questions" (fresh questions, no hints, 15 minutes). The result is kept as evidence on the mastery row by
+  `src/server/mastery.ts` and re-checked from the seeds. Passing shows "Checked again after 7 days ✓"; missing it never
+  takes Mastered away: the teacher sees "needs another look", the child is asked to practise, and another check opens
+  a week later. The board shows "Checked again: X of Y mastered" per skill.
 - **English and Hindi** on every screen, in the NCERT textbook's words.
 - **Privacy written down:** [PRIVACY.md](PRIVACY.md) and a template agreement for schools (see below).
 

@@ -92,11 +92,12 @@ export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Que
                   </th>
                 ))}
                 <th className="py-2 pr-3">{t("board.goneAhead.head")}</th>
+                <th className="py-2 pr-3">{t("board.recheck.head")}</th>
                 <th className="py-2" />
               </tr>
             </thead>
             <tbody>
-              {progress.map(({ skillId, counts, goneAhead }) => (
+              {progress.map(({ skillId, counts, goneAhead, checkedAgain }) => (
                 <tr key={skillId} className="border-b border-gray-300">
                   <td className="py-2 pr-3 font-semibold">{t(skillKey(skillId, "title"))}</td>
                   {STATES.map((s) => (
@@ -105,6 +106,7 @@ export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Que
                     </td>
                   ))}
                   <td className={`py-2 pr-3 ${goneAhead > 0 ? "font-bold text-amber-900" : ""}`}>{goneAhead}</td>
+                  <td className="py-2 pr-3 whitespace-nowrap">{t("board.recheck.count", { x: checkedAgain, y: counts.MASTERED })}</td>
                   <td className="py-2">
                     {counts.LOCKED > 0 && (
                       <form action={unlockSkillForClass.bind(null, cls.code, skillId)}>
@@ -120,6 +122,14 @@ export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Que
           </table>
         </div>
         <p className="text-base text-gray-700">{t("board.goneAhead.intro")}</p>
+        <p className="text-base text-gray-700">{t("board.recheck.intro")}</p>
+        {progress
+          .filter((p) => p.needsLook.length > 0)
+          .map((p) => (
+            <p key={p.skillId} className="msg-note break-words">
+              {t("board.recheck.needsLook", { skill: t(skillKey(p.skillId, "title")), codes: p.needsLook.join(", ") })}
+            </p>
+          ))}
       </section>
 
       <section className="flex flex-col gap-3 no-print" aria-labelledby="mined">

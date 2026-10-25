@@ -146,9 +146,9 @@ describe("skill map, class progress and unlocking", () => {
     if (!login.ok) throw new Error();
     const chain = ["alg.integers.ops", "alg.like-terms", "alg.linear.one-step", "alg.linear.two-step", SKILL];
     // the first skill has no prerequisite, so it is open at once; the rest wait for the one before (or a teacher)
-    expect(await svc.getSkillMap(login.studentId)).toEqual(chain.map((skillId, i) => ({ skillId, state: i === 0 ? "OPEN" : "LOCKED" })));
+    expect(await svc.getSkillMap(login.studentId)).toEqual(chain.map((skillId, i) => ({ skillId, state: i === 0 ? "OPEN" : "LOCKED", recheck: null })));
     expect(await svc.teacherUnlockClass(room.classId, SKILL)).toBe(3);
-    expect((await svc.getSkillMap(login.studentId)).at(-1)).toEqual({ skillId: SKILL, state: "OPEN" });
+    expect((await svc.getSkillMap(login.studentId)).at(-1)).toEqual({ skillId: SKILL, state: "OPEN", recheck: null });
     const progress = await svc.getClassProgress(room.classId);
     expect(progress.map((p) => p.skillId)).toEqual(chain);
     expect(progress[0].counts).toEqual({ LOCKED: 0, OPEN: 3, KEY1: 0, NOT_YET: 0, MASTERED: 0 });

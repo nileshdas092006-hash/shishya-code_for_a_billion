@@ -23,7 +23,9 @@ import type {
   ItemRow,
   MistakeHitRow,
   NewClass,
+  MasteryRow,
   ProofRunRow,
+  RecheckRow,
   Store,
   StudentRow,
   WorksheetRow,
@@ -74,6 +76,7 @@ export type FailCode =
   | "confirm_mismatch"
   | "bad_request"
   | "old_version"
+  | "not_due"
   | "none";
 type Fail = { ok: false; reason: string; code: FailCode; retryAt?: string; errorKey?: string };
 const fail = (reason: string, code: FailCode, extra: Partial<Fail> = {}): Fail => ({ ok: false, reason, code, ...extra });
@@ -198,7 +201,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     entry: SkillEntry,
     kind: ItemKind,
     format: ItemFormat,
-    extra: { runId?: string; mistakeId?: string; accept?: (instance: Instance) => boolean } = {},
+    extra: { runId?: string; mistakeId?: string; source?: "recheck"; accept?: (instance: Instance) => boolean } = {},
   ): Promise<{ item: ItemRow; instance: Instance; apply: ApplyItem | null } | null> {
     const seen = new Set((await store.listItems({ studentId, skillId: entry.spec.id })).map((i) => i.paramsJson));
     const tries = extra.accept ? FRESH_TRIES * 6 : FRESH_TRIES; // a mistake may apply to only some questions
@@ -222,6 +225,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         answer: answerText(instance.answer),
         servedAt: iso(),
         answeredAt: null,
+        ...(extra.source ? { source: extra.source } : {}),
       };
       if (await store.insertItem(item)) return { item, instance, apply };
     }
@@ -314,14 +318,20 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
   /** Each student's state for every skill, from one read of the class's mastery rows (opening skills whose prerequisites are mastered). */
   async function classStates(classId: string, students: StudentRow[]) {
     const rows = await store.listMastery({ classId });
-    return mastery.refreshUnlockMany(store, students.map((s) => s.id), rows, Object.values(registry), now());
+    return { rows, states: await mastery.refreshUnlockMany(store, students.map((s) => s.id), rows, Object.values(registry), now()) };
   }
 
   /**
    * Per skill: how many students are in each state, and how many have "gone ahead": not MASTERED this skill while
-   * a skill that needs it is already open for them (for example a teacher unlocked it). From states already read.
+   * a skill that needs it is already open for them (for example a teacher unlocked it). Also the 7-day re-check:
+   * checkedAgain (of the MASTERED children, how many passed it) and needsLook (codes whose latest one was missed).
+   * From states and mastery rows already read.
    */
-  function progressFrom(students: StudentRow[], states: Map<string, Map<string, mastery.MasteryState>>) {
+  function progressFrom(
+    students: StudentRow[],
+    { states, rows }: { states: Map<string, Map<string, mastery.MasteryState>>; rows: MasteryRow[] },
+  ) {
+    const rowOf = new Map(rows.map((r) => [`${r.studentId}|${r.skillId}`, r]));
     const entries = Object.values(registry);
     return entries.map((e) => {
       const counts = Object.fromEntries(MASTERY_STATES.map((s) => [s, 0])) as Record<(typeof MASTERY_STATES)[number], number>;
@@ -331,7 +341,10 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         const mine = states.get(s.id)!;
         return mine.get(e.spec.id) !== "MASTERED" && later.some((id) => mine.get(id) !== "LOCKED");
       }).length;
-      return { skillId: e.spec.id, counts, goneAhead };
+      const checks = students.map((s) => ({ code: s.code, info: mastery.recheckInfo(rowOf.get(`${s.id}|${e.spec.id}`), now()) }));
+      const checkedAgain = checks.filter((c) => c.info.last?.passed).length;
+      const needsLook = checks.filter((c) => c.info.last && !c.info.last.passed).map((c) => c.code).sort();
+      return { skillId: e.spec.id, counts, goneAhead, checkedAgain, needsLook };
     });
   }
 
@@ -421,6 +434,29 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
   }
 
   const deadlineOf = (run: ProofRunRow) => Date.parse(run.startedAt) + mastery.PROOF_TIME_LIMIT_MINUTES * 60_000;
+  const recheckDeadlineOf = (run: RecheckRow) => Date.parse(run.startedAt) + mastery.RECHECK_TIME_LIMIT_MINUTES * 60_000;
+
+  /** Closes a re-check, then lets the mastery engine record the result (the state stays MASTERED). Null if already closed. */
+  async function finishRecheck(run: RecheckRow, entry: SkillEntry): Promise<{ passed: boolean } | null> {
+    const verdict = await mastery.verifyRecheck(store, entry, run);
+    if (!(await store.finishRecheck(run.id, verdict.passed, iso()))) return null;
+    await log(run.studentId, "recheck_finished", { skillId: run.skillId, runId: run.id, passed: verdict.passed });
+    return mastery.recordRecheck(store, run.studentId, entry, run.id, now());
+  }
+
+  /** A running re-check as the child sees it: the questions only (no hints), and whether each is answered. */
+  async function recheckView(run: RecheckRow, entry: SkillEntry) {
+    const items = new Map((await store.getItems(run.itemIds)).map((i) => [i.id, i]));
+    return {
+      ok: true as const,
+      runId: run.id,
+      deadline: new Date(recheckDeadlineOf(run)).toISOString(),
+      items: run.itemIds.map((id) => {
+        const item = items.get(id)!;
+        return { itemId: id, text: instanceFor(entry, item).text, answered: item.answeredAt !== null };
+      }),
+    };
+  }
 
   /** Approved mined mistakes per skill, reloaded at most once a minute (and at once after a teacher decides). */
   const minedCache = new Map<string, { at: number; entry: SkillEntry }>();
@@ -1050,13 +1086,94 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     listStudentCodes: async (classId: string) => (await store.listStudents(classId)).map((s) => s.code),
     getItemOwner: async (itemId: string) => (await store.getItem(itemId))?.studentId,
 
-    /** Every skill, in teaching order, with this child's state. */
+    /**
+     * Every skill, in teaching order, with this child's state and the 7-day re-check of a MASTERED skill: "due"
+     * (Quick check: 2 questions), "passed" (checked again), "again" (missed: practise, next check later) or null.
+     */
     async getSkillMap(studentId: string) {
       await requireStudent(studentId);
       const entries = Object.values(registry);
       const rows = await store.listMastery({ studentId });
       const states = (await mastery.refreshUnlockMany(store, [studentId], rows, entries, now())).get(studentId)!;
-      return entries.map((e) => ({ skillId: e.spec.id, state: states.get(e.spec.id)! }));
+      return entries.map((e) => {
+        const info = mastery.recheckInfo(rows.find((r) => r.skillId === e.spec.id), now());
+        const recheck = info.due ? ("due" as const) : info.last ? (info.last.passed ? ("passed" as const) : ("again" as const)) : null;
+        return { skillId: e.spec.id, state: states.get(e.spec.id)!, recheck };
+      });
+    },
+
+    // ----- the 7-day re-check (2 fresh questions, no hints, 15 minutes; never changes the MASTERED state) -----
+    /** Can this child take the quick check now? (An expired one is closed first.) */
+    async recheckStatus(studentId: string, skillId: string) {
+      await requireStudent(studentId);
+      const entry = await entryOf(skillId);
+      return store.transaction(async () => {
+        const open = await store.getOpenRecheck(studentId, skillId);
+        const running = Boolean(open && now().getTime() <= recheckDeadlineOf(open));
+        if (open && !running) await finishRecheck(open, entry);
+        return { running, ...mastery.recheckInfo(await store.getMastery(studentId, skillId), now()) };
+      });
+    },
+
+    /** Starts the quick check on a MASTERED skill when it is due (or gives back the one that is running). */
+    async startRecheck(
+      studentId: string,
+      skillId: string,
+    ): Promise<{ ok: true; runId: string; deadline: string; items: { itemId: string; text: string; answered: boolean }[] } | Fail> {
+      await requireStudent(studentId);
+      const entry = await entryOf(skillId);
+      try {
+        return await store.transaction(async () => {
+          const open = await store.getOpenRecheck(studentId, skillId);
+          if (open && now().getTime() <= recheckDeadlineOf(open)) return recheckView(open, entry);
+          if (open) await finishRecheck(open, entry); // abandoned: closed as missed
+          if (!mastery.recheckInfo(await store.getMastery(studentId, skillId), now()).due) return fail("No quick check is due.", "not_due");
+          const runId = randomUUID();
+          if (!(await store.insertRecheck({ id: runId, studentId, skillId, version: entry.spec.version, itemIds: [], startedAt: iso() }))) {
+            return fail("A quick check is already running.", "running");
+          }
+          const itemIds = [];
+          for (let i = 0; i < mastery.RECHECK_QUESTIONS; i++) {
+            const s = await serveFresh(studentId, entry, "proof", "solve", { runId, source: "recheck" }); // single-use, like a proof
+            if (!s) throw new NoFreshQuestion();
+            itemIds.push(s.item.id);
+          }
+          await store.setRecheckItems(runId, itemIds);
+          await log(studentId, "recheck_started", { skillId, runId });
+          return recheckView((await store.getRecheck(runId))!, entry);
+        });
+      } catch (e) {
+        if (e instanceof NoFreshQuestion) return fail("Could not find fresh questions. Try again.", "no_fresh");
+        throw e;
+      }
+    },
+
+    async submitRecheckAnswer(
+      itemId: string,
+      typedText: string,
+    ): Promise<{ ok: true; finished: false } | { ok: true; finished: true; passed: boolean } | Fail> {
+      const item = await store.getItem(itemId);
+      if (!item || item.kind !== "proof" || item.source !== "recheck") throw new Error(`Unknown quick check item: ${itemId}`);
+      const entry = await entryOf(item.skillId);
+      const typed = parseAnswerFor(entry.spec.answerKind, typedText);
+      if (!typed.ok) return fail(typed.error, "bad_answer", { errorKey: typed.errorKey });
+      return store.transaction(async () => {
+        const run = item.runId ? await store.getRecheck(item.runId) : undefined;
+        if (!run || run.finishedAt) return fail("This quick check is already finished.", "finished");
+        if (!(await store.markItemAnswered(item.id, iso()))) return fail("This question was already answered.", "already_answered");
+        const instance = instanceFor(entry, item);
+        const correct = sameAnswer(typed.value, instance.answer);
+        const mistakeId = correct ? null : diagnose(entry.spec, instance, typed.value);
+        await store.insertAttempt({ id: randomUUID(), studentId: item.studentId, itemId: item.id, answer: answerText(typed.value), correct, mistakeId, createdAt: iso() });
+        // logged for the Misconception Miner only from real classes (never test or tour classes)
+        if (mistakeId === "unknown") await store.recordUnknownError(item.skillId, item.paramsJson, answerText(typed.value), item.studentId);
+        await log(item.studentId, "recheck_answered", { skillId: item.skillId, runId: run.id, itemId: item.id, correct });
+        const items = await store.getItems(run.itemIds);
+        if (!items.every((i) => i.answeredAt) && now().getTime() <= recheckDeadlineOf(run)) return { ok: true as const, finished: false as const };
+        const out = await finishRecheck(run, entry);
+        if (!out) return fail("This quick check is already finished.", "finished");
+        return { ok: true as const, finished: true as const, passed: out.passed };
+      });
     },
 
     /** Opens a skill for every student in the class. Returns how many were newly opened. */
@@ -1084,10 +1201,10 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       const cls = await requireClass(classId);
       // a tour class never sees (or decides) the real mistake library's drafts
       const [students, mined] = await Promise.all([store.listStudents(classId), cls.kind === "sandbox" ? [] : pendingMined()]);
-      const [states, stuck] = await Promise.all([classStates(classId, students), stuckGroups(classId)]);
+      const [read, stuck] = await Promise.all([classStates(classId, students), stuckGroups(classId)]);
       return {
         stuck,
-        progress: progressFrom(students, states),
+        progress: progressFrom(students, read),
         mined,
         codes: students.map((s) => s.code),
         proofWindow: proofWindowOf(cls),

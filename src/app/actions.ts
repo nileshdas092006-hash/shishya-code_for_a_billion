@@ -155,6 +155,30 @@ export async function submitProof(itemId: string, answer: string) {
   return (await getServices()).submitProofAnswer(id, str(answer, 40));
 }
 
+// ---------------- student: the 7-day quick check of a mastered skill (no hints, 15 minutes) ----------------
+
+export async function recheckOverview(skillId: string) {
+  const student = await studentOrNull();
+  const skill = knownSkill(skillId);
+  if (!student) return notAllowed();
+  if (!skill) return notAllowed("not_found");
+  return { ok: true as const, status: await (await getServices()).recheckStatus(student.studentId, skill) };
+}
+
+export async function startRecheckRun(skillId: string) {
+  const student = await studentOrNull();
+  const skill = knownSkill(skillId);
+  if (!student) return notAllowed();
+  if (!skill) return notAllowed("not_found");
+  return (await getServices()).startRecheck(student.studentId, skill);
+}
+
+export async function submitRecheck(itemId: string, answer: string) {
+  const id = await ownedItem(itemId);
+  if (!id) return notAllowed();
+  return (await getServices()).submitRecheckAnswer(id, str(answer, 40));
+}
+
 // ---------------- teacher ----------------
 
 export type CreateClassState =
