@@ -124,6 +124,13 @@ npm run miner -- alg.linear.both-sides --fake   # offline FAKE model, no key
 The AI only ever sees anonymous numbers (the question's a, b, c, d and the wrong answer). Each AI call is logged,
 without keys or messages, in `data/agent-runs.jsonl`.
 
+## Use our mistakes in your own tutor
+
+`GET /api/mistakes` returns Shishya's mistake library as JSON, under the MIT licence: for every skill (with its id and
+version), the authored mistakes and the mistakes found by the Miner that a teacher approved, as specs (id, label, step
+type, first wrong line, and for found ones the line templates and answer formula), each with a worked example. It
+holds no child data at all. The format is in [docs/SKILL_SPEC.md](docs/SKILL_SPEC.md#use-our-mistakes-in-your-own-tutor-get-apimistakes).
+
 ## Skills and the Skill Author (AI agent)
 
 Five skills form a chain: integers → like terms → one-step equations → two-step equations → variables on both sides

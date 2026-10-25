@@ -11,6 +11,7 @@ import { applies, type Instance, type StepType } from "../core/types";
 import { agentRunView, RECORDED_MINER_RUN } from "./agent-runs";
 import * as mastery from "./mastery";
 import { minedMistakes, toUnknownError, unknownErrors } from "./miner-ports";
+import { buildOpenMistakes } from "./open-mistakes";
 import { logServerError } from "./setup";
 import { defaultRegistry, getEntry, instanceFor, type Registry, type SkillEntry } from "./skills";
 import type {
@@ -1310,6 +1311,9 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       const rows = await store.listAgentRuns(AGENT_RUNS_SHOWN, { recordedOnly: cls.kind === "sandbox" });
       return { runs: rows.map(agentRunView) };
     },
+
+    /** GET /api/mistakes: every skill's authored and teacher-approved mined mistakes, as specs (one read). No child data. */
+    openMistakes: async () => buildOpenMistakes(registry, await store.listMinedMistakes("APPROVED")),
 
     /** The recorded real Miner run, read from the run history (the Judge Tour's stop 6). */
     recordedMinerRun: () => store.getAgentRun(RECORDED_MINER_RUN.id),

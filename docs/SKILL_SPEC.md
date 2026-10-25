@@ -170,3 +170,61 @@ A proposal that passes is saved as a draft (`DRAFT_TESTED`) in the `minedMistake
 class board, with the wrong answers it explains and the 4 checks, and approves (`APPROVED`) or rejects (`REJECTED`)
 it. Only approved mistakes are used, and they never change any child's mastery. The table's `childLabelSource`
 column says whether the child sees the fixed message (`ai`, the default) or the teacher's own words (`teacher`).
+
+## Use our mistakes in your own tutor: `GET /api/mistakes`
+
+Every Shishya server publishes its mistake library as JSON at `/api/mistakes` (MIT licence, cached for 5 minutes,
+`Cache-Control: public, max-age=300`). It is built only from the skill code and the mistake specs teachers have
+approved, so it never holds child data: no child or class codes, no answers, no counts, no drafts or rejected
+mistakes, no record of who approved a mistake, and never the AI's suggested child text.
+
+```json
+{
+  "licence": "MIT",
+  "spec": "https://github.com/nileshdas092006-hash/shishya-code_for_a_billion/blob/main/docs/SKILL_SPEC.md",
+  "about": "Shishya's algebra mistakes: …",
+  "skills": [
+    {
+      "skillId": "alg.linear.two-step",
+      "version": "1.0.0",
+      "statement": "Solve two-step equations such as 5x − 3 = −8.",
+      "answerKind": "number",
+      "mistakes": [
+        {
+          "id": "divided-first",
+          "label": "Divided before removing the constant (divided only d by a): x = d ÷ a − b",
+          "stepType": "divide",
+          "origin": "authored",
+          "firstWrongLine": 2,
+          "example": { "question": "3x − 12 = −9", "working": ["3x − 12 = −9", "x − 12 = −3", "x = 9"], "result": "9" }
+        }
+      ]
+    },
+    {
+      "skillId": "alg.linear.both-sides",
+      "mistakes": [
+        {
+          "id": "divide-by-original-a",
+          "label": "… (the label the teacher approved)",
+          "stepType": "divide",
+          "origin": "mined",
+          "firstWrongLine": 5,
+          "lines": { "5": "x = {(d - b) / a}" },
+          "answerFormula": "(d - b) / a",
+          "example": { "question": "…", "working": ["…"], "result": "…" }
+        }
+      ]
+    }
+  ]
+}
+```
+
+Shortened above: every skill has all of its fields and lists all of its mistakes. The mined mistake is the one
+from the real 2026-10-19 Miner run, shown as it would appear once a teacher approves it.
+
+- `skills`: every skill, in teaching order, with its `skillId` and `version` (a mistake belongs to that version).
+- An **authored** mistake is code in `src/core/skills/`; its `firstWrongLine` is the one on its `example`.
+- A **mined** mistake is the JSON spec described in the section above (`lines` templates and `answerFormula`, in the
+  numbers a, b, c, d of `a·x + b = c·x + d`), approved by a teacher.
+- `example`: the first generated question (seeds 1, 2, …) the mistake makes sense for, worked through with the
+  mistake by src/core: the question, every working line (line 1 is the question) and the wrong result it leads to.
