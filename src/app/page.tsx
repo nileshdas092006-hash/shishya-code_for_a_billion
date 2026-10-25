@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { t } from "@/i18n";
 import { Shishya } from "./_components/Shishya";
+import { StartTourForm } from "./tour/StartTourForm";
 
 export default function Home() {
   return (
@@ -15,6 +16,7 @@ export default function Home() {
           {t("home.teacher")}
         </Link>
       </div>
+      <StartTourForm />
       <p className="text-gray-700">{t("app.isProgram")}</p>
     </div>
   );

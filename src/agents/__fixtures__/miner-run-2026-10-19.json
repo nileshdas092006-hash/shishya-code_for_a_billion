@@ -1,0 +1,36 @@
+{
+  "about": "A RECORDED real Misconception Miner run, shown read-only on the Judge Tour (stop 6). Every fact here is copied from the local records of that run; nothing is invented. Fields the records do not have (for example the AI's teacher label, or the numbers of five of the six questions) are left out on purpose.",
+  "sources": [
+    "BUILD_LOG.md, entry '2026-10-19: Task 6, first REAL Misconception Miner run'",
+    "data/agent-runs.jsonl, the 3 successful calls at 2026-10-19T04:32:13.876Z, 04:32:15.045Z and 04:32:21.248Z"
+  ],
+  "date": "2026-10-19",
+  "data": "A scratch copy of the demo database (never pilot data) with 6 anonymous test answers of the kind 'divides by the original a' logged on purpose.",
+  "provider": "groq",
+  "model": "openai/gpt-oss-120b",
+  "calls": [
+    { "at": "2026-10-19T04:32:13.876Z", "tool": "get_unknown_errors", "ms": 1166, "promptTokens": 1182, "completionTokens": 29 },
+    { "at": "2026-10-19T04:32:15.045Z", "tool": "validate_mined_mistake", "ms": 6132, "promptTokens": 1545, "completionTokens": 2565 },
+    { "at": "2026-10-19T04:32:21.248Z", "tool": "submit_draft", "ms": 949, "promptTokens": 1678, "completionTokens": 151 }
+  ],
+  "input": {
+    "example": { "params": { "a": 4, "b": -3, "c": 2, "d": 7 }, "wrongAnswer": "5/2" },
+    "otherWrongAnswers": ["6", "-9/8", "4/9", "-3/2", "6/5"]
+  },
+  "proposal": {
+    "id": "divide-by-original-a",
+    "stepType": "divide",
+    "firstWrongLine": 5,
+    "lines": { "5": "x = {(d - b) / a}" },
+    "answerFormula": "(d - b) / a",
+    "childLabelExcerpt": "do the same operation on both sides: divide by the coefficient of x on the left side of the original equation"
+  },
+  "validation": {
+    "passedFirstTry": true,
+    "explained": 6,
+    "checkedQuestions": 1000,
+    "overlaps": { "forgot-to-divide": 59, "dropped-constant": 16, "kept-const-sign": 5 }
+  },
+  "outcome": "Saved as DRAFT_TESTED in the scratch database only; not approved.",
+  "finding": "The AI's message for the child was wrong: it tells the child to make the mistake. The code checks cannot judge advice, which is why a teacher must review every draft."
+}

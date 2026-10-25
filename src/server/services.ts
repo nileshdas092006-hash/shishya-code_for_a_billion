@@ -10,7 +10,8 @@ import { applies, type Instance } from "../core/types";
 import * as mastery from "./mastery";
 import { minedMistakes, unknownErrors } from "./miner-ports";
 import { defaultRegistry, getEntry, instanceFor, type Registry, type SkillEntry } from "./skills";
-import type { ClassKind, ClassRow, ItemFormat, ItemKind, ItemRow, MistakeHitRow, ProofRunRow, Store, StudentRow } from "./store";
+import type { AttemptRow, ClassKind, ClassRow, ItemFormat, ItemKind, ItemRow, MistakeHitRow, ProofRunRow, Store, StudentRow } from "./store";
+import { TOUR_CLASSMATE_CODE, TOUR_GRADE, TOUR_JUDGE_CODE, TOUR_JUDGE_STATES, TOUR_MAX_PER_HOUR, TOUR_SECTION, TOUR_SKILL, tourPlan } from "./tour";
 
 // Session services: what the student and teacher screens call. Correct answers and mistake answers come only
 // from src/core; mastery changes only through src/server/mastery.ts. Every action logs an event row.
@@ -48,6 +49,8 @@ export type FailCode =
   | "wrong_pin"
   | "locked_out"
   | "window_closed"
+  | "busy"
+  | "not_tour"
   | "none";
 type Fail = { ok: false; reason: string; code: FailCode; retryAt?: string; errorKey?: string };
 const fail = (reason: string, code: FailCode, extra: Partial<Fail> = {}): Fail => ({ ok: false, reason, code, ...extra });
@@ -208,10 +211,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
   }
 
   /** False when the child's class needs the teacher to open the proof window and it is not open now. */
-  async function proofWindowOpen(student: StudentRow): Promise<boolean> {
-    const cls = await requireClass(student.classId);
-    return !cls.proofWindowRequired || proofWindowOf(cls).minutesLeft > 0;
-  }
+  const proofWindowOpenFor = (cls: ClassRow) => !cls.proofWindowRequired || proofWindowOf(cls).minutesLeft > 0;
   const windowClosed = () => fail("Your teacher opens the proof in class.", "window_closed");
 
   /** After a skill is MASTERED, open the skills that needed it. Returns the newly opened skill ids. */
@@ -365,18 +365,31 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
 
   let lastCleanUp = -Infinity;
 
-  return {
-    /**
-     * Deletes sandbox (tour) classes whose time is up, with everything in them. Lazy: it runs at most once an hour
-     * per server (when a tour starts). Real and test classes are never touched.
-     */
-    async cleanUpSandboxes(): Promise<{ ran: boolean; deleted: number }> {
-      if (now().getTime() - lastCleanUp < CLEANUP_EVERY_MS) return { ran: false, deleted: 0 };
-      lastCleanUp = now().getTime();
-      let deleted = 0;
-      for (const id of await store.listExpiredSandboxes(iso())) if (await store.deleteClassCascade(id, iso())) deleted++;
-      return { ran: true, deleted };
-    },
+  /**
+   * Deletes sandbox (tour) classes whose time is up, with everything in them. Lazy: it runs at most once an hour
+   * per server (when a tour starts). Real and test classes are never touched.
+   */
+  async function cleanUpSandboxes(): Promise<{ ran: boolean; deleted: number }> {
+    if (now().getTime() - lastCleanUp < CLEANUP_EVERY_MS) return { ran: false, deleted: 0 };
+    lastCleanUp = now().getTime();
+    return { ran: true, deleted: await store.deleteExpiredSandboxes(iso()) }; // one read and one batch, however many
+  }
+
+  /** "How we checked" for each item of a finished proof, in order; each puts the child's own answer back in. */
+  function proofReceipts(entry: SkillEntry, runItems: ItemRow[], attempts: AttemptRow[]): ProofReceipt[] {
+    return runItems.map((ri): ProofReceipt => {
+      const inst = instanceFor(entry, ri);
+      const a = attempts.find((x) => x.itemId === ri.id);
+      const given = a ? parseAnswerFor(entry.spec.answerKind, a.answer) : null;
+      return { itemId: ri.id, question: inst.text, receipt: given?.ok ? answerReceipt(inst, given.value) : null };
+    });
+  }
+
+  /** In a tour there is no cooldown between proofs, so a judge can fail one on purpose and try again. */
+  const cooldownFor = (cls: ClassRow) => (cls.kind === "sandbox" ? 0 : cooldownHours);
+
+  const api = {
+    cleanUpSandboxes,
 
     // ----- set-up (pseudonymous codes only) -----
     async createClass(code: string, grade: number): Promise<ClassRow> {
@@ -579,10 +592,11 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
             if (now().getTime() <= deadlineOf(open)) return fail("A proof is already running.", "running");
             await finishRun(open, entry); // abandoned: closed as not passed
           }
-          const eligible = await mastery.proofEligibility(store, studentId, entry, now(), cooldownHours);
+          const cls = await requireClass(student.classId);
+          const eligible = await mastery.proofEligibility(store, studentId, entry, now(), cooldownFor(cls));
           if (!eligible.ok) return fail(eligible.reason, eligible.code, { retryAt: eligible.retryAt });
           // a proof starts only while the teacher has the window open; once started it keeps its own 30 minutes
-          if (!(await proofWindowOpen(student))) return windowClosed();
+          if (!proofWindowOpenFor(cls)) return windowClosed();
 
           const runId = randomUUID();
           const startedAt = iso();
@@ -675,13 +689,8 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         const attempts = await store.listAttemptsForItems(runItems.map((i) => i.id));
         for (const a of attempts) if (!a.correct && a.mistakeId) wrong.push(a.mistakeId);
         const unlocked = out.state === "MASTERED" ? await unlockAfter(item.studentId, item.skillId) : [];
-        // receipts only now that the proof is finished; each puts the child's own answer back in
-        const receipts = runItems.map((ri): ProofReceipt => {
-          const inst = instanceFor(entry, ri);
-          const a = attempts.find((x) => x.itemId === ri.id);
-          const given = a ? parseAnswerFor(entry.spec.answerKind, a.answer) : null;
-          return { itemId: ri.id, question: inst.text, receipt: given?.ok ? answerReceipt(inst, given.value) : null };
-        });
+        // receipts only now that the proof is finished
+        const receipts = proofReceipts(entry, runItems, attempts);
         return { ok: true as const, finished: true as const, ...out, practise: [...new Set(wrong)], unlocked, receipts };
       });
     },
@@ -721,8 +730,9 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
           if (now().getTime() <= deadlineOf(open)) return { canStart: false as const, code: "running" as const };
           await finishRun(open, entry);
         }
-        const eligible = await mastery.proofEligibility(store, studentId, entry, now(), cooldownHours);
-        if (eligible.ok && !(await proofWindowOpen(student))) return { canStart: false as const, code: "window_closed" as const };
+        const cls = await requireClass(student.classId);
+        const eligible = await mastery.proofEligibility(store, studentId, entry, now(), cooldownFor(cls));
+        if (eligible.ok && !proofWindowOpenFor(cls)) return { canStart: false as const, code: "window_closed" as const };
         if (eligible.ok) return { canStart: true as const };
         return { canStart: false as const, code: eligible.code, ...(eligible.retryAt ? { retryAt: eligible.retryAt } : {}) };
       });
@@ -876,7 +886,8 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     /** Everything the class board shows, reading the class and its students once (reads run side by side). */
     async getClassBoard(classId: string) {
       const cls = await requireClass(classId);
-      const [students, mined] = await Promise.all([store.listStudents(classId), pendingMined()]);
+      // a tour class never sees (or decides) the real mistake library's drafts
+      const [students, mined] = await Promise.all([store.listStudents(classId), cls.kind === "sandbox" ? [] : pendingMined()]);
       const [states, stuck] = await Promise.all([classStates(classId, students), stuckGroups(classId)]);
       return { stuck, progress: progressFrom(students, states), mined, codes: students.map((s) => s.code), proofWindow: proofWindowOf(cls) };
     },
@@ -930,6 +941,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       edits?: { label?: string; childLabel?: string },
     ): Promise<{ ok: true } | { ok: false; reason: string }> {
       const cls = await requireClass(classId);
+      if (cls.kind === "sandbox") return { ok: false, reason: "In the tour, nothing is saved." };
       const row = await store.getMinedMistake(id);
       if (!row || row.status !== "DRAFT_TESTED") return { ok: false, reason: "This is not a draft waiting for review." };
       let edited = false;
@@ -1007,7 +1019,190 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       await log(null, "pilot_export", { classId, rows: rows.length });
       return [header.join(","), ...rows].join("\n") + "\n";
     },
+
+    /** "How we checked" for the child's last finished proof on a skill (null if none), e.g. on the Judge Tour's stop 4. */
+    async lastProofReceipts(studentId: string, skillId: string): Promise<ProofReceipt[] | null> {
+      const entry = await entryOf(skillId);
+      const run = await store.getLastFinishedProofRun(studentId, skillId);
+      if (!run) return null;
+      const [items, attempts] = await Promise.all([store.getItems(run.itemIds), store.listAttemptsForItems(run.itemIds)]);
+      const ordered = run.itemIds.map((id) => items.find((i) => i.id === id)).filter((i): i is ItemRow => Boolean(i));
+      return proofReceipts(entry, ordered, attempts);
+    },
+
+    // ----- the Judge Tour (sandbox classes only: never touches real classes, the mistake library or impact numbers) -----
+    /**
+     * Starts a tour: a sandbox class (deleted after SANDBOX_HOURS) with the judge's child and 30 made-up children,
+     * the same picture every time (see tour.ts), written in a few batched writes. At most TOUR_MAX_PER_HOUR tours
+     * start per hour, counted in the database. Expired tours are cleaned up first (at most once an hour).
+     */
+    async startTour(): Promise<{ ok: true; classId: string; classCode: string; studentId: string } | Fail> {
+      await cleanUpSandboxes();
+      const hourAgo = new Date(now().getTime() - 3600_000).toISOString();
+      if ((await store.countEventsSince("tour_started", hourAgo)) >= TOUR_MAX_PER_HOUR) {
+        return fail("Many judges are trying Shishya right now. Please try again in a few minutes.", "busy");
+      }
+      const plan = tourPlan(registry);
+      const start = now().getTime();
+      const at = (minutesAgo: number) => new Date(start - minutesAgo * 60_000).toISOString();
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const classId = randomUUID();
+        const cls = {
+          id: classId,
+          code: `TOUR-${randomSuffix()}`,
+          grade: TOUR_GRADE,
+          section: TOUR_SECTION,
+          aiAllowed: true,
+          proofWindowRequired: false,
+          proofWindowOpenUntil: null,
+          kind: "sandbox" as const,
+          expiresAt: new Date(start + SANDBOX_HOURS * 3600_000).toISOString(),
+        };
+        const judge: StudentRow = { id: randomUUID(), classId, code: TOUR_JUDGE_CODE };
+        const children = plan.map((p) => ({ plan: p, row: { id: randomUUID(), classId, code: p.code } as StudentRow }));
+        const items: ItemRow[] = [];
+        const attempts: AttemptRow[] = [];
+        const proofRuns: ProofRunRow[] = [];
+        const seeds: mastery.SandboxSeed[] = Object.entries(TOUR_JUDGE_STATES).map(([skillId, state]) => ({ studentId: judge.id, skillId, state }));
+        for (const { plan: p, row } of children) {
+          for (const a of p.answers) {
+            const entry = getEntry(registry, a.skillId);
+            const item: ItemRow = {
+              id: randomUUID(),
+              studentId: row.id,
+              skillId: a.skillId,
+              version: entry.spec.version,
+              seed: a.seed,
+              kind: "practice",
+              format: "solve",
+              runId: null,
+              mistakeId: null,
+              paramsJson: JSON.stringify(a.instance.params),
+              answer: answerText(a.instance.answer),
+              servedAt: at(a.minutesAgo + 1),
+              answeredAt: at(a.minutesAgo),
+            };
+            items.push(item);
+            attempts.push({
+              id: randomUUID(),
+              studentId: row.id,
+              itemId: item.id,
+              answer: answerText(a.given),
+              correct: a.correct,
+              mistakeId: a.mistakeId,
+              createdAt: at(a.minutesAgo),
+            });
+          }
+          const proved: Record<string, { runId: string; itemIds: string[] }> = {};
+          for (const skillId of p.proofs) {
+            // a real proof run, all correct, on fresh single-use questions (the seeds are new every tour)
+            const entry = getEntry(registry, skillId);
+            const runId = randomUUID();
+            const { solve, apply } = entry.spec.proofRule;
+            const formats: ItemFormat[] = [...Array<ItemFormat>(solve).fill("solve"), ...Array<ItemFormat>(apply).fill("apply")];
+            const runItems = formats.map((format, i): ItemRow => {
+              const seed = newSeed();
+              const instance = instanceFor(entry, { seed, format });
+              return {
+                id: randomUUID(),
+                studentId: row.id,
+                skillId,
+                version: entry.spec.version,
+                seed,
+                kind: "proof",
+                format,
+                runId,
+                mistakeId: null,
+                paramsJson: JSON.stringify(instance.params),
+                answer: answerText(instance.answer),
+                servedAt: at(1500),
+                answeredAt: at(1500 - 3 * (i + 1)),
+              };
+            });
+            items.push(...runItems);
+            for (const ri of runItems) {
+              attempts.push({ id: randomUUID(), studentId: row.id, itemId: ri.id, answer: ri.answer, correct: true, mistakeId: null, createdAt: ri.answeredAt! });
+            }
+            const itemIds = runItems.map((i) => i.id);
+            proofRuns.push({ id: runId, studentId: row.id, skillId, version: entry.spec.version, itemIds, aiOff: true, passed: true, startedAt: at(1500), finishedAt: at(1485) });
+            proved[skillId] = { runId, itemIds };
+          }
+          for (const [skillId, state] of Object.entries(p.states)) {
+            seeds.push({ studentId: row.id, skillId, state, ...(proved[skillId] ? { proof: proved[skillId] } : {}) });
+          }
+        }
+        const inserted = await store.insertSandbox({
+          cls,
+          students: [judge, ...children.map((c) => c.row)],
+          items,
+          attempts,
+          proofRuns,
+          events: [{ studentId: null, type: "tour_started", payload: { classId, students: children.length }, at: iso() }],
+        });
+        if (!inserted) continue; // a class code or proof question was already taken: try again with new ones
+        await mastery.seedSandboxMastery(store, classId, seeds, now(), registry);
+        return { ok: true, classId, classCode: cls.code, studentId: judge.id };
+      }
+      throw new Error("Could not start a tour. Try again.");
+    },
+
+    /**
+     * Stop 3 of the tour, "Skip ahead": finishes the judge's teaching on the tour's skill THROUGH the real teach
+     * code (submitTeachStep), typing the correct line worked out by src/core for each trace still to fix. KEY1 is
+     * then earned only by the normal teach rule in mastery.ts. A new session is started if the last one can no
+     * longer meet the rule. Refused for any child who is not in a tour class.
+     */
+    async tourSkipAhead(studentId: string): Promise<{ ok: true; state: mastery.MasteryState } | Fail> {
+      const student = await requireStudent(studentId);
+      if ((await requireClass(student.classId)).kind !== "sandbox") return fail("Skip ahead is only for the Judge Tour.", "not_tour");
+      const entry = await entryOf(TOUR_SKILL);
+      let state = await mastery.refreshUnlock(store, studentId, entry, now());
+      if (state !== "OPEN") return { ok: true, state };
+      const { traces, triesMax } = entry.spec.teachRule;
+      const accepted = (t: { lineCorrect: boolean; fixAccepted: boolean }) => t.lineCorrect && t.fixAccepted;
+
+      const teachItems = await store.listItems({ studentId, skillId: TOUR_SKILL, kind: "teach", version: entry.spec.version });
+      const lastSession = teachItems.at(-1)?.runId;
+      let session = teachItems.filter((i) => lastSession && i.runId === lastSession);
+      let tries: { lineCorrect: boolean; fixAccepted: boolean }[][] = await Promise.all(session.map((i) => store.listTeachTraces(i.id)));
+      const canQualify = session.length === traces && tries.every((t) => t.some(accepted) || t.length < triesMax);
+      if (!canQualify) {
+        const started = await api.startTeach(studentId, TOUR_SKILL);
+        if (!started.ok) return started;
+        const byId = new Map((await store.getItems(started.traces.map((t) => t.itemId))).map((i) => [i.id, i]));
+        session = started.traces.map((t) => byId.get(t.itemId)!);
+        tries = session.map(() => []);
+      }
+      for (const [i, item] of session.entries()) {
+        if (tries[i].some(accepted)) continue;
+        const instance = instanceFor(entry, item);
+        const mistake = entry.spec.mistakes.find((m) => m.id === item.mistakeId);
+        if (!mistake) throw new Error(`Unknown mistake on teach item ${item.id}`);
+        const line = mistake.apply(instance).firstWrongLine;
+        const fix = entry.spec.solve(instance).trace[line - 1].text;
+        const step = await api.submitTeachStep(item.id, line, fix);
+        if (step.ok) state = step.state;
+      }
+      return { ok: true, state };
+    },
+
+    /** Stop 3 of the tour: the made-up classmate's finished proof, to show that every child gets different numbers. */
+    async tourClassmateProof(studentId: string): Promise<{ code: string; questions: { format: ItemFormat; text: string }[] } | null> {
+      const student = await requireStudent(studentId);
+      if ((await requireClass(student.classId)).kind !== "sandbox") return null;
+      const classmate = await store.findStudentByCode(student.classId, TOUR_CLASSMATE_CODE);
+      const run = classmate && (await store.getLastFinishedProofRun(classmate.id, TOUR_SKILL));
+      if (!classmate || !run) return null;
+      const entry = await entryOf(TOUR_SKILL);
+      const items = await store.getItems(run.itemIds);
+      const questions = run.itemIds
+        .map((id) => items.find((i) => i.id === id))
+        .filter((i): i is ItemRow => Boolean(i))
+        .map((i) => ({ format: i.format, text: i.format === "apply" ? entry.generateApply(createRng(i.seed)).text : instanceFor(entry, i).text }));
+      return { code: classmate.code, questions };
+    },
   };
+  return api;
 }
 
 export type Services = ReturnType<typeof createServices>;

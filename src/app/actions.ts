@@ -73,6 +73,25 @@ export async function logoutStudent() {
   redirect("/s");
 }
 
+// ---------------- the Judge Tour (a made-up sandbox class, deleted after 24 hours) ----------------
+
+/** Starts a tour and logs this browser in as the tour's child AND the tour class's teacher (no PIN). */
+export async function startJudgeTour(): Promise<{ error?: MessageKey }> {
+  if (notSetUp("judge tour")) return { error: "setup.missing" };
+  const tour = await (await getServices()).startTour();
+  if (!tour.ok) return { error: "tour.busy" };
+  await startStudentSession(tour.studentId);
+  await addTeacherClass(tour.classId);
+  redirect("/tour/1");
+}
+
+/** Stop 3: finishes the tour child's teaching through the real teach code (refused outside a tour), then the proof. */
+export async function skipAheadInTour() {
+  const student = await studentOrNull();
+  if (student) await (await getServices()).tourSkipAhead(student.studentId);
+  redirect("/tour/3");
+}
+
 // ---------------- student: practise ----------------
 
 export async function servePractice(skillId: string) {

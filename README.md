@@ -1,5 +1,7 @@
 # Shishya
 
+Judges: open the live link and press **Try it as a judge**. It takes 3 minutes and uses a made-up class.
+
 Shishya is a free, open-source algebra practice app for Class 7–9 children in India's crowded classrooms. It finds the
 exact step of an equation each child gets wrong, lets the child fix it by "teaching the Shishya" (a classmate character
 whose working has a mistake), and then asks for proof. No AI help inside the proof. It opens only when the teacher

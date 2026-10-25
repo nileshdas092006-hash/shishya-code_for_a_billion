@@ -1,6 +1,6 @@
 import { parseAnswerFor, sameAnswer } from "../core/answer";
 import { checkTeachStep } from "../core/teach";
-import { instanceFor, type SkillEntry } from "./skills";
+import { defaultRegistry, getEntry, instanceFor, type Registry, type SkillEntry } from "./skills";
 import type { AttemptRow, EventInput, ItemRow, MasteryRow, MasteryState, ProofRunRow, Store } from "./store";
 
 // The mastery engine: the ONLY code allowed to write the mastery table (a test enforces this).
@@ -23,6 +23,8 @@ type Evidence = {
   key1?: { sessionId: string; itemIds: string[]; traceIds: string[]; version: string };
   proof?: { runId: string; itemIds: string[]; version: string };
   failedProofs?: { runId: string; version: string; reasons: string[] }[];
+  /** A made-up child's state in a Judge Tour (sandbox) class, written by seedSandboxMastery. */
+  seeded?: { by: "judge tour" };
 };
 
 /** PROOF_COOLDOWN_HOURS: hours between a failed proof and the next one. Default 24; 0 allowed for demos. */
@@ -240,6 +242,38 @@ export async function verifyProofRun(store: Store, entry: SkillEntry, run: Proof
   }
   if (formats.solve !== rule.solve || formats.apply !== rule.apply) reasons.push("wrong mix of items");
   return { passed: rule.allCorrect && reasons.length === 0, reasons };
+}
+
+/** One made-up child's state for one skill in a Judge Tour class (a proof run, if given, must be a real passed run). */
+export type SandboxSeed = { studentId: string; skillId: string; state: MasteryState; proof?: { runId: string; itemIds: string[] } };
+
+/**
+ * ONLY for Judge Tour (sandbox) classes: writes the made-up children's states in one batch, marked as seeded, with
+ * one log line. Refuses any class that is not a sandbox, and any student who is not in that class. Real and test
+ * classes can never get a state this way. Returns how many rows it wrote (a LOCKED state needs no row).
+ */
+export async function seedSandboxMastery(
+  store: Store,
+  classId: string,
+  seeds: SandboxSeed[],
+  now: Date,
+  registry: Registry = defaultRegistry,
+): Promise<number> {
+  const [cls, students] = await Promise.all([store.getClass(classId), store.listStudents(classId)]);
+  if (!cls || cls.kind !== "sandbox") throw new Error("Mastery can be seeded only in a sandbox (Judge Tour) class");
+  const inClass = new Set(students.map((s) => s.id));
+  const outsider = seeds.find((s) => !inClass.has(s.studentId));
+  if (outsider) throw new Error(`Student ${outsider.studentId} is not in this sandbox class`);
+  const at = now.toISOString();
+  const rows: MasteryRow[] = seeds
+    .filter((s) => s.state !== "LOCKED")
+    .map((s) => {
+      const { version } = getEntry(registry, s.skillId).spec;
+      const evidence: Evidence = { seeded: { by: "judge tour" }, ...(s.proof ? { proof: { ...s.proof, version } } : {}) };
+      return { studentId: s.studentId, skillId: s.skillId, state: s.state, evidenceJson: JSON.stringify(evidence), version, updatedAt: at };
+    });
+  await store.writeMastery(rows, [{ studentId: null, type: "tour_mastery_seeded", payload: { classId, rows: rows.length }, at }]);
+  return rows.length;
 }
 
 /** After a proof run is finished: KEY1 / NOT_YET → MASTERED if it passes, otherwise NOT_YET (KEY1 kept). */

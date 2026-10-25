@@ -55,7 +55,9 @@ describe("every button that needs JavaScript waits for the page", () => {
     "s/home/page.tsx", // log out
     "teacher/CreateClassForm.tsx", // create a class
     "teacher/TeacherPinForm.tsx", // teacher PIN
-    "teacher/[class]/page.tsx", // Unlock for class
+    "teacher/[class]/ClassBoardView.tsx", // Unlock for class, open / close proofs, give new codes
+    "tour/StartTourForm.tsx", // Try it as a judge
+    "tour/[stop]/page.tsx", // Skip ahead (Judge Tour, stop 3)
   ];
 
   it("raw <button> appears only in ReadyButton and in server-action forms", () => {

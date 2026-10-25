@@ -8,7 +8,7 @@ import { answerProof, makeClock, SKILL, teachPerfectly, tempDbUrl } from "./help
 // number of students.
 
 const CLASS_SIZE = 40;
-const LIMITS = { classBoard: 8, unlockClass: 8, skillMap: 3, teacherPin: 2, proofFinish: 20 };
+const LIMITS = { classBoard: 8, unlockClass: 8, skillMap: 3, teacherPin: 2, proofFinish: 20, tourStart: 7, cleanUp: 4 };
 
 let cleanup: (() => void) | undefined;
 afterEach(() => {
@@ -94,6 +94,32 @@ describe("database round trips stay small and do not grow with the class", () =>
     const pin = await trips(() => svc.verifyTeacherPin(room.classCode, "123456"));
     expect(pin.out.ok).toBe(true);
     expect(pin.n).toBeLessThanOrEqual(LIMITS.teacherPin);
+  });
+
+  it(`starting a Judge Tour (31 children and their whole history) takes at most ${LIMITS.tourStart}, with or without the clean-up`, async () => {
+    const { svc, trips, clock } = await counted();
+    const first = await trips(() => svc.startTour()); // the hourly clean-up runs here (nothing has expired yet)
+    expect(first.out.ok).toBe(true);
+    expect(first.n).toBeLessThanOrEqual(LIMITS.tourStart);
+    clock.advanceMinutes(5);
+    const second = await trips(() => svc.startTour()); // no clean-up within the hour
+    expect(second.out.ok).toBe(true);
+    expect(second.n).toBeLessThanOrEqual(LIMITS.tourStart - 1);
+  });
+
+  it(`the hourly clean-up deletes any number of expired tours in at most ${LIMITS.cleanUp} round trips`, async () => {
+    const { svc, store, trips, clock } = await counted();
+    const tours = [];
+    for (let i = 0; i < 3; i++) {
+      const tour = await svc.startTour();
+      if (!tour.ok) throw new Error(tour.reason);
+      tours.push(tour.classId);
+    }
+    clock.advanceHours(25);
+    const { n, out } = await trips(() => svc.cleanUpSandboxes());
+    expect(out).toEqual({ ran: true, deleted: 3 });
+    expect(n).toBeLessThanOrEqual(LIMITS.cleanUp);
+    for (const id of tours) expect(await store.getClass(id)).toBeUndefined();
   });
 
   it(`the answer that finishes a proof (check, mastery, what to practise, unlocks) takes at most ${LIMITS.proofFinish}`, async () => {

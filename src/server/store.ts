@@ -496,6 +496,53 @@ export async function openStore(config: StoreConfig | string = {}) {
     });
   }
 
+  /**
+   * Deletes the classes the condition picks (on classes c), with EVERY row of their students: one read of the counts,
+   * then ONE batch (all or nothing), however many classes. Logs one class_deleted event per class, counts only.
+   */
+  async function deleteClassesWhere(where: string, args: InValue[], at: string): Promise<DeletedCounts[]> {
+    const ofClass = "(SELECT id FROM students WHERE classId = c.id)";
+    const found = await all(
+      `SELECT c.id, c.kind,
+         (SELECT COUNT(*) FROM students WHERE classId = c.id) AS students,
+         (SELECT COUNT(*) FROM items WHERE studentId IN ${ofClass}) AS items,
+         (SELECT COUNT(*) FROM attempts WHERE studentId IN ${ofClass}) AS attempts,
+         (SELECT COUNT(*) FROM teachTraces WHERE studentId IN ${ofClass}) AS teachTraces,
+         (SELECT COUNT(*) FROM proofRuns WHERE studentId IN ${ofClass}) AS proofRuns,
+         (SELECT COUNT(*) FROM mastery WHERE studentId IN ${ofClass}) AS mastery,
+         (SELECT COUNT(*) FROM events WHERE studentId IN ${ofClass}) AS events
+       FROM classes c WHERE ${where}`,
+      ...args,
+    );
+    if (found.length === 0) return [];
+    const ids = found.map((r) => r.id as string);
+    const ofIds = `(SELECT id FROM students WHERE classId IN (${marks(ids.length)}))`;
+    const del = (table: string) => ({ sql: `DELETE FROM ${table} WHERE studentId IN ${ofIds}`, args: ids as InValue[] });
+    const counts = found.map(
+      (r): DeletedCounts => ({
+        students: Number(r.students),
+        items: Number(r.items),
+        attempts: Number(r.attempts),
+        teachTraces: Number(r.teachTraces),
+        proofRuns: Number(r.proofRuns),
+        mastery: Number(r.mastery),
+        events: Number(r.events),
+      }),
+    );
+    await writeBatch([
+      del("teachTraces"),
+      del("attempts"),
+      del("items"),
+      del("proofRuns"),
+      del("mastery"),
+      del("events"),
+      { sql: `DELETE FROM students WHERE classId IN (${marks(ids.length)})`, args: ids },
+      { sql: `DELETE FROM classes WHERE id IN (${marks(ids.length)})`, args: ids },
+      ...found.map((r, i) => eventStatement({ studentId: null, type: "class_deleted", payload: { kind: r.kind, ...counts[i] }, at })),
+    ]);
+    return counts;
+  }
+
   return {
     close: () => client.close(),
 
@@ -511,53 +558,74 @@ export async function openStore(config: StoreConfig | string = {}) {
         c.kind ?? "real", c.expiresAt ?? null,
       );
     },
-    /** Sandbox classes whose expiry time has passed (real and test classes never expire). */
-    async listExpiredSandboxes(now: string): Promise<string[]> {
-      return (await all("SELECT id FROM classes WHERE kind = 'sandbox' AND expiresAt IS NOT NULL AND expiresAt <= ?", now)).map((r) => r.id as string);
+    /**
+     * A whole Judge Tour class in ONE round trip, all or nothing: the class, its students, their answered items,
+     * attempts and finished proof runs, and log lines. False if a unique rule refused it (a class code or a proof
+     * question already used), so the caller can try again with new ones.
+     */
+    async insertSandbox(s: {
+      cls: NewClass & { kind: "sandbox" };
+      students: StudentRow[];
+      items: ItemRow[];
+      attempts: AttemptRow[];
+      proofRuns: ProofRunRow[];
+      events: EventInput[];
+    }): Promise<boolean> {
+      const rows = <T>(table: string, columns: string[], list: T[], values: (x: T) => InValue[]) => {
+        const out: { sql: string; args: InValue[] }[] = [];
+        for (let i = 0; i < list.length; i += 100) {
+          const chunk = list.slice(i, i + 100);
+          out.push({
+            sql: `INSERT INTO ${table} (${columns.join(", ")}) VALUES ${chunk.map(() => `(${marks(columns.length)})`).join(", ")}`,
+            args: chunk.flatMap(values),
+          });
+        }
+        return out;
+      };
+      const c = s.cls;
+      try {
+        await writeBatch([
+          {
+            sql: `INSERT INTO classes (id, code, grade, section, aiAllowed, teacherPinHash, proofWindowRequired, proofWindowOpenUntil, kind, expiresAt)
+                  VALUES (?, ?, ?, ?, ?, NULL, ?, ?, 'sandbox', ?)`,
+            args: [c.id, c.code, c.grade, c.section, c.aiAllowed ? 1 : 0, c.proofWindowRequired ? 1 : 0, c.proofWindowOpenUntil, c.expiresAt ?? null],
+          },
+          ...rows("students", ["id", "classId", "code"], s.students, (x) => [x.id, x.classId, x.code]),
+          ...rows(
+            "items",
+            ["id", "studentId", "skillId", "version", "seed", "kind", "format", "runId", "mistakeId", "paramsJson", "answer", "servedAt", "answeredAt"],
+            s.items,
+            (i) => [i.id, i.studentId, i.skillId, i.version, i.seed, i.kind, i.format, i.runId, i.mistakeId, i.paramsJson, i.answer, i.servedAt, i.answeredAt],
+          ),
+          ...rows("attempts", ["id", "studentId", "itemId", "answer", "correct", "mistakeId", "createdAt"], s.attempts, (a) => [
+            a.id, a.studentId, a.itemId, a.answer, a.correct ? 1 : 0, a.mistakeId, a.createdAt,
+          ]),
+          ...rows("proofRuns", ["id", "studentId", "skillId", "version", "itemIds", "aiOff", "passed", "startedAt", "finishedAt"], s.proofRuns, (r) => [
+            r.id, r.studentId, r.skillId, r.version, JSON.stringify(r.itemIds), r.aiOff ? 1 : 0,
+            r.passed === null ? null : r.passed ? 1 : 0, r.startedAt, r.finishedAt,
+          ]),
+          ...s.events.map(eventStatement),
+        ]);
+        return true;
+      } catch (e) {
+        if (isUniqueViolation(e)) return false;
+        throw e;
+      }
+    },
+    /** How many events of a type were logged since a time (uses the events_type_time index). */
+    async countEventsSince(type: string, since: string): Promise<number> {
+      return Number((await one("SELECT COUNT(*) AS n FROM events WHERE type = ? AND createdAt >= ?", type, since))!.n);
     },
     /**
      * Deletes a class and EVERY row of its students (items, attempts, teach traces, proof runs, mastery, their
      * events), all or nothing, and logs one class_deleted event with counts only. Null if there is no such class.
      */
-    deleteClassCascade(classId: string, at: string): Promise<DeletedCounts | null> {
-      const ofClass = "(SELECT id FROM students WHERE classId = ?)";
-      return transaction(async () => {
-        const r = await one(
-          `SELECT c.kind,
-             (SELECT COUNT(*) FROM students WHERE classId = c.id) AS students,
-             (SELECT COUNT(*) FROM items WHERE studentId IN ${ofClass}) AS items,
-             (SELECT COUNT(*) FROM attempts WHERE studentId IN ${ofClass}) AS attempts,
-             (SELECT COUNT(*) FROM teachTraces WHERE studentId IN ${ofClass}) AS teachTraces,
-             (SELECT COUNT(*) FROM proofRuns WHERE studentId IN ${ofClass}) AS proofRuns,
-             (SELECT COUNT(*) FROM mastery WHERE studentId IN ${ofClass}) AS mastery,
-             (SELECT COUNT(*) FROM events WHERE studentId IN ${ofClass}) AS events
-           FROM classes c WHERE c.id = ?`,
-          ...Array<InValue>(7).fill(classId),
-        );
-        if (!r) return null;
-        const counts: DeletedCounts = {
-          students: Number(r.students),
-          items: Number(r.items),
-          attempts: Number(r.attempts),
-          teachTraces: Number(r.teachTraces),
-          proofRuns: Number(r.proofRuns),
-          mastery: Number(r.mastery),
-          events: Number(r.events),
-        };
-        const del = (table: string) => ({ sql: `DELETE FROM ${table} WHERE studentId IN ${ofClass}`, args: [classId] as InValue[] });
-        await writeBatch([
-          del("teachTraces"),
-          del("attempts"),
-          del("items"),
-          del("proofRuns"),
-          del("mastery"),
-          del("events"),
-          { sql: "DELETE FROM students WHERE classId = ?", args: [classId] },
-          { sql: "DELETE FROM classes WHERE id = ?", args: [classId] },
-          eventStatement({ studentId: null, type: "class_deleted", payload: { kind: r.kind, ...counts }, at }),
-        ]);
-        return counts;
-      });
+    async deleteClassCascade(classId: string, at: string): Promise<DeletedCounts | null> {
+      return (await deleteClassesWhere("c.id = ?", [classId], at))[0] ?? null;
+    },
+    /** Deletes every sandbox class whose expiry time has passed, the same way, in ONE batch. Real and test classes never expire. */
+    async deleteExpiredSandboxes(now: string): Promise<number> {
+      return (await deleteClassesWhere("c.kind = 'sandbox' AND c.expiresAt IS NOT NULL AND c.expiresAt <= ?", [now], now)).length;
     },
     async getClass(id: string): Promise<ClassRow | undefined> {
       const r = await one(`SELECT ${CLASS_COLUMNS} FROM classes WHERE id = ?`, id);

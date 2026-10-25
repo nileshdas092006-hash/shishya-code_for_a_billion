@@ -90,7 +90,7 @@ export function ProveScreen({ skillId, answerKind }: { skillId: string; answerKi
   if (outcome) {
     return (
       <div className="flex flex-col gap-5">
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-4">
           <Shishya mood={outcome.passed ? "happy" : "thinking"} size={150} />
           <p className={`text-3xl font-extrabold ${outcome.passed ? "text-green-800" : "text-amber-900"}`}>
             {t(outcome.passed ? "prove.mastered" : "prove.notYet")}
