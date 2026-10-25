@@ -8,7 +8,18 @@ import { answerProof, makeClock, SKILL, teachPerfectly, tempDbUrl } from "./help
 // number of students.
 
 const CLASS_SIZE = 40;
-const LIMITS = { classBoard: 8, unlockClass: 8, skillMap: 3, teacherPin: 2, proofFinish: 20, tourStart: 7, cleanUp: 4, health: 2, studentLogin: 2 };
+const LIMITS = {
+  classBoard: 8,
+  unlockClass: 8,
+  skillMap: 3,
+  teacherPin: 2,
+  proofFinish: 20,
+  tourStart: 7,
+  cleanUp: 4,
+  health: 2,
+  studentLogin: 2,
+  paperSave: 6,
+};
 
 let cleanup: (() => void) | undefined;
 afterEach(() => {
@@ -163,5 +174,21 @@ describe("database round trips stay small and do not grow with the class", () =>
     const { n, out } = await trips(() => svc.submitProofAnswer(itemIds.at(-1)!, lastAnswer));
     expect(out).toMatchObject({ ok: true, finished: true, passed: true, state: "MASTERED" });
     expect(n).toBeLessThanOrEqual(LIMITS.proofFinish);
+  });
+
+  it(`saving a paper worksheet for ${CLASS_SIZE} children × 8 questions takes at most ${LIMITS.paperSave}; reading its grid at most 3`, async () => {
+    const { svc, trips } = await counted();
+    const { room } = await classOf40(svc);
+    const ws = await svc.createWorksheet(room.classId, SKILL, 8);
+    if (!ws.ok) throw new Error(ws.reason);
+    const entries = room.studentCodes.flatMap((studentCode) =>
+      ws.worksheet.questions.map((q) => ({ studentCode, question: q.n, text: q.n % 3 === 0 ? "9999" : "1" })),
+    );
+    const { n, out } = await trips(() => svc.savePaperAnswers(room.classId, ws.worksheet.code, entries));
+    expect(out).toMatchObject({ ok: true, saved: CLASS_SIZE * 8 });
+    expect(n).toBeLessThanOrEqual(LIMITS.paperSave);
+    const grid = await trips(() => svc.getWorksheet(room.classId, ws.worksheet.code));
+    expect(grid.out?.grid).toHaveLength(CLASS_SIZE);
+    expect(grid.n).toBeLessThanOrEqual(3);
   });
 });

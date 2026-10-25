@@ -161,6 +161,7 @@ async function orphans(url: string) {
     "SELECT COUNT(*) AS n FROM proofRuns WHERE studentId NOT IN (SELECT id FROM students)",
     "SELECT COUNT(*) AS n FROM mastery WHERE studentId NOT IN (SELECT id FROM students)",
     "SELECT COUNT(*) AS n FROM events WHERE studentId IS NOT NULL AND studentId NOT IN (SELECT id FROM students)",
+    "SELECT COUNT(*) AS n FROM worksheets WHERE classId NOT IN (SELECT id FROM classes)",
   ];
   const db = createClient({ url });
   try {
@@ -177,12 +178,13 @@ describe("deleteClassCascade", () => {
     const kept = await classOfKind(store, "real");
     const a = await busyChild(svc, store, gone, "8B-1");
     await busyChild(svc, store, gone, "8B-2");
+    expect(await svc.createWorksheet(gone, SKILL, 4)).toMatchObject({ ok: true }); // a paper worksheet goes too
     const b = await busyChild(svc, store, kept, "8B-1");
     const keptBefore = await store.exportCounts(kept);
     const studentEventsBefore = (await store.listEvents()).filter((e) => e.studentId === b.id).length;
 
     const counts = await store.deleteClassCascade(gone, "2026-10-20T10:00:00.000Z");
-    expect(counts).toMatchObject({ students: 2, mastery: 2, proofRuns: 2 });
+    expect(counts).toMatchObject({ students: 2, mastery: 2, proofRuns: 2, worksheets: 1 });
     expect(counts!.items).toBeGreaterThan(0);
     expect(counts!.attempts).toBeGreaterThan(0);
     expect(counts!.teachTraces).toBe(6);
@@ -191,7 +193,7 @@ describe("deleteClassCascade", () => {
     expect(await store.getClass(gone)).toBeUndefined();
     expect(await store.getStudent(a.id)).toBeUndefined();
     expect(await store.listMastery({ studentId: a.id })).toEqual([]);
-    expect(await orphans(url)).toEqual([0, 0, 0, 0, 0, 0, 0]);
+    expect(await orphans(url)).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
 
     // the other class is untouched
     expect(await store.getClass(kept)).toBeDefined();
@@ -224,7 +226,7 @@ describe("sandbox clean-up", () => {
     expect(await svc.cleanUpSandboxes()).toEqual({ ran: true, deleted: 1 });
     expect(await store.getClass(expired)).toBeUndefined();
     for (const id of [live, real, test]) expect(await store.getClass(id)).toBeDefined();
-    expect(await orphans(url)).toEqual([0, 0, 0, 0, 0, 0, 0]);
+    expect(await orphans(url)).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
 
     // within the hour: nothing runs, even though another sandbox has expired
     const late = await classOfKind(store, "sandbox", past);

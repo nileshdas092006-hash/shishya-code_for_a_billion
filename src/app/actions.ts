@@ -320,3 +320,52 @@ export async function giveNewCodes(classCode: string) {
   await (await getServices()).reissueStudentCodes(cls.id);
   redirect(`/teacher/${encodeURIComponent(cls.code)}?codes=new#codes`);
 }
+
+// ---------------- teacher: Paper Mode (a printed worksheet; the teacher types in each child's final answer) ----------------
+
+/** "Make the worksheet": a skill and 1 to 20 questions; then the worksheet's own page (print it, type in answers). */
+export async function createWorksheetAction(classCode: string, form: FormData) {
+  const cls = await classOrNull(classCode);
+  if (!cls) redirect("/teacher");
+  const skill = knownSkill(form.get("skill"));
+  const count = Number(str(form.get("count"), 3));
+  const made = skill ? await (await getServices()).createWorksheet(cls.id, skill, count) : null;
+  if (!made?.ok) redirect(`${boardOf(cls.code)}/paper?bad=1`);
+  redirect(`${boardOf(cls.code)}/paper/${encodeURIComponent(made.worksheet.code)}`);
+}
+
+export type PaperSaveState =
+  | { status: "idle"; round: 0 }
+  | { status: "error"; error: MessageKey; round: number }
+  | {
+      status: "saved";
+      saved: number;
+      correct: number;
+      already: number;
+      unreadable: { studentCode: string; question: number; text: string }[];
+      round: number;
+    };
+
+/** The answer grid: boxes named c:<child code>:<question>. An empty box is not answered. */
+export async function savePaperAction(classCode: string, sheetCode: string, prev: PaperSaveState, form: FormData): Promise<PaperSaveState> {
+  const round = prev.round + 1;
+  const cls = await classOrNull(classCode);
+  if (!cls) return { status: "error", error: "paper.grid.auth", round };
+  const entries = [];
+  for (const [name, value] of form.entries()) {
+    const m = /^c:([A-Z0-9-]{1,20}):(\d{1,2})$/.exec(name);
+    if (m && typeof value === "string" && value.trim() !== "") entries.push({ studentCode: m[1], question: Number(m[2]), text: str(value, 40) });
+    if (entries.length >= 1500) break; // 60 children × 20 questions at most
+  }
+  const out = await (await getServices()).savePaperAnswers(cls.id, str(sheetCode, 20), entries);
+  if (!out.ok) return { status: "error", error: out.code === "old_version" ? "paper.sheet.old" : "paper.grid.busy", round };
+  refresh();
+  return {
+    status: "saved",
+    saved: out.saved,
+    correct: out.correct,
+    already: out.alreadySaved.length,
+    unreadable: out.unreadable.map(({ studentCode, question, text }) => ({ studentCode, question, text })),
+    round,
+  };
+}

@@ -70,6 +70,11 @@ people, or the teacher's own words. The page **How the agent worked** lists the 
   school has allowed the class and parents have been told (with the number of parent slips received).
 - **Delete a class.** "Delete this class and all its data" (type the class code to confirm) removes the class, every
   child's code, answers, working lines, proofs, progress and every log line about it, in one go.
+- **Paper Mode.** For a class with no computers: "Type in a paper worksheet" on the class board prints a worksheet
+  (a skill, 8 questions by default, the same for every child, with a short worksheet code and a box for the child's
+  code, never a name). The teacher then types each child's final answer into a grid. The answers are checked by the
+  same code as typed answers and feed the board and the Misconception Miner (real classes only); they never change
+  a child's progress. The pilot CSV counts them (`paperAnswers`, `paperCorrect`).
 - **English and Hindi** on every screen, in the NCERT textbook's words.
 - **Privacy written down:** [PRIVACY.md](PRIVACY.md) and a template agreement for schools (see below).
 

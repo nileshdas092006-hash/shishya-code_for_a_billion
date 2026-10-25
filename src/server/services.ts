@@ -13,7 +13,21 @@ import * as mastery from "./mastery";
 import { minedMistakes, toUnknownError, unknownErrors } from "./miner-ports";
 import { logServerError } from "./setup";
 import { defaultRegistry, getEntry, instanceFor, type Registry, type SkillEntry } from "./skills";
-import type { AttemptRow, ClassKind, ClassRow, DeletedCounts, ItemFormat, ItemKind, ItemRow, MistakeHitRow, NewClass, ProofRunRow, Store, StudentRow } from "./store";
+import type {
+  AttemptRow,
+  ClassKind,
+  ClassRow,
+  DeletedCounts,
+  ItemFormat,
+  ItemKind,
+  ItemRow,
+  MistakeHitRow,
+  NewClass,
+  ProofRunRow,
+  Store,
+  StudentRow,
+  WorksheetRow,
+} from "./store";
 import { TOUR_CLASSMATE_CODE, TOUR_GRADE, TOUR_JUDGE_CODE, TOUR_JUDGE_STATES, TOUR_MAX_PER_HOUR, TOUR_SECTION, TOUR_SKILL, tourPlan } from "./tour";
 
 // Session services: what the student and teacher screens call. Correct answers and mistake answers come only
@@ -58,6 +72,8 @@ export type FailCode =
   | "wrong_recovery"
   | "no_recovery"
   | "confirm_mismatch"
+  | "bad_request"
+  | "old_version"
   | "none";
 type Fail = { ok: false; reason: string; code: FailCode; retryAt?: string; errorKey?: string };
 const fail = (reason: string, code: FailCode, extra: Partial<Fail> = {}): Fail => ({ ok: false, reason, code, ...extra });
@@ -97,6 +113,11 @@ const RECOVERY_LENGTH = 10;
 export const COOLDOWN_CHOICES = [24, 1, 0] as const;
 export type CooldownChoice = (typeof COOLDOWN_CHOICES)[number];
 const MAX_CONSENT_SLIPS = 999;
+/** Paper Mode: questions on a printed worksheet (the teacher may choose 1 to PAPER_MAX_QUESTIONS). */
+export const PAPER_DEFAULT_QUESTIONS = 8;
+export const PAPER_MAX_QUESTIONS = 20;
+/** One cell of the paper grid as the teacher typed it: a child's final answer to question n (1-based). */
+export type PaperEntry = { studentCode: string; question: number; text: string };
 
 class NoFreshQuestion extends Error {}
 
@@ -141,6 +162,8 @@ const MASTERY_STATES = ["LOCKED", "OPEN", "KEY1", "NOT_YET", "MASTERED"] as cons
 type ProofItemView = { itemId: string; format: ItemFormat; text: string; textHi?: string };
 /** "How we checked" for one proof item, shown only after the proof is finished (null: not answered in time). */
 type ProofReceipt = { itemId: string; question: string; receipt: AnswerReceipt | null };
+/** A paper worksheet with its questions re-created from its seeds. current: printed for the skill's current version. */
+export type WorksheetView = Omit<WorksheetRow, "classId"> & { questions: { n: number; text: string }[]; current: boolean };
 
 export function createServices(store: Store, opts: ServiceOptions = {}) {
   const registry = opts.registry ?? defaultRegistry;
@@ -439,6 +462,17 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       const given = a ? parseAnswerFor(entry.spec.answerKind, a.answer) : null;
       return { itemId: ri.id, question: inst.text, receipt: given?.ok ? answerReceipt(inst, given.value) : null };
     });
+  }
+
+  function worksheetView(ws: WorksheetRow): WorksheetView {
+    const entry = getEntry(registry, ws.skillId);
+    const { classId: _classId, ...rest } = ws;
+    void _classId;
+    return {
+      ...rest,
+      questions: ws.seeds.map((seed, i) => ({ n: i + 1, text: instanceFor(entry, { seed, format: "solve" }).text })),
+      current: ws.version === entry.spec.version,
+    };
   }
 
   /**
@@ -1163,6 +1197,142 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     /** The recorded real Miner run, read from the run history (the Judge Tour's stop 6). */
     recordedMinerRun: () => store.getAgentRun(RECORDED_MINER_RUN.id),
 
+    // ----- Paper Mode (a class with no computers: a printed worksheet, answers typed in by the teacher) -----
+    /**
+     * A worksheet of `count` different questions on a skill, from seeds stored with it, so every child gets the same
+     * sheet and it can always be printed again. A short code (P-K7QM) is printed on it.
+     */
+    async createWorksheet(classId: string, skillId: string, count = PAPER_DEFAULT_QUESTIONS): Promise<{ ok: true; worksheet: WorksheetView } | Fail> {
+      await requireClass(classId);
+      const entry = registry[skillId];
+      if (!entry) return fail("Unknown skill.", "bad_request");
+      if (!Number.isInteger(count) || count < 1 || count > PAPER_MAX_QUESTIONS) {
+        return fail(`A worksheet has 1 to ${PAPER_MAX_QUESTIONS} questions.`, "bad_request");
+      }
+      const seeds: number[] = [];
+      const seen = new Set<string>();
+      for (let i = 0; i < FRESH_TRIES * count && seeds.length < count; i++) {
+        const seed = newSeed();
+        const params = JSON.stringify(entry.spec.generate(createRng(seed)).params);
+        if (seen.has(params)) continue;
+        seen.add(params);
+        seeds.push(seed);
+      }
+      if (seeds.length < count) return fail("Could not find enough different questions. Try again.", "no_fresh");
+      for (let i = 0; i < 20; i++) {
+        const row: WorksheetRow = { id: randomUUID(), classId, code: `P-${randomSuffix()}`, skillId, version: entry.spec.version, seeds, createdAt: iso() };
+        if (await store.insertWorksheet(row)) {
+          await log(null, "worksheet_created", { classId, worksheetId: row.id, skillId, questions: count });
+          return { ok: true, worksheet: worksheetView(row) };
+        }
+      }
+      throw new Error("Could not make a worksheet code. Try again.");
+    },
+
+    /** The class's worksheets, newest first. */
+    async listWorksheets(classId: string): Promise<WorksheetView[]> {
+      return (await store.listWorksheets(classId)).map(worksheetView);
+    },
+
+    /** A worksheet of this class (re-created from its seeds) and its grid: one row per child code, one cell per question. */
+    async getWorksheet(classId: string, code: string) {
+      const ws = await store.getWorksheet(classId, normaliseCode(code));
+      if (!ws) return undefined;
+      const [students, cells] = await Promise.all([store.listStudents(classId), store.listPaperCells(ws.id)]);
+      const grid = students.map((s) => ({
+        code: s.code,
+        cells: ws.seeds.map((seed) => {
+          const c = cells.find((x) => x.studentId === s.id && x.seed === seed);
+          return c ? { answer: c.answer, correct: c.correct } : null;
+        }),
+      }));
+      return { ...worksheetView(ws), grid };
+    },
+
+    /**
+     * Saves the answers typed in from a paper worksheet as real practice items and attempts (source 'paper'),
+     * diagnosed by the same src/core code as typed answers, so they feed the board and the Misconception Miner
+     * (real classes only) exactly like typed ones. Empty cells are not answered. A cell already saved is never
+     * saved twice (it is listed in alreadySaved); an answer the parser cannot read is not saved (unreadable).
+     * Mastery is never changed. One batch, all or nothing.
+     */
+    async savePaperAnswers(
+      classId: string,
+      code: string,
+      entries: PaperEntry[],
+    ): Promise<
+      | {
+          ok: true;
+          saved: number;
+          correct: number;
+          alreadySaved: { studentCode: string; question: number }[];
+          unreadable: { studentCode: string; question: number; text: string; errorKey: string }[];
+        }
+      | Fail
+    > {
+      const ws = await store.getWorksheet(classId, normaliseCode(code));
+      if (!ws) return fail("This worksheet is not in this class.", "none");
+      const base = getEntry(registry, ws.skillId);
+      if (ws.version !== base.spec.version) return fail("This worksheet was printed for an older version of the skill. Print a new one.", "old_version");
+      const [students, cells, entry] = await Promise.all([store.listStudents(classId), store.listPaperCells(ws.id), entryOf(ws.skillId)]);
+      const byCode = new Map(students.map((s) => [s.code, s]));
+      const done = new Set(cells.map((c) => `${c.studentId}|${c.seed}`));
+      const at = iso();
+      const items: ItemRow[] = [];
+      const attempts: AttemptRow[] = [];
+      const unknown: { skillId: string; paramsJson: string; wrongAnswer: string; studentId: string }[] = [];
+      const alreadySaved: { studentCode: string; question: number }[] = [];
+      const unreadable: { studentCode: string; question: number; text: string; errorKey: string }[] = [];
+      for (const e of entries) {
+        const text = String(e.text ?? "").trim();
+        const student = byCode.get(normaliseCode(e.studentCode));
+        const seed = ws.seeds[e.question - 1];
+        if (!text || !student || !Number.isInteger(e.question) || seed === undefined) continue; // empty: not answered
+        const cell = { studentCode: student.code, question: e.question };
+        if (done.has(`${student.id}|${seed}`)) {
+          if (!items.some((i) => i.studentId === student.id && i.seed === seed)) alreadySaved.push(cell);
+          continue;
+        }
+        const typed = parseAnswerFor(entry.spec.answerKind, text);
+        if (!typed.ok) {
+          unreadable.push({ ...cell, text, errorKey: typed.errorKey });
+          continue;
+        }
+        done.add(`${student.id}|${seed}`);
+        const instance = instanceFor(entry, { seed, format: "solve" });
+        const correct = sameAnswer(typed.value, instance.answer);
+        const mistakeId = correct ? null : diagnose(entry.spec, instance, typed.value);
+        const item: ItemRow = {
+          id: randomUUID(),
+          studentId: student.id,
+          skillId: ws.skillId,
+          version: ws.version,
+          seed,
+          kind: "practice",
+          format: "solve",
+          runId: ws.id,
+          mistakeId: null,
+          paramsJson: JSON.stringify(instance.params),
+          answer: answerText(instance.answer),
+          servedAt: ws.createdAt,
+          answeredAt: at,
+          source: "paper",
+        };
+        items.push(item);
+        attempts.push({ id: randomUUID(), studentId: student.id, itemId: item.id, answer: answerText(typed.value), correct, mistakeId, createdAt: at });
+        // logged for the Misconception Miner only from real classes (the store checks the class in the same SQL)
+        if (mistakeId === "unknown") unknown.push({ skillId: ws.skillId, paramsJson: item.paramsJson, wrongAnswer: answerText(typed.value), studentId: student.id });
+      }
+      const correct = attempts.filter((a) => a.correct).length;
+      if (items.length > 0) {
+        const event = { studentId: null, type: "paper_saved", payload: { classId, worksheetId: ws.id, skillId: ws.skillId, saved: items.length, correct }, at };
+        if (!(await store.savePaperAnswers({ items, attempts, unknown, event }))) {
+          return fail("Some of these answers were saved by someone else just now. Nothing was saved: open the worksheet again.", "already_answered");
+        }
+      }
+      return { ok: true, saved: items.length, correct, alreadySaved, unreadable };
+    },
+
     // ----- teacher -----
     /** Mistake patterns (2+ different questions), single slips and the line grid, for the last 7 days. */
     async getStuckBoard(classId: string) {
@@ -1180,6 +1350,8 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         "students",
         "practiceAnswers",
         "practiceCorrect",
+        "paperAnswers",
+        "paperCorrect",
         "unknownWrongAnswers",
         "teachTries",
         "teachFixes",
@@ -1196,6 +1368,8 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
           students,
           c.practiceAnswers,
           c.practiceCorrect,
+          c.paperAnswers,
+          c.paperCorrect,
           c.unknownWrongAnswers,
           c.teachTries,
           c.teachFixes,

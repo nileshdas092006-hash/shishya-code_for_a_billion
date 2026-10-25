@@ -17,6 +17,8 @@ export const DEFAULT_DATABASE_URL = "file:data/shishya.db";
 export type MasteryState = "LOCKED" | "OPEN" | "KEY1" | "NOT_YET" | "MASTERED";
 export type ItemKind = "practice" | "teach" | "proof";
 export type ItemFormat = "solve" | "apply";
+/** Where an answer came from: typed in the app, or typed in by the teacher from a paper worksheet (P1a). */
+export type ItemSource = "app" | "paper";
 /** real: a school class. test: our own test classes (all 8Q-…). sandbox: a Judge Tour class, deleted when it expires. */
 export type ClassKind = "real" | "test" | "sandbox";
 
@@ -56,6 +58,7 @@ export type DeletedCounts = {
   proofRuns: number;
   mastery: number;
   events: number;
+  worksheets: number;
 };
 export type StudentRow = { id: string; classId: string; code: string };
 export type ItemRow = {
@@ -74,7 +77,22 @@ export type ItemRow = {
   answer: string;
   servedAt: string;
   answeredAt: string | null;
+  /** 'app' unless said otherwise. A paper item's runId is its worksheet's id. */
+  source?: ItemSource;
 };
+/** A printed paper worksheet: the same questions (from these seeds) for every child of the class. No child data. */
+export type WorksheetRow = {
+  id: string;
+  classId: string;
+  /** Short code printed on the sheet, e.g. P-K7QM. */
+  code: string;
+  skillId: string;
+  version: string;
+  seeds: number[];
+  createdAt: string;
+};
+/** One saved cell of a worksheet's grid: a child's answer to one question. */
+export type PaperCellRow = { studentId: string; seed: number; answer: string; correct: boolean };
 export type AttemptRow = {
   id: string;
   studentId: string;
@@ -168,6 +186,9 @@ export type ExportCounts = {
   skillId: string;
   practiceAnswers: number;
   practiceCorrect: number;
+  /** Of the practice answers, how many the teacher typed in from a paper worksheet, and how many of those were right. */
+  paperAnswers: number;
+  paperCorrect: number;
   unknownWrongAnswers: number;
   teachTries: number;
   teachFixes: number;
@@ -216,7 +237,9 @@ CREATE TABLE IF NOT EXISTS items (
   paramsJson TEXT NOT NULL,
   answer TEXT NOT NULL,
   servedAt TEXT NOT NULL,
-  answeredAt TEXT
+  answeredAt TEXT,
+  -- 'app', or 'paper' (typed in by the teacher from a paper worksheet; runId is then the worksheet id)
+  source TEXT NOT NULL DEFAULT 'app'
 );
 -- A proof question is single-use: the same (skill, version, format, seed) is never served twice, to anyone.
 CREATE UNIQUE INDEX IF NOT EXISTS items_proof_single_use ON items (skillId, version, format, seed) WHERE kind = 'proof';
@@ -311,6 +334,17 @@ CREATE TABLE IF NOT EXISTS events (
   createdAt TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_type_time ON events (type, createdAt);
+-- Paper Mode worksheets: the questions are re-created from seedsJson; no child data here.
+CREATE TABLE IF NOT EXISTS worksheets (
+  id TEXT PRIMARY KEY,
+  classId TEXT NOT NULL REFERENCES classes(id),
+  code TEXT NOT NULL UNIQUE,
+  skillId TEXT NOT NULL,
+  version TEXT NOT NULL,
+  seedsJson TEXT NOT NULL,
+  createdAt TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS worksheets_class ON worksheets (classId, createdAt);
 `;
 
 type Row = Record<string, unknown>;
@@ -357,6 +391,16 @@ const toItem = (r: Row): ItemRow => ({
   answer: r.answer as string,
   servedAt: r.servedAt as string,
   answeredAt: (r.answeredAt as string | null) ?? null,
+  source: r.source === "paper" ? "paper" : "app",
+});
+const toWorksheet = (r: Row): WorksheetRow => ({
+  id: r.id as string,
+  classId: r.classId as string,
+  code: r.code as string,
+  skillId: r.skillId as string,
+  version: r.version as string,
+  seeds: JSON.parse(r.seedsJson as string) as number[],
+  createdAt: r.createdAt as string,
 });
 const toAttempt = (r: Row): AttemptRow => ({
   id: r.id as string,
@@ -502,6 +546,12 @@ async function migrate(client: Client) {
     await client.execute("ALTER TABLE minedMistakes ADD COLUMN childLabelSource TEXT NOT NULL DEFAULT 'ai' CHECK (childLabelSource IN ('ai', 'teacher'))");
   }
 
+  // Paper Mode (P1a): where an item's answer came from. Items that already exist were typed in the app.
+  const itemColumns = (await client.execute("PRAGMA table_info(items)")).rows.map((r) => r.name);
+  if (!itemColumns.includes("source")) await client.execute("ALTER TABLE items ADD COLUMN source TEXT NOT NULL DEFAULT 'app'");
+  // a child has at most one paper answer per worksheet question (re-saving a cell never duplicates it)
+  await client.execute("CREATE UNIQUE INDEX IF NOT EXISTS items_paper_cell ON items (studentId, runId, seed) WHERE source = 'paper'");
+
   // The one real past Miner run we have records of, marked recorded (added once; never changed or invented).
   await client.execute({
     sql: `INSERT OR IGNORE INTO agentRuns (${AGENT_RUN_COLUMNS}) VALUES (${marks(13)})`,
@@ -626,7 +676,8 @@ export async function openStore(config: StoreConfig | string = {}) {
          (SELECT COUNT(*) FROM teachTraces WHERE studentId IN ${ofClass}) AS teachTraces,
          (SELECT COUNT(*) FROM proofRuns WHERE studentId IN ${ofClass}) AS proofRuns,
          (SELECT COUNT(*) FROM mastery WHERE studentId IN ${ofClass}) AS mastery,
-         (SELECT COUNT(*) FROM events WHERE studentId IN ${ofClass} OR json_extract(payloadJson, '$.classId') = c.id) AS events
+         (SELECT COUNT(*) FROM events WHERE studentId IN ${ofClass} OR json_extract(payloadJson, '$.classId') = c.id) AS events,
+         (SELECT COUNT(*) FROM worksheets WHERE classId = c.id) AS worksheets
        FROM classes c WHERE ${where}`,
       ...args,
     );
@@ -643,6 +694,7 @@ export async function openStore(config: StoreConfig | string = {}) {
         proofRuns: Number(r.proofRuns),
         mastery: Number(r.mastery),
         events: Number(r.events),
+        worksheets: Number(r.worksheets),
       }),
     );
     await writeBatch([
@@ -659,6 +711,7 @@ export async function openStore(config: StoreConfig | string = {}) {
         sql: "UPDATE minedMistakes SET approver = 'teacher of a deleted class' WHERE approver = ? OR approver LIKE ?",
         args: [`teacher of class ${r.code as string}`, `teacher of class ${r.code as string} %`] as InValue[],
       })),
+      { sql: `DELETE FROM worksheets WHERE classId IN (${marks(ids.length)})`, args: ids },
       { sql: `DELETE FROM students WHERE classId IN (${marks(ids.length)})`, args: ids },
       { sql: `DELETE FROM classes WHERE id IN (${marks(ids.length)})`, args: ids },
       ...found.map((r, i) => eventStatement({ studentId: null, type: "class_deleted", payload: { kind: r.kind, ...counts[i] }, at })),
@@ -852,9 +905,9 @@ export async function openStore(config: StoreConfig | string = {}) {
     /** False if the unique rules refuse it (for example a proof question that was already used). */
     insertItem(i: Omit<ItemRow, "answeredAt">): Promise<boolean> {
       return tryInsert(
-        `INSERT INTO items (id, studentId, skillId, version, seed, kind, format, runId, mistakeId, paramsJson, answer, servedAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        i.id, i.studentId, i.skillId, i.version, i.seed, i.kind, i.format, i.runId, i.mistakeId, i.paramsJson, i.answer, i.servedAt,
+        `INSERT INTO items (id, studentId, skillId, version, seed, kind, format, runId, mistakeId, paramsJson, answer, servedAt, source)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        i.id, i.studentId, i.skillId, i.version, i.seed, i.kind, i.format, i.runId, i.mistakeId, i.paramsJson, i.answer, i.servedAt, i.source ?? "app",
       );
     },
     async getItem(id: string): Promise<ItemRow | undefined> {
@@ -881,6 +934,70 @@ export async function openStore(config: StoreConfig | string = {}) {
     /** Marks an item answered. False if it was already answered (so two racing answers cannot both count). */
     markItemAnswered(id: string, at: string): Promise<boolean> {
       return changed("UPDATE items SET answeredAt = ? WHERE id = ? AND answeredAt IS NULL", at, id);
+    },
+
+    // ----- paper worksheets (P1a Paper Mode) -----
+    /** False if the worksheet code is already taken. */
+    insertWorksheet(w: WorksheetRow): Promise<boolean> {
+      return tryInsert(
+        "INSERT INTO worksheets (id, classId, code, skillId, version, seedsJson, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        w.id, w.classId, w.code, w.skillId, w.version, JSON.stringify(w.seeds), w.createdAt,
+      );
+    },
+    /** A worksheet of this class by its printed code (a worksheet of another class is not found). */
+    async getWorksheet(classId: string, code: string): Promise<WorksheetRow | undefined> {
+      const r = await one("SELECT * FROM worksheets WHERE classId = ? AND code = ?", classId, code);
+      return r && toWorksheet(r);
+    },
+    /** The class's worksheets, newest first. */
+    async listWorksheets(classId: string): Promise<WorksheetRow[]> {
+      return (await all("SELECT * FROM worksheets WHERE classId = ? ORDER BY createdAt DESC, rowid DESC", classId)).map(toWorksheet);
+    },
+    /** Every saved cell of a worksheet, in one read. */
+    async listPaperCells(worksheetId: string): Promise<PaperCellRow[]> {
+      return (
+        await all(
+          `SELECT i.studentId, i.seed, a.answer, a.correct FROM items i JOIN attempts a ON a.itemId = i.id
+           WHERE i.runId = ? AND i.source = 'paper'`,
+          worksheetId,
+        )
+      ).map((r) => ({ studentId: r.studentId as string, seed: Number(r.seed), answer: r.answer as string, correct: bool(r.correct) }));
+    },
+    /**
+     * A worksheet's answers in ONE round trip, all or nothing: the paper items (already answered), their attempts,
+     * the unexplained wrong answers for the Misconception Miner (only from a REAL class, checked in the same SQL as
+     * recordUnknownError) and the log line. False if a cell was saved meanwhile (the unique rule refused it).
+     */
+    async savePaperAnswers(s: {
+      items: ItemRow[];
+      attempts: AttemptRow[];
+      unknown: { skillId: string; paramsJson: string; wrongAnswer: string; studentId: string }[];
+      event: EventInput;
+    }): Promise<boolean> {
+      try {
+        await writeBatch([
+          ...s.items.map((i) => ({
+            sql: `INSERT INTO items (id, studentId, skillId, version, seed, kind, format, runId, mistakeId, paramsJson, answer, servedAt, answeredAt, source)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'paper')`,
+            args: [i.id, i.studentId, i.skillId, i.version, i.seed, i.kind, i.format, i.runId, i.mistakeId, i.paramsJson, i.answer, i.servedAt, i.answeredAt] as InValue[],
+          })),
+          ...s.attempts.map((a) => ({
+            sql: "INSERT INTO attempts (id, studentId, itemId, answer, correct, mistakeId, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            args: [a.id, a.studentId, a.itemId, a.answer, a.correct ? 1 : 0, a.mistakeId, a.createdAt] as InValue[],
+          })),
+          ...s.unknown.map((u) => ({
+            sql: `INSERT INTO unknownErrors (skillId, paramsJson, wrongAnswer, count)
+                  SELECT ?, ?, ?, 1 WHERE EXISTS (SELECT 1 FROM students s JOIN classes c ON c.id = s.classId WHERE s.id = ? AND c.kind = 'real')
+                  ON CONFLICT (skillId, paramsJson, wrongAnswer) DO UPDATE SET count = count + 1`,
+            args: [u.skillId, u.paramsJson, u.wrongAnswer, u.studentId] as InValue[],
+          })),
+          eventStatement(s.event),
+        ]);
+        return true;
+      } catch (e) {
+        if (isUniqueViolation(e)) return false;
+        throw e;
+      }
     },
 
     // ----- attempts -----
@@ -1123,6 +1240,8 @@ export async function openStore(config: StoreConfig | string = {}) {
             skillId,
             practiceAnswers: 0,
             practiceCorrect: 0,
+            paperAnswers: 0,
+            paperCorrect: 0,
             unknownWrongAnswers: 0,
             teachTries: 0,
             teachFixes: 0,
@@ -1136,11 +1255,20 @@ export async function openStore(config: StoreConfig | string = {}) {
         return c;
       };
       for (const r of await all(
-        `SELECT i.skillId, COUNT(*) AS n, SUM(a.correct) AS ok, SUM(a.mistakeId = 'unknown') AS unk
+        `SELECT i.skillId, COUNT(*) AS n, SUM(a.correct) AS ok, SUM(a.mistakeId = 'unknown') AS unk,
+                SUM(i.source = 'paper') AS paper, SUM(i.source = 'paper' AND a.correct = 1) AS paperOk
          FROM attempts a JOIN items i ON i.id = a.itemId JOIN students s ON s.id = a.studentId
          WHERE s.classId = ? AND i.kind = 'practice' GROUP BY i.skillId`,
         classId,
-      )) Object.assign(get(r.skillId as string), { practiceAnswers: Number(r.n), practiceCorrect: Number(r.ok), unknownWrongAnswers: Number(r.unk) });
+      )) {
+        Object.assign(get(r.skillId as string), {
+          practiceAnswers: Number(r.n),
+          practiceCorrect: Number(r.ok),
+          paperAnswers: Number(r.paper),
+          paperCorrect: Number(r.paperOk),
+          unknownWrongAnswers: Number(r.unk),
+        });
+      }
       for (const r of await all(
         `SELECT i.skillId, COUNT(*) AS n, SUM(t.lineCorrect AND t.fixAccepted) AS ok
          FROM teachTraces t JOIN items i ON i.id = t.itemId JOIN students s ON s.id = t.studentId

@@ -60,3 +60,27 @@ describe("store migration: proof windows", () => {
     again.close();
   });
 });
+
+describe("store migration: item source (P1a Paper Mode)", () => {
+  it("adds items.source; items that already exist are 'app' and keep working; running twice is safe", async () => {
+    const tmp = tempDbUrl();
+    cleanup = tmp.cleanup;
+    const old = createClient({ url: tmp.url });
+    await old.executeMultiple(`
+      CREATE TABLE items (
+        id TEXT PRIMARY KEY, studentId TEXT NOT NULL, skillId TEXT NOT NULL, version TEXT NOT NULL, seed INTEGER NOT NULL,
+        kind TEXT NOT NULL CHECK (kind IN ('practice', 'teach', 'proof')),
+        format TEXT NOT NULL DEFAULT 'solve' CHECK (format IN ('solve', 'apply')), runId TEXT, mistakeId TEXT,
+        paramsJson TEXT NOT NULL, answer TEXT NOT NULL, servedAt TEXT NOT NULL, answeredAt TEXT);
+      INSERT INTO items VALUES ('i1', 's1', 'alg.linear.both-sides', '1', 7, 'practice', 'solve', NULL, NULL, '{}', '1', '2026-10-18', NULL);
+    `);
+    old.close();
+
+    const store = await openStore({ url: tmp.url });
+    expect(await store.getItem("i1")).toMatchObject({ id: "i1", kind: "practice", source: "app" });
+    store.close();
+    const again = await openStore({ url: tmp.url });
+    expect(await again.getItem("i1")).toMatchObject({ source: "app" });
+    again.close();
+  });
+});

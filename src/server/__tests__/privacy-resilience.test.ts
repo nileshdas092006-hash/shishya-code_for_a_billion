@@ -132,6 +132,10 @@ describe("deleting a class", () => {
       if (!proof.ok) throw new Error(proof.reason);
       await answerProof(svc, store, proof.items.map((i) => i.itemId));
       await svc.verifyTeacherPin(room.classCode, "000000"); // a class-level log line
+      // a paper worksheet with one answer typed in (P1a): it goes with the class too
+      const ws = await svc.createWorksheet(room.classId, SKILL, 2);
+      if (!ws.ok) throw new Error(ws.reason);
+      await svc.savePaperAnswers(room.classId, ws.worksheet.code, [{ studentCode: room.studentCodes[2], question: 1, text: "9999" }]);
       return { room, ids };
     };
     const gone = await make("B");
@@ -158,7 +162,7 @@ describe("deleting a class", () => {
     const logged = (await store.listEvents()).filter((e) => e.type === "class_deleted");
     expect(logged).toHaveLength(1);
     expect(Object.keys(JSON.parse(logged[0].payloadJson)).sort()).toEqual(
-      ["attempts", "events", "items", "kind", "mastery", "proofRuns", "students", "teachTraces"].sort(),
+      ["attempts", "events", "items", "kind", "mastery", "proofRuns", "students", "teachTraces", "worksheets"].sort(),
     );
     expect(await svc.deleteClass(gone.room.classId, gone.room.classCode)).toMatchObject({ ok: false, code: "none" });
   });

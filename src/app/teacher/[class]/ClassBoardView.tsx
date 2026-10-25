@@ -39,6 +39,9 @@ export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Que
           <Link href={`${base}/project`} className="btn btn-primary">
             Projector mode
           </Link>
+          <Link href={`${base}/paper`} className="btn">
+            {t("paper.link")}
+          </Link>
           <a href={`${base}/export`} className="btn" download>
             Download pilot CSV
           </a>
