@@ -102,14 +102,17 @@ describe("giving a class new codes", () => {
 });
 
 describe("wrong logins are counted in the database, not in memory", () => {
-  it("after 5 wrong student codes, even a correct one is refused for 10 minutes, on every server instance", async () => {
+  it("after 30 wrong student codes, even a correct one is refused for 10 minutes, on every server instance", async () => {
     const { svc, another, clock, store } = await fresh();
     const room = await svc.createClassroom({ grade: 8, section: "B", studentCount: 3 });
     const right = room.studentCodes[0];
-    for (let i = 0; i < 5; i++) {
-      expect(await svc.studentLogin(room.classCode, `8B-9${i}`)).toMatchObject({ ok: false, code: "wrong_codes" });
-      clock.advanceMinutes(1);
+    // a class of 40 mistyping: 29 wrong codes in 10 minutes still lets a right code in
+    for (let i = 0; i < 29; i++) {
+      expect(await svc.studentLogin(room.classCode, `8B-9${i % 10}`)).toMatchObject({ ok: false, code: "wrong_codes" });
+      clock.t += 10_000;
     }
+    expect(await svc.studentLogin(room.classCode, right)).toMatchObject({ ok: true });
+    expect(await svc.studentLogin(room.classCode, "8B-99")).toMatchObject({ ok: false, code: "wrong_codes" });
     // a second server instance (its own memory) sees the same count
     const other = another();
     expect(await other.studentLogin(room.classCode, right)).toMatchObject({ ok: false, code: "locked_out" });
@@ -120,7 +123,7 @@ describe("wrong logins are counted in the database, not in memory", () => {
 
     // another class is never affected
     const room2 = await svc.createClassroom({ grade: 8, section: "C", studentCount: 1 });
-    for (let i = 0; i < 5; i++) await svc.studentLogin(room.classCode, "8B-99");
+    for (let i = 0; i < 30; i++) await svc.studentLogin(room.classCode, "8B-99");
     expect(await svc.studentLogin(room2.classCode, room2.studentCodes[0])).toMatchObject({ ok: true });
 
     // the log has no codes; an unknown class is logged with no class id

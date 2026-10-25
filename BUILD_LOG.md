@@ -215,3 +215,11 @@
 - Note for Das: the student throttle is per CLASS code, as asked. In a real class of 40, five typing mistakes in 10 minutes by different children would lock the whole class's log-in for up to 10 minutes. Worth watching in the pilot.
 - Files: `src/server/{store,services}.ts`, `src/app/actions.ts`, `src/app/layout.tsx`, `src/app/s/prove/[skill]/{page.tsx,ProveScreen.tsx}`, `src/app/teacher/{page.tsx,CreateClassForm.tsx,[class]/page.tsx}`, `src/i18n/{en,hi}.ts`, `src/server/__tests__/{codes-throttle-window,store-migration,classroom,round-trips}.test.ts`, `scripts/seed-demo.ts`, `README.md`, `BUILD_LOG.md`.
 - Built in AgentFoundry with Claude Code.
+
+## 2026-10-25: Student login throttle raised to 30 per class code (F3 follow-up)
+- Why: 5 failed logins per class code in 10 minutes could lock a whole class of 40 children who mistype. Now 30 failed logins per class code in 10 minutes. Teacher PIN unchanged (5 wrong in 15 minutes).
+- Still safe: a guesser gets at most 30 tries per 10 minutes = 180 per hour. A code has 4 characters from a 31-character alphabet (923,521 possible), so with 40 real codes one guess hits with chance 40/923,521; expected time to guess even one of the 40 codes is about 923,521 / 40 / 180 ≈ 128 hours (over 100 hours), and every failure is logged for the teacher.
+- Tests: the throttle test now checks 29 wrong codes still let a right code in, the 30th locks the class, and the window still expires after 10 minutes on every server instance. All tests pass, lint and type check clean.
+- F4 (keypad and forgiving input) NOT built yet: usage limit reached before it started.
+- Files: `src/server/services.ts`, `src/server/__tests__/codes-throttle-window.test.ts`, `BUILD_LOG.md`.
+- Built in AgentFoundry with Claude Code.

@@ -68,7 +68,7 @@ const MAX_STUDENTS = 60;
 // Failed log-ins are counted from the events table, so every server instance sees the same count.
 const PIN_MAX_FAILURES = 5;
 const PIN_LOCKOUT_MINUTES = 15;
-const LOGIN_MAX_FAILURES = 5; // wrong student codes per class code
+const LOGIN_MAX_FAILURES = 30; // wrong student codes per class code (a class of 40 mistypes)
 const LOGIN_LOCKOUT_MINUTES = 10;
 const PROOF_WINDOW_MINUTES = 15;
 
