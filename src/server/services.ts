@@ -9,7 +9,7 @@ import { applies, type Instance } from "../core/types";
 import * as mastery from "./mastery";
 import { minedMistakes, unknownErrors } from "./miner-ports";
 import { defaultRegistry, getEntry, instanceFor, type Registry, type SkillEntry } from "./skills";
-import type { ClassRow, ItemFormat, ItemKind, ItemRow, ProofRunRow, Store, StudentRow } from "./store";
+import type { ClassRow, ItemFormat, ItemKind, ItemRow, MistakeHitRow, ProofRunRow, Store, StudentRow } from "./store";
 
 // Session services: what the student and teacher screens call. Correct answers and mistake answers come only
 // from src/core; mastery changes only through src/server/mastery.ts. Every action logs an event row.
@@ -54,6 +54,10 @@ const STUDENT_CODE = /^[A-Z0-9]{1,8}-[0-9]{1,3}$/; // e.g. 8B-17 or KV8B-17
 const CLASS_CODE = /^[A-Z0-9-]{1,16}$/;
 const FRESH_TRIES = 50;
 const STUCK_WINDOW_DAYS = 7;
+/** A child shows a mistake PATTERN only when the same mistake explained their answers on this many different questions; one is a slip. */
+export const PATTERN_MIN_QUESTIONS = 2;
+/** Columns of the stuck board's grid: the working line where a pattern first goes wrong (L1 is the question). */
+const GRID_LINES = [2, 3, 4, 5];
 const SMALL_SAMPLE = 30;
 const UNKNOWN_LABEL = "Wrong answer that no known mistake explains yet";
 
@@ -212,41 +216,89 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     });
   }
 
-  /** Students grouped by their most frequent mistake in the last 7 days (ties: the most recent one). */
-  async function stuckGroups(classId: string) {
-    const since = new Date(now().getTime() - STUCK_WINDOW_DAYS * 86_400_000).toISOString();
-    const hits = await store.listClassMistakesSince(classId, since);
+  const windowStart = () => new Date(now().getTime() - STUCK_WINDOW_DAYS * 86_400_000).toISOString();
 
-    const perStudent = new Map<string, { code: string; tally: Map<string, { count: number; last: number }> }>();
+  /** The working line where this mistake first goes wrong on that question (L1 is the question), or null if unknown. */
+  async function wrongLineOf(skillId: string, mistakeId: string, item: { seed: number; format: ItemFormat }): Promise<number | null> {
+    if (!registry[skillId]) return null;
+    const entry = await entryOf(skillId);
+    const mistake = entry.spec.mistakes.find((m) => m.id === mistakeId);
+    return mistake ? mistake.apply(instanceFor(entry, item)).firstWrongLine : null;
+  }
+
+  /**
+   * The stuck board for the last 7 days, from one read of the class's wrong answers.
+   * groups: a child is in a mistake group only when that mistake explained their answers on at least
+   * PATTERN_MIN_QUESTIONS different questions (their biggest such pattern; ties: the most recent), or, with no
+   * pattern, when their most frequent wrong answers are ones no known mistake explains ("unknown").
+   * slips: children whose top known mistake matched only one question (watched, not labelled).
+   * grid: per skill, how many children's patterns first go wrong at each working line.
+   */
+  async function stuckGroups(classId: string) {
+    const hits = await store.listClassMistakesSince(classId, windowStart());
+
+    type Tally = { skillId: string; mistakeId: string; questions: Set<string>; last: number; lastHit: MistakeHitRow };
+    const perStudent = new Map<string, { code: string; tally: Map<string, Tally> }>();
     hits.forEach((h, order) => {
       const s = perStudent.get(h.studentId) ?? { code: h.code, tally: new Map() };
       const key = `${h.skillId}|${h.mistakeId}`;
-      const t = s.tally.get(key) ?? { count: 0, last: 0 };
-      s.tally.set(key, { count: t.count + 1, last: order });
+      const t = s.tally.get(key) ?? { skillId: h.skillId, mistakeId: h.mistakeId, questions: new Set<string>(), last: 0, lastHit: h };
+      t.questions.add(h.paramsJson); // two items with the same params are one question
+      s.tally.set(key, { ...t, last: order, lastHit: h });
       perStudent.set(h.studentId, s);
     });
 
-    const groups = new Map<string, { skillId: string; mistakeId: string; label: string; studentCodes: string[] }>();
+    type Evidence = { code: string; questions: number; line: number | null };
+    const groups = new Map<string, { skillId: string; mistakeId: string; label: string; students: Evidence[] }>();
+    const slips = new Map<string, { code: string; line: number | null }[]>();
+    const byEvidence = (a: Tally, b: Tally) => b.questions.size - a.questions.size || b.last - a.last;
     for (const { code, tally } of perStudent.values()) {
-      const [top] = [...tally.entries()].sort((a, b) => b[1].count - a[1].count || b[1].last - a[1].last)[0];
-      const [skillId, mistakeId] = top.split("|");
-      const label =
-        mistakeId === "unknown"
-          ? UNKNOWN_LABEL
-          : ((await labelOf(skillId, mistakeId)) ?? mistakeId);
-      const g = groups.get(top) ?? { skillId, mistakeId, label, studentCodes: [] };
-      g.studentCodes.push(code);
-      groups.set(top, g);
+      const all = [...tally.values()];
+      const patterns = all.filter((t) => t.mistakeId !== "unknown" && t.questions.size >= PATTERN_MIN_QUESTIONS);
+      const top = (patterns.length ? patterns : all).sort(byEvidence)[0];
+      const { skillId, mistakeId } = top;
+      const line = mistakeId === "unknown" ? null : await wrongLineOf(skillId, mistakeId, top.lastHit);
+      if (mistakeId !== "unknown" && top.questions.size < PATTERN_MIN_QUESTIONS) {
+        slips.set(skillId, [...(slips.get(skillId) ?? []), { code, line }]);
+        continue;
+      }
+      const key = `${skillId}|${mistakeId}`;
+      const label = mistakeId === "unknown" ? UNKNOWN_LABEL : ((await labelOf(skillId, mistakeId)) ?? mistakeId);
+      const g = groups.get(key) ?? { skillId, mistakeId, label, students: [] };
+      g.students.push({ code, questions: top.questions.size, line });
+      groups.set(key, g);
     }
     await log(null, "stuck_board_viewed", { classId });
-    return [...groups.values()]
-      .map((g) => ({ ...g, count: g.studentCodes.length, studentCodes: g.studentCodes.sort() }))
+
+    const byCode = <T extends { code: string }>(xs: T[]) => xs.sort((a, b) => a.code.localeCompare(b.code));
+    const groupList = [...groups.values()]
+      .map((g) => {
+        const students = byCode(g.students);
+        return { ...g, students, count: students.length, studentCodes: students.map((x) => x.code) };
+      })
       .sort(
         (a, b) =>
           Number(a.mistakeId === "unknown") - Number(b.mistakeId === "unknown") ||
           b.count - a.count ||
           `${a.skillId}|${a.mistakeId}`.localeCompare(`${b.skillId}|${b.mistakeId}`),
       );
+    const skillOrder = Object.keys(registry);
+    const slipList = [...slips.entries()]
+      .sort(([a], [b]) => skillOrder.indexOf(a) - skillOrder.indexOf(b) || a.localeCompare(b))
+      .map(([skillId, students]) => ({ skillId, students: byCode(students) }));
+    // a line past the last column is counted in the last one (no skill has one today)
+    const column = (line: number) => Math.min(Math.max(line, GRID_LINES[0]), GRID_LINES[GRID_LINES.length - 1]);
+    const grid = {
+      lines: GRID_LINES,
+      rows: skillOrder.map((skillId) => {
+        const lines = groupList
+          .filter((g) => g.skillId === skillId && g.mistakeId !== "unknown")
+          .flatMap((g) => g.students.map((x) => x.line))
+          .filter((x): x is number => x !== null);
+        return { skillId, counts: GRID_LINES.map((l) => lines.filter((x) => column(x) === l).length) };
+      }),
+    };
+    return { groups: groupList, slips: slipList, grid };
   }
 
   const deadlineOf = (run: ProofRunRow) => Date.parse(run.startedAt) + mastery.PROOF_TIME_LIMIT_MINUTES * 60_000;
@@ -319,7 +371,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     async submitPracticeAnswer(
       itemId: string,
       typedText: string,
-    ): Promise<{ ok: true; correct: boolean; mistakeId: string | null; feedback: string } | Fail> {
+    ): Promise<{ ok: true; correct: boolean; mistakeId: string | null; checkLine: number | null; feedback: string } | Fail> {
       const item = await requireItem(itemId, "practice");
       const entry = await entryOf(item.skillId);
       const typed = parseAnswerFor(entry.spec.answerKind, typedText);
@@ -340,10 +392,26 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         });
         if (mistakeId === "unknown") await store.recordUnknownError(item.skillId, item.paramsJson, answerText(typed.value));
         await log(item.studentId, "practice_answered", { skillId: item.skillId, itemId: item.id, correct, mistakeId });
+        // A first match may be a slip: point to the line only; name the mistake from the 2nd different question on.
+        const mistake = entry.spec.mistakes.find((m) => m.id === mistakeId);
+        let checkLine: number | null = null;
+        if (mistake) {
+          const before = await store.countMistakeQuestionsSince({
+            studentId: item.studentId,
+            skillId: item.skillId,
+            mistakeId: mistake.id,
+            since: windowStart(),
+            exceptParamsJson: item.paramsJson,
+          });
+          if (before + 1 < PATTERN_MIN_QUESTIONS) checkLine = mistake.apply(instance).firstWrongLine;
+        }
         const feedback = correct
           ? "Correct! Both sides are equal for your answer."
-          : (entry.spec.mistakes.find((m) => m.id === mistakeId)?.childLabel ?? entry.spec.hintLadder[0]);
-        return { ok: true as const, correct, mistakeId, feedback };
+          : checkLine !== null
+            ? `Check line ${checkLine} again.`
+            : (mistake?.childLabel ?? entry.spec.hintLadder[0]);
+        // the child is told only what the server decided to show: no mistake id for a first match
+        return { ok: true as const, correct, mistakeId: checkLine === null ? mistakeId : null, checkLine, feedback };
       });
     },
 
@@ -761,7 +829,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     },
 
     // ----- teacher -----
-    /** Students grouped by their most frequent mistake in the last 7 days (ties: the most recent one). */
+    /** Mistake patterns (2+ different questions), single slips and the line grid, for the last 7 days. */
     async getStuckBoard(classId: string) {
       await requireClass(classId);
       return stuckGroups(classId);

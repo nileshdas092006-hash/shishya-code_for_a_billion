@@ -33,6 +33,8 @@ describe("practice", () => {
     await ctx.svc.teacherUnlock(ctx.student.id, SKILL);
     const served = await ctx.svc.servePracticeItem(ctx.student.id, SKILL);
     expect(JSON.stringify(served)).not.toContain('"answer"');
+    // a first match is only pointed at (see patterns.test.ts); the second different question names the mistake
+    expect(await practiseWith(ctx.student.id, "kept-x-sign")).toMatchObject({ ok: true, correct: false, mistakeId: null, checkLine: 2 });
     expect(await practiseWith(ctx.student.id, "kept-x-sign")).toMatchObject({ ok: true, correct: false, mistakeId: "kept-x-sign" });
     expect(await practiseWith(ctx.student.id, null)).toMatchObject({ ok: true, correct: true, mistakeId: null });
   });
@@ -132,7 +134,7 @@ describe("proof items are single-use, even when requests race", () => {
 });
 
 describe("stuck board", () => {
-  it("groups students by their most frequent mistake in the last 7 days", async () => {
+  it("groups students by their biggest mistake pattern in the last 7 days; one match is a slip", async () => {
     ctx = await setup();
     const s: Record<string, string> = {};
     for (const code of ["8B-01", "8B-02", "8B-03", "8B-04", "8B-05"]) s[code] = (await ctx.svc.createStudent(ctx.cls.id, code)).id;
@@ -151,12 +153,12 @@ describe("stuck board", () => {
     await practiseWith(outsider, "kept-x-sign"); // another class
 
     const board = await ctx.svc.getStuckBoard(ctx.cls.id);
-    expect(board.map((g) => [g.mistakeId, g.count, g.studentCodes])).toEqual([
-      ["kept-x-sign", 2, ["8B-01", "8B-02"]],
-      ["kept-const-sign", 1, ["8B-03"]],
+    expect(board.groups.map((g) => [g.mistakeId, g.count, g.studentCodes])).toEqual([
+      ["kept-x-sign", 1, ["8B-01"]],
       ["unknown", 1, ["8B-05"]],
     ]);
-    expect(board[0].label.length).toBeGreaterThan(0);
+    expect(board.groups[0].label.length).toBeGreaterThan(0);
+    expect(board.slips).toEqual([{ skillId: SKILL, students: [{ code: "8B-02", line: 2 }, { code: "8B-03", line: 3 }] }]);
   });
 });
 

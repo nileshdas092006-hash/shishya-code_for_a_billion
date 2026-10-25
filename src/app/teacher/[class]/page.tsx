@@ -9,6 +9,7 @@ import { getServices } from "@/server/instance";
 import { toMistake } from "@/core/minedMistake";
 import { unlockSkillForClass } from "../../actions";
 import { MinedDecision } from "./MinedDecision";
+import { PatternGrid, SlipList } from "./PatternGrid";
 import { Equation } from "../../_components/Equation";
 import { teacherClass } from "../../_lib/auth";
 import { guardPage } from "../../_lib/page-guard";
@@ -69,10 +70,21 @@ function ClassBoard({ params }: { params: Promise<{ class: string }> }) {
           <h2 id="stuck" className="text-2xl font-bold">
             Stuck board (last 7 days)
           </h2>
-          {stuck.length === 0 ? (
+          {stuck.groups.length === 0 && stuck.slips.length === 0 ? (
             <p className="text-gray-700">No wrong answers yet.</p>
           ) : (
-            stuck.map((g) => <StuckGroup key={`${g.skillId}|${g.mistakeId}`} group={g} />)
+            <>
+              <div className="flex flex-col gap-2">
+                <h3 className="text-xl font-bold">{t("board.grid.title")}</h3>
+                <p className="text-gray-700">{t("board.grid.intro")}</p>
+                <PatternGrid grid={stuck.grid} />
+              </div>
+              {!stuck.groups.some((g) => g.mistakeId !== "unknown") && <p className="text-gray-700">{t("board.patterns.none")}</p>}
+              {stuck.groups.map((g) => (
+                <StuckGroup key={`${g.skillId}|${g.mistakeId}`} group={g} />
+              ))}
+              {stuck.slips.length > 0 && <SlipList slips={stuck.slips} />}
+            </>
           )}
         </section>
   
@@ -199,7 +211,7 @@ function MinedDraft({ draft }: { draft: Draft }) {
   );
 }
 
-type Group = Awaited<ReturnType<Awaited<ReturnType<typeof getServices>>["getStuckBoard"]>>[number];
+type Group = Awaited<ReturnType<Awaited<ReturnType<typeof getServices>>["getStuckBoard"]>>["groups"][number];
 
 function StuckGroup({ group }: { group: Group }) {
   const entry = getSkillEntry(group.skillId);
@@ -229,9 +241,14 @@ function StuckGroup({ group }: { group: Group }) {
           </ol>
         </div>
       )}
-      <p>
-        Codes: <span className="math">{group.studentCodes.join(", ")}</span>
-      </p>
+      <ul className="flex flex-col gap-1">
+        {group.students.map((s) => (
+          <li key={s.code}>
+            <span className="math font-semibold">{s.code}</span>:{" "}
+            {t(group.mistakeId === "unknown" ? "board.unknown.evidence" : "board.patterns.evidence", { n: s.questions })}
+          </li>
+        ))}
+      </ul>
     </article>
   );
 }

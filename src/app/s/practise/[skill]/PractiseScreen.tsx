@@ -55,8 +55,11 @@ export function PractiseScreen({ skillId, answerKind }: { skillId: string; answe
         setFeedback({ kind: "good", text: t("practise.correct") });
       } else {
         setStreak(0);
+        // the server decides: a first match gets only "Check line N again." (it may be a slip); a pattern is named
         setFeedback(
-          r.mistakeId && r.mistakeId !== "unknown"
+          r.checkLine !== null
+            ? { kind: "bad", text: t("practise.checkLine", { n: r.checkLine }), detail: t("practise.checkLine.detail") }
+            : r.mistakeId && r.mistakeId !== "unknown"
             ? {
                 kind: "bad",
                 text: t("practise.wrongKnown"),

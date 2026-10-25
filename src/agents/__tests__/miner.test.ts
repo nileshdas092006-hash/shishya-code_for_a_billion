@@ -100,11 +100,13 @@ describe("the Misconception Miner (FAKE model)", () => {
     };
     expect(await answerDivideByA()).toMatchObject({ mistakeId: "unknown" });
     expect(await svc.decideMinedMistake(ctx.cls.id, pending[0].id, "approved")).toEqual({ ok: true });
+    // the first match only points to its line; the second different question names it
+    expect(await answerDivideByA()).toMatchObject({ mistakeId: null, checkLine: 5, feedback: "Check line 5 again." });
     expect(await answerDivideByA()).toMatchObject({ mistakeId: "divided-by-a", feedback: DIVIDE_BY_A.childLabel });
 
-    // the stuck board names it
+    // the stuck board names it (a pattern: 2 different questions)
     const board = await svc.getStuckBoard(ctx.cls.id);
-    expect(board.some((g) => g.mistakeId === "divided-by-a" && g.label === DIVIDE_BY_A.label)).toBe(true);
+    expect(board.groups.some((g) => g.mistakeId === "divided-by-a" && g.label === DIVIDE_BY_A.label)).toBe(true);
 
     // Teach traces can use it, and the code checker (not the AI) decides the fix
     const session = await svc.startTeach(ctx.student.id, SKILL);
@@ -201,15 +203,18 @@ describe("the Misconception Miner (FAKE model)", () => {
     expect(row.approver).toMatch(/teacher of class KV8B.*edited/);
     expect(JSON.parse(row.source)).toMatchObject({ ...edits, answerFormula: "(d - b) / a" }); // formula unchanged
 
-    for (;;) {
+    // the edited child label is shown from the second different question on (the first only points to the line)
+    for (let matched = 0; matched < 2; ) {
       const served = await ctx.svc.servePracticeItem(ctx.student.id, SKILL);
       if (!served.ok) throw new Error(served.reason);
       const item = (await ctx.store.getItem(served.itemId))!;
       const p = JSON.parse(item.paramsJson);
       const wrong = frac(p.d - p.b, p.a);
       if (diagnose(linearBothSides, linearBothSides.generate(createRng(item.seed)), wrong) !== "unknown") continue;
-      expect(await ctx.svc.submitPracticeAnswer(served.itemId, toString(wrong))).toMatchObject({ mistakeId: "divided-by-a", feedback: childLabel });
-      break;
+      expect(await ctx.svc.submitPracticeAnswer(served.itemId, toString(wrong))).toMatchObject(
+        matched === 0 ? { mistakeId: null, checkLine: 5 } : { mistakeId: "divided-by-a", feedback: childLabel },
+      );
+      matched++;
     }
   });
 

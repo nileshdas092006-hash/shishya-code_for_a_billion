@@ -77,7 +77,7 @@ describe("database round trips stay small and do not grow with the class", () =>
     expect(out.codes).toHaveLength(CLASS_SIZE);
     const row = out.progress.find((p) => p.skillId === SKILL)!;
     expect(row.counts).toMatchObject({ LOCKED: 0, OPEN: CLASS_SIZE - 1, MASTERED: 1 });
-    expect(out.stuck.reduce((s, g) => s + g.count, 0)).toBe(5);
+    expect(out.stuck.groups.reduce((s, g) => s + g.count, 0) + out.stuck.slips.flatMap((x) => x.students).length).toBe(5);
     // the same answers as the separate calls the page used before
     expect(out.progress).toEqual(await svc.getClassProgress(room.classId));
     expect(out.stuck).toEqual(await svc.getStuckBoard(room.classId));

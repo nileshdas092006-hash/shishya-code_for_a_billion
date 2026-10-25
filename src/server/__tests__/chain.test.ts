@@ -17,16 +17,27 @@ describe("every skill in the chain works end to end (practise → teach → prov
       await ctx.svc.teacherUnlock(id, spec.id);
       const entry = SKILLS.find((s) => s.spec.id === spec.id)!;
 
-      // practise: a mistake's answer is diagnosed; the right answer is accepted (typed as a child would)
-      for (let tries = 0; ; tries++) {
+      // practise: a mistake's answer is diagnosed; the first match only points to its line, the second
+      // different question names it; the right answer is accepted (typed as a child would)
+      const mistakeId = spec.mistakes[0].id;
+      for (let matched = 0; matched < 2; ) {
         const served = await ctx.svc.servePracticeItem(id, spec.id);
         if (!served.ok) throw new Error(served.reason);
         const item = (await ctx.store.getItem(served.itemId))!;
         const inst = instanceFor(entry, item);
-        const m = spec.mistakes.find((x) => applies(x, inst))!;
-        const r = await ctx.svc.submitPracticeAnswer(served.itemId, answerText(m.apply(inst).answer));
-        expect(r).toMatchObject({ ok: true, correct: false, mistakeId: m.id });
-        break;
+        const m = spec.mistakes.find((x) => x.id === mistakeId && applies(x, inst));
+        if (!m) {
+          await ctx.svc.submitPracticeAnswer(served.itemId, item.answer);
+          continue;
+        }
+        const out = m.apply(inst);
+        const r = await ctx.svc.submitPracticeAnswer(served.itemId, answerText(out.answer));
+        expect(r).toMatchObject(
+          matched === 0
+            ? { ok: true, correct: false, mistakeId: null, checkLine: out.firstWrongLine }
+            : { ok: true, correct: false, mistakeId: m.id, checkLine: null, feedback: m.childLabel },
+        );
+        matched++;
       }
       const again = await ctx.svc.servePracticeItem(id, spec.id);
       if (!again.ok) throw new Error(again.reason);

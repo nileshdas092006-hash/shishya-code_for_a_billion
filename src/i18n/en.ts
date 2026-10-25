@@ -54,6 +54,8 @@ export const ui = {
   "practise.streak": "Correct in a row: {n}",
   "practise.offerTeach": "Great work! 5 correct in a row. Ready to teach the Shishya?",
   "practise.loading": "Getting a question…",
+  "practise.checkLine": "Check line {n} again.",
+  "practise.checkLine.detail": "Line 1 is the question. Count the lines of your working from there.",
 
   "teach.title": "Teach the Shishya",
   "teach.start": "Start teaching",
@@ -105,6 +107,17 @@ export const ui = {
   "common.notFound": "We could not find that page.",
   "common.loading": "Loading…",
   "setup.missing": "Shishya is not set up yet: the server is missing a setting. Tell your teacher.",
+
+  "board.patterns.none": "No mistake patterns yet. A pattern is the same mistake on 2 different questions.",
+  "board.patterns.evidence": "same step on {n} questions",
+  "board.unknown.evidence": "wrong on {n} questions",
+  "board.slips.title": "One slip, watching",
+  "board.slips.intro": "These children matched a known mistake on only one question. One match can be a careless slip, so they are not in a group yet.",
+  "board.slips.at": "{code} at line {n}",
+  "board.grid.title": "Where patterns first go wrong",
+  "board.grid.intro": "Children whose pattern first goes wrong at each line of working (L1 is the question). Slips are not counted.",
+  "board.grid.skill": "Skill",
+  "board.grid.line": "L{n}",
 
   "skill.alg.integers.ops.title": "Adding and subtracting integers",
   "skill.alg.integers.ops.example": "like −7 + 3 and 5 − (−4)",

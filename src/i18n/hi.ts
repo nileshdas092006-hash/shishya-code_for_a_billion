@@ -49,6 +49,9 @@ export const hi: Record<string, string> = {
   "practise.streak": "लगातार सही: {n}",
   "practise.offerTeach": "बहुत बढ़िया! लगातार 5 सही। क्या तुम शिष्य को सिखाने के लिए तैयार हो?",
   "practise.loading": "प्रश्न आ रहा है…",
+  "practise.checkLine": "पंक्ति {n} को फिर से जाँचो।",
+  // HINDI-REVIEW
+  "practise.checkLine.detail": "पंक्ति 1 प्रश्न है। अपने हल की पंक्तियाँ वहीं से गिनो।",
 
   "teach.title": "शिष्य को सिखाओ",
   "teach.start": "सिखाना शुरू करो",
@@ -100,6 +103,18 @@ export const hi: Record<string, string> = {
   "common.notFound": "वह पेज नहीं मिला।",
   "common.loading": "लोड हो रहा है…",
   "setup.missing": "शिष्य अभी तैयार नहीं है: सर्वर में एक सेटिंग नहीं है। अपने शिक्षक को बताओ।",
+
+  // HINDI-REVIEW (the teacher's stuck board, all lines below)
+  "board.patterns.none": "अभी कोई गलती का पैटर्न नहीं है। पैटर्न का मतलब है 2 अलग-अलग प्रश्नों पर एक ही गलती।",
+  "board.patterns.evidence": "{n} प्रश्नों पर एक ही चरण",
+  "board.unknown.evidence": "{n} प्रश्नों पर गलत",
+  "board.slips.title": "एक चूक, नज़र रखें",
+  "board.slips.intro": "इन बच्चों की एक जानी-पहचानी गलती केवल एक प्रश्न पर मिली। एक बार की गलती लापरवाही की चूक हो सकती है, इसलिए वे अभी किसी समूह में नहीं हैं।",
+  "board.slips.at": "{code} पंक्ति {n} पर",
+  "board.grid.title": "पैटर्न पहली बार कहाँ गलत होते हैं",
+  "board.grid.intro": "हल की हर पंक्ति पर कितने बच्चों का पैटर्न पहली बार गलत होता है (L1 प्रश्न है)। एक बार की चूक नहीं गिनी जाती।",
+  "board.grid.skill": "कौशल",
+  "board.grid.line": "L{n}",
 
   "skill.alg.linear.both-sides.title": "दोनों पक्षों में x",
   "skill.alg.linear.both-sides.example": "जैसे 4x − 3 = 2x + 7",

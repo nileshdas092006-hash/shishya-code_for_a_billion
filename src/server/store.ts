@@ -89,7 +89,18 @@ export type MinedMistakeRow = {
   createdAt: string;
 };
 export type EventRow = { id: number; studentId: string | null; type: string; payloadJson: string; createdAt: string };
-export type MistakeHitRow = { studentId: string; code: string; skillId: string; mistakeId: string; createdAt: string };
+export type MistakeHitRow = {
+  studentId: string;
+  code: string;
+  skillId: string;
+  mistakeId: string;
+  createdAt: string;
+  /** The question it was on (two items with the same params are the same question). */
+  itemId: string;
+  paramsJson: string;
+  seed: number;
+  format: ItemFormat;
+};
 export type ExportCounts = {
   skillId: string;
   practiceAnswers: number;
@@ -519,7 +530,7 @@ export async function openStore(config: StoreConfig | string = {}) {
     async listClassMistakesSince(classId: string, since: string): Promise<MistakeHitRow[]> {
       return (
         await all(
-          `SELECT a.studentId, s.code, i.skillId, a.mistakeId, a.createdAt
+          `SELECT a.studentId, s.code, i.skillId, a.mistakeId, a.createdAt, a.itemId, i.paramsJson, i.seed, i.format
            FROM attempts a JOIN students s ON s.id = a.studentId JOIN items i ON i.id = a.itemId
            WHERE s.classId = ? AND a.correct = 0 AND a.mistakeId IS NOT NULL AND a.createdAt >= ?
            ORDER BY a.createdAt, a.rowid`,
@@ -531,7 +542,20 @@ export async function openStore(config: StoreConfig | string = {}) {
         skillId: r.skillId as string,
         mistakeId: r.mistakeId as string,
         createdAt: r.createdAt as string,
+        itemId: r.itemId as string,
+        paramsJson: r.paramsJson as string,
+        seed: Number(r.seed),
+        format: r.format as ItemFormat,
       }));
+    },
+    /** On how many different questions (by params, other than exceptParamsJson) this mistake explained the child's answer since a time. */
+    async countMistakeQuestionsSince(f: { studentId: string; skillId: string; mistakeId: string; since: string; exceptParamsJson: string }): Promise<number> {
+      const r = await one(
+        `SELECT COUNT(DISTINCT i.paramsJson) AS n FROM attempts a JOIN items i ON i.id = a.itemId
+         WHERE a.studentId = ? AND i.skillId = ? AND a.mistakeId = ? AND a.createdAt >= ? AND i.paramsJson <> ?`,
+        f.studentId, f.skillId, f.mistakeId, f.since, f.exceptParamsJson,
+      );
+      return Number(r?.n ?? 0);
     },
 
     // ----- teach traces -----
