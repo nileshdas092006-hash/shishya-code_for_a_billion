@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { t, type MessageKey } from "@/i18n";
 import { startTeachSession, submitTeach } from "../../../actions";
 import { Shishya, type Mood } from "../../../_components/Shishya";
 import { TraceLines } from "../../../_components/TraceLines";
 import { ReadyButton } from "../../../_components/ReadyButton";
+import { MathKeypad } from "../../../_components/MathKeypad";
 
 type Trace = { itemId: string; question: string; lines: string[] };
 type Result = { ok: boolean; text: string };
@@ -18,6 +19,7 @@ export function TeachScreen({ skillId }: { skillId: string }) {
   const [index, setIndex] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
   const [typed, setTyped] = useState("");
+  const typedBox = useRef<HTMLInputElement>(null);
   const [triesLeft, setTriesLeft] = useState(TRIES);
   const [result, setResult] = useState<Result | null>(null);
   const [fixed, setFixed] = useState(0);
@@ -162,6 +164,7 @@ export function TeachScreen({ skillId }: { skillId: string }) {
           <label className="flex flex-col gap-1 font-semibold">
             {t("teach.typeLabel", { n: selected })}
             <input
+              ref={typedBox}
               value={typed}
               onChange={(e) => setTyped(e.target.value)}
               autoComplete="off"
@@ -169,6 +172,7 @@ export function TeachScreen({ skillId }: { skillId: string }) {
               aria-describedby="type-hint"
             />
           </label>
+          <MathKeypad value={typed} onChange={setTyped} inputRef={typedBox} disabled={pending} />
           <p id="type-hint" className="text-base text-gray-700">
             {t("teach.typeHint")}
           </p>

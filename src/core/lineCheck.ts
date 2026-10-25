@@ -1,6 +1,7 @@
 import { equivalent, fill, parseEquation, parseExpression, PARSE_MESSAGES, type Equation, type Linear, type MessageParams } from "./equation";
 import { equals, type Fraction } from "./fraction";
 import { evaluate } from "./minedMistake";
+import { normaliseInput } from "./normalise";
 import type { LineCheck } from "./types";
 
 // Shared checks for a child's typed line in "Teach the Shishya". Each skill's checkLine() uses one of them
@@ -40,9 +41,9 @@ const parseFailure = (r: { error: string; errorKey: string; errorParams?: Messag
   ...(r.errorParams ? { feedbackParams: r.errorParams } : {}),
 });
 
-/** Same text, ignoring spaces and which minus sign was typed. */
+/** Same text, ignoring spaces and which keyboard typed it (minus signs, digits; see normalise.ts). */
 const sameText = (p: string, q: string) => {
-  const norm = (s: string) => s.replace(/[−–—]/g, "-").replace(/\s+/g, "").toLowerCase();
+  const norm = (s: string) => normaliseInput(s).replace(/\s+/g, "").toLowerCase();
   return norm(p) === norm(q);
 };
 
@@ -53,7 +54,8 @@ export function evaluateArithmetic(text: string): Fraction {
 }
 
 /** alg.integers.ops: same value as the question; the last line is one number. */
-export function checkArithmeticLine(value: Fraction, prevLine: string, typed: string, isLast: boolean): LineCheck {
+export function checkArithmeticLine(value: Fraction, prevLine: string, typedRaw: string, isLast: boolean): LineCheck {
+  const typed = normaliseInput(typedRaw);
   let v: Fraction;
   try {
     v = evaluateArithmetic(typed);

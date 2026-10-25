@@ -1,4 +1,5 @@
 import { add, div, equals, frac, sub, type Fraction } from "./fraction";
+import { normaliseInput } from "./normalise";
 
 // Parses a typed linear equation in one variable x, such as "4x − 2x − 3 = 7".
 // No brackets yet. Never throws: a line it cannot read gives a child-friendly reason instead,
@@ -124,9 +125,8 @@ function parseSide(text: string): Side {
 
 export function parseEquation(text: string): ParseResult {
   try {
-    const clean = String(text ?? "")
+    const clean = normaliseInput(text)
       .toLowerCase()
-      .replace(/[−–—]/g, "-")
       .replace(/\s+/g, " ")
       .trim();
     if (!clean) return failure("parse.empty");
@@ -149,9 +149,8 @@ export function parseExpression(text: string): ExpressionResult {
   const fail = (r: ParseResult): ExpressionResult =>
     r.ok ? { ok: false, error: PARSE_MESSAGES["parse.generic"], errorKey: "parse.generic" } : r;
   try {
-    const clean = String(text ?? "")
+    const clean = normaliseInput(text)
       .toLowerCase()
-      .replace(/[−–—]/g, "-")
       .replace(/\s+/g, " ")
       .trim();
     if (!clean) return fail(failure("parse.empty"));

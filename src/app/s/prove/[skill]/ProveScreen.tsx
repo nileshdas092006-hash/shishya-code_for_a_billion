@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { hasMessage, mistakeKey, skillKey, t, type MessageKey } from "@/i18n";
 import { proofOverview, startProofRun, submitProof } from "../../../actions";
 import { Equation } from "../../../_components/Equation";
 import { Shishya } from "../../../_components/Shishya";
 import { ReadyButton } from "../../../_components/ReadyButton";
+import { MathKeypad } from "../../../_components/MathKeypad";
 
 type Item = { itemId: string; format: "solve" | "apply"; text: string; answered: boolean };
 type Run = { deadline: string; items: Item[] };
@@ -20,6 +21,7 @@ export function ProveScreen({ skillId, answerKind }: { skillId: string; answerKi
   const [status, setStatus] = useState<Status | null>(null);
   const [run, setRun] = useState<Run | null>(null);
   const [answer, setAnswer] = useState("");
+  const answerBox = useRef<HTMLInputElement>(null);
   const [note, setNote] = useState<string | null>(null);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
   const [minutesLeft, setMinutesLeft] = useState<number | null>(null);
@@ -148,6 +150,7 @@ export function ProveScreen({ skillId, answerKind }: { skillId: string; answerKi
             <label className="flex flex-wrap items-center gap-3 text-3xl font-bold math">
               {t(skillKey(skillId, "answerLabel"))}
               <input
+                ref={answerBox}
                 value={answer}
                 onChange={(e) => setAnswer(e.target.value)}
                 autoComplete="off"
@@ -155,6 +158,7 @@ export function ProveScreen({ skillId, answerKind }: { skillId: string; answerKi
                 aria-describedby="prove-hint"
               />
             </label>
+            <MathKeypad value={answer} onChange={setAnswer} inputRef={answerBox} disabled={pending} />
             <p id="prove-hint" className="text-base text-gray-700">
               {t(answerKind === "expression" ? "practise.answerHint.expression" : "practise.answerHint")}
             </p>

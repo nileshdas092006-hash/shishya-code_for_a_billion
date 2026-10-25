@@ -1,15 +1,16 @@
 import { parseExpression, type ParseErrorKey } from "./equation";
 import { formatSide, type Term } from "./format";
 import { equals, frac, toString, type Fraction } from "./fraction";
+import { normaliseInput } from "./normalise";
 import type { Answer, AnswerKind, ExprAnswer } from "./types";
 
 // Reads a child's typed final answer. Never throws.
-//   number:     "5", "−3", "5/3", or "x = 5"
+//   number:     "5", "−3", "+5", "5/3", "10÷2", "x = 5" or "5 = x", from any keyboard (see normalise.ts)
 //   expression: "2x + 7" (alg.like-terms), in any order
 
 /** English text for each answer error; src/i18n/en.ts reuses these. */
 export const ANSWER_MESSAGES = {
-  "answer.format": "Type your answer as a number, like 5, −3 or 5/3.",
+  "answer.format": "Type your answer as a number, like 5, -3, 5/3 or x = 5.",
   "answer.zeroDen": "The bottom number of a fraction cannot be 0.",
 } as const;
 export type AnswerErrorKey = keyof typeof ANSWER_MESSAGES;
@@ -20,15 +21,15 @@ export type AnyAnswerResult = { ok: true; value: Answer } | { ok: false; error: 
 const failure = (key: AnswerErrorKey): AnswerResult => ({ ok: false, error: ANSWER_MESSAGES[key], errorKey: key });
 
 export function parseAnswer(text: string): AnswerResult {
-  const clean = String(text ?? "")
+  const clean = normaliseInput(text)
     .toLowerCase()
-    .replace(/[−–—]/g, "-")
+    .replace(/÷/g, "/") // only a final answer reads ÷, e.g. 10÷2
     .trim()
-    .replace(/\s*([=/-])\s*/g, "$1") // spaces around signs are fine; "1 2" is not "12"
-    .replace(/^x=/, "");
-  const m = /^(-?)(\d{1,6})(?:\/(\d{1,6}))?$/.exec(clean);
+    .replace(/\s*([=/+-])\s*/g, "$1"); // spaces around signs are fine; "1 2" is not "12"
+  const value = /^x=(.*)$/.exec(clean)?.[1] ?? /^(.*)=x$/.exec(clean)?.[1] ?? clean;
+  const m = /^([+-]?)(\d{1,6})(?:\/(\d{1,6}))?$/.exec(value);
   if (!m) return failure("answer.format");
-  const num = Number(m[2]) * (m[1] ? -1 : 1);
+  const num = Number(m[2]) * (m[1] === "-" ? -1 : 1);
   const den = m[3] === undefined ? 1 : Number(m[3]);
   if (den === 0) return failure("answer.zeroDen");
   return { ok: true, value: frac(num, den) };

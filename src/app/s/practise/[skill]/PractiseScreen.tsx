@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { hasMessage, hintKey, keepMathTogether, mistakeKey, skillKey, t, type MessageKey } from "@/i18n";
 import { answerPractice, servePractice } from "../../../actions";
 import { Equation } from "../../../_components/Equation";
 import { Shishya } from "../../../_components/Shishya";
 import { ReadyButton } from "../../../_components/ReadyButton";
+import { MathKeypad } from "../../../_components/MathKeypad";
 
 const STREAK_FOR_TEACH = 5;
 const HINT_LEVELS = 4;
@@ -16,6 +17,7 @@ type Feedback = { kind: "good" | "bad" | "note"; text: string; detail?: string }
 export function PractiseScreen({ skillId, answerKind }: { skillId: string; answerKind: "number" | "expression" }) {
   const [item, setItem] = useState<{ itemId: string; text: string } | null>(null);
   const [answer, setAnswer] = useState("");
+  const answerBox = useRef<HTMLInputElement>(null);
   const [answered, setAnswered] = useState(false);
   const [feedback, setFeedback] = useState<Feedback>(null);
   const [hints, setHints] = useState(0);
@@ -90,6 +92,7 @@ export function PractiseScreen({ skillId, answerKind }: { skillId: string; answe
           <label className="flex flex-wrap items-center gap-3 text-3xl font-bold math">
             {t(skillKey(skillId, "answerLabel"))}
             <input
+              ref={answerBox}
               value={answer}
               onChange={(e) => setAnswer(e.target.value)}
               disabled={answered}
@@ -99,6 +102,7 @@ export function PractiseScreen({ skillId, answerKind }: { skillId: string; answe
               aria-describedby="answer-hint"
             />
           </label>
+          {!answered && <MathKeypad value={answer} onChange={setAnswer} inputRef={answerBox} disabled={pending} />}
           <p id="answer-hint" className="text-base text-gray-700">
             {t(answerKind === "expression" ? "practise.answerHint.expression" : "practise.answerHint")}
           </p>

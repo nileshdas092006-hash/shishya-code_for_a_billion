@@ -39,7 +39,7 @@ export const hi: Record<string, string> = {
   "practise.title": "अभ्यास",
   "practise.solve": "x का मान ज्ञात करो।",
   "practise.answerLabel": "x =",
-  "practise.answerHint": "तुम 5/3 जैसी भिन्न या −4 जैसी ऋणात्मक संख्या लिख सकते हो।",
+  "practise.answerHint": "तुम 5/3 जैसी भिन्न या -4 जैसी ऋणात्मक संख्या लिख सकते हो।",
   "practise.check": "मेरा उत्तर जाँचो",
   "practise.next": "अगला प्रश्न",
   "practise.correct": "सही! तुम्हारे उत्तर से दोनों पक्ष बराबर हैं।",
@@ -107,6 +107,13 @@ export const hi: Record<string, string> = {
   "common.locked": "यह कौशल बंद है। अपने शिक्षक से कहो।",
   "common.notFound": "वह पेज नहीं मिला।",
   "common.loading": "लोड हो रहा है…",
+  "keypad.label": "गणित कीपैड", // HINDI-REVIEW
+  "keypad.minus": "घटा",
+  "keypad.plus": "जोड़",
+  "keypad.equals": "बराबर",
+  "keypad.divide": "भाग",
+  "keypad.delete": "मिटाओ", // HINDI-REVIEW
+  "keypad.clear": "सब मिटाओ", // HINDI-REVIEW
   "setup.missing": "शिष्य अभी तैयार नहीं है: सर्वर में एक सेटिंग नहीं है। अपने शिक्षक को बताओ।",
 
   // HINDI-REVIEW (the teacher's stuck board, all lines below)
@@ -165,7 +172,7 @@ export const hi: Record<string, string> = {
   "parse.generic": "मैं वह पंक्ति नहीं पढ़ पाया। जाँचकर फिर से कोशिश करो।",
 
   // src/core answer messages
-  "answer.format": "अपना उत्तर संख्या के रूप में लिखो, जैसे 5, −3 या 5/3।",
+  "answer.format": "अपना उत्तर संख्या के रूप में लिखो, जैसे 5, -3, 5/3 या x = 5।",
   "answer.zeroDen": "भिन्न में नीचे की संख्या 0 नहीं हो सकती।",
 
   // alg.linear.both-sides: hints
@@ -187,7 +194,7 @@ export const hi: Record<string, string> = {
   "mistake.alg.linear.both-sides.forgot-to-divide":
     "यह पंक्ति अभी भी बताती है कि कोई संख्या गुणा x कितना है। x का मान पाने के लिए दोनों पक्षों को x के साथ वाली संख्या से भाग दो।",
   // UI
-  "practise.answerHint.expression": "सबसे सरल रूप लिखो, जैसे 2x + 7 या 3x − 4।",
+  "practise.answerHint.expression": "सबसे सरल रूप लिखो, जैसे 2x + 7 या 3x - 4।",
 
   // skills: titles, examples, tasks, answer labels
   "skill.alg.integers.ops.title": "पूर्णांकों का जोड़ और घटाव",
