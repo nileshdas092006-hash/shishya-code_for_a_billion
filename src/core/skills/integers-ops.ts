@@ -1,6 +1,6 @@
 import { asFraction } from "../answer";
 import { frac } from "../fraction";
-import { checkArithmeticLine } from "../lineCheck";
+import { checkArithLine } from "../lineCheck";
 import { randInt, type Rng } from "../rng";
 import type { ApplyItem, Instance, LineCheck, Mistake, SkillSpec, Trace } from "../types";
 import { MINUS, mistakesAreSound, nonZero, num, toTrace } from "./helpers";
@@ -60,7 +60,7 @@ function solve(inst: Instance): { trace: Trace; answer: ReturnType<typeof frac> 
 
 function checkLine(inst: Instance, line: number, typed: string): LineCheck {
   const correct = correctLines(P(inst));
-  return checkArithmeticLine(asFraction(inst.answer), correct[line - 2] ?? correct[0], typed, line >= correct.length);
+  return checkArithLine(asFraction(inst.answer), correct[line - 2] ?? correct[0], typed, line >= correct.length);
 }
 
 // ---------- mistakes ----------

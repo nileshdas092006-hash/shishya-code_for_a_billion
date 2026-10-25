@@ -89,7 +89,7 @@ childLabel, stepType, origin "authored", optional appliesTo, apply), hintLadder 
 in the other skills) and a word-problem generator (rng) => ApplyItem with an Indian everyday story in English
 (text) and Hindi (textHi). Rules: pure TypeScript; import only from src/core; randomness ONLY from the rng passed in
 (never Math.random); exact fractions from src/core/fraction.ts; reuse helpers.ts (nonZero, num, toTrace,
-mistakesAreSound) and lineCheck.ts (checkArithmeticLine, checkExpressionLine, checkEquationLine). Every mistake
+mistakesAreSound) and lineCheck.ts (checkArithLine, checkExpressionLine, checkEquationLine). Every mistake
 must never give the correct answer and the mistakes' answers must differ: make generate() reject questions where
 they do not (mistakesAreSound does this). Child messages use NCERT words ("do the same operation on both sides"),
 say what went wrong and the correct step, never tell the child to do the mistake, never say "move" or "change the

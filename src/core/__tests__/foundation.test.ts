@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { answerText, parseAnswerFor, sameAnswer } from "../answer";
 import { parseEquation, parseExpression } from "../equation";
 import { frac } from "../fraction";
-import { checkArithmeticLine, checkEquationLine, checkExpressionLine, evaluateArithmetic } from "../lineCheck";
+import { checkArithLine, checkEquationLine, checkExpressionLine, evaluateArithmetic } from "../lineCheck";
 
 const expr = (x: number, c: number) => ({ kind: "expr" as const, x: frac(x), c: frac(c) });
 
@@ -60,12 +60,12 @@ describe("arithmetic lines (integers)", () => {
   });
 
   it("accepts a line with the same value, refuses a copy of the line above, and wants one number at the end", () => {
-    expect(checkArithmeticLine(frac(9), "5 − (−4)", "5 + 4", false)).toMatchObject({ ok: true, feedbackKey: "teach.fix.ok" });
-    expect(checkArithmeticLine(frac(9), "5 − (−4)", "5 − 4", false)).toMatchObject({ ok: false, feedbackKey: "teach.fix.sameValue" });
-    expect(checkArithmeticLine(frac(9), "5 + 4", "5+4", false)).toMatchObject({ ok: false, feedbackKey: "teach.fix.noProgress" });
-    expect(checkArithmeticLine(frac(9), "5 + 4", "4 + 5", true)).toMatchObject({ ok: false, feedbackKey: "teach.fix.oneNumber" });
-    expect(checkArithmeticLine(frac(9), "5 + 4", "9", true)).toMatchObject({ ok: true });
-    expect(checkArithmeticLine(frac(9), "5 + 4", "nine", true)).toMatchObject({ ok: false, feedbackKey: "parse.arith" });
+    expect(checkArithLine(frac(9), "5 − (−4)", "5 + 4", false)).toMatchObject({ ok: true, feedbackKey: "teach.fix.ok" });
+    expect(checkArithLine(frac(9), "5 − (−4)", "5 − 4", false)).toMatchObject({ ok: false, feedbackKey: "teach.fix.sameValue" });
+    expect(checkArithLine(frac(9), "5 + 4", "5+4", false)).toMatchObject({ ok: false, feedbackKey: "teach.fix.noProgress" });
+    expect(checkArithLine(frac(9), "5 + 4", "4 + 5", true)).toMatchObject({ ok: false, feedbackKey: "teach.fix.oneNumber" });
+    expect(checkArithLine(frac(9), "5 + 4", "9", true)).toMatchObject({ ok: true });
+    expect(checkArithLine(frac(9), "5 + 4", "nine", true)).toMatchObject({ ok: false, feedbackKey: "parse.arith" });
   });
 });
 

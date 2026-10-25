@@ -54,7 +54,7 @@ export function evaluateArithmetic(text: string): Fraction {
 }
 
 /** alg.integers.ops: same value as the question; the last line is one number. */
-export function checkArithmeticLine(value: Fraction, prevLine: string, typedRaw: string, isLast: boolean): LineCheck {
+export function checkArithLine(value: Fraction, prevLine: string, typedRaw: string, isLast: boolean): LineCheck {
   const typed = normaliseInput(typedRaw);
   let v: Fraction;
   try {

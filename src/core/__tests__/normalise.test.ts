@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parseAnswer, parseAnswerFor, sameAnswer } from "../answer";
 import { parseEquation, parseExpression } from "../equation";
 import { frac, toString } from "../fraction";
-import { checkArithmeticLine, checkEquationLine } from "../lineCheck";
+import { checkArithLine, checkEquationLine } from "../lineCheck";
 import { normaliseInput } from "../normalise";
 import { createRng, randInt } from "../rng";
 
@@ -130,7 +130,7 @@ describe("the line checker reads every keyboard style", () => {
   });
 
   it("arithmetic lines read them too", () => {
-    expect(checkArithmeticLine(frac(9), "5 − (−4)", "५ + ४", false)).toMatchObject({ ok: true });
-    expect(checkArithmeticLine(frac(-1), "3 − 4", "－１", true)).toMatchObject({ ok: true });
+    expect(checkArithLine(frac(9), "5 − (−4)", "५ + ४", false)).toMatchObject({ ok: true });
+    expect(checkArithLine(frac(-1), "3 − 4", "－１", true)).toMatchObject({ ok: true });
   });
 });
