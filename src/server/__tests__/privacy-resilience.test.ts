@@ -142,6 +142,7 @@ describe("deleting a class", () => {
     const kept = await make("C");
     clock.advanceHours(7 * 24); // a week after mastery: a quick check (P1b) for the child who mastered the skill
     expect(await svc.startRecheck(gone.ids[1], SKILL)).toMatchObject({ ok: true });
+    expect(await svc.startReadyCheck(gone.ids[2])).toMatchObject({ ok: true }); // and a Ready check (P1d)
     // a mistake this class's teacher approved stays in the library, but no longer names the class
     await store.insertMinedMistake({
       id: "m1", skillId: SKILL, source: "{}", testsJson: "{}", status: "APPROVED",
@@ -164,7 +165,7 @@ describe("deleting a class", () => {
     const logged = (await store.listEvents()).filter((e) => e.type === "class_deleted");
     expect(logged).toHaveLength(1);
     expect(Object.keys(JSON.parse(logged[0].payloadJson)).sort()).toEqual(
-      ["attempts", "events", "items", "kind", "mastery", "proofRuns", "students", "teachTraces", "worksheets", "rechecks"].sort(),
+      ["attempts", "events", "items", "kind", "mastery", "proofRuns", "students", "teachTraces", "worksheets", "rechecks", "readyChecks"].sort(),
     );
     expect(await svc.deleteClass(gone.room.classId, gone.room.classCode)).toMatchObject({ ok: false, code: "none" });
   });

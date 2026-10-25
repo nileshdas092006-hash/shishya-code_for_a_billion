@@ -23,10 +23,17 @@ function SkillMap() {
   return guardPage("student", async () => {
     const student = await currentStudent();
     if (!student) return <LoggedOutNotice />;
-    const skills = await (await getServices()).getSkillMap(student.studentId);
+    const svc = await getServices();
+    const [skills, ready] = await Promise.all([svc.getSkillMap(student.studentId), svc.readyCheckStatus(student.studentId)]);
     return (
       <>
         <p className="text-lg text-gray-700">{student.code}</p>
+        {/* once, before the first skill; it never blocks the skills below */}
+        {ready.state !== "done" && (
+          <Link href="/s/ready" className="btn btn-primary self-start text-xl">
+            {t("ready.link")}
+          </Link>
+        )}
         <ol className="flex flex-col gap-4">
           {skills.map(({ skillId, state, recheck }) => {
             const path = encodeURIComponent(skillId);

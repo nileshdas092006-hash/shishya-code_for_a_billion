@@ -80,6 +80,11 @@ people, or the teacher's own words. The page **How the agent worked** lists the 
   `src/server/mastery.ts` and re-checked from the seeds. Passing shows "Checked again after 7 days ✓"; missing it never
   takes Mastered away: the teacher sees "needs another look", the child is asked to practise, and another check opens
   a week later. The board shows "Checked again: X of Y mastered" per skill.
+- **Ready check.** Before the first skill, a child answers "Ready check: 6 quick questions" once (2 addition,
+  2 subtraction, 2 multiplication with whole numbers, sizes like Class 5–6, from seeds in `src/core/readyCheck.ts`).
+  5 or 6 right changes nothing. 4 or fewer puts the child on the board under "Needs number basics first (outside
+  Shishya)", where the teacher can mark them seen. The child is never blocked, and it is not a skill: nothing about it
+  is ever written to the mastery table.
 - **English and Hindi** on every screen, in the NCERT textbook's words.
 - **Privacy written down:** [PRIVACY.md](PRIVACY.md) and a template agreement for schools (see below).
 

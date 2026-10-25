@@ -6,7 +6,7 @@ import { skillKey, t } from "@/i18n";
 import { getServices } from "@/server/instance";
 import { COOLDOWN_CHOICES } from "@/server/services";
 import type { ClassRow } from "@/server/store";
-import { closeProofs, giveNewCodes, openProofs, recordConsentAction, setCooldownAction, unlockSkillForClass } from "../../actions";
+import { closeProofs, giveNewCodes, markReadySeenAction, openProofs, recordConsentAction, setCooldownAction, unlockSkillForClass } from "../../actions";
 import { MinedDecision } from "./MinedDecision";
 import { PatternGrid, SlipList } from "./PatternGrid";
 import { Equation } from "../../_components/Equation";
@@ -24,7 +24,7 @@ const STATES = ["LOCKED", "OPEN", "KEY1", "NOT_YET", "MASTERED"] as const;
 type Query = Record<string, string | string[] | undefined>;
 
 export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Query }) {
-  const { stuck, progress, mined, codes, proofWindow, proofCooldown } = await (await getServices()).getClassBoard(cls.id);
+  const { stuck, progress, mined, codes, proofWindow, proofCooldown, numberBasics } = await (await getServices()).getClassBoard(cls.id);
   const base = `/teacher/${encodeURIComponent(cls.code)}`;
   const tour = cls.kind === "sandbox";
 
@@ -130,6 +130,37 @@ export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Que
               {t("board.recheck.needsLook", { skill: t(skillKey(p.skillId, "title")), codes: p.needsLook.join(", ") })}
             </p>
           ))}
+      </section>
+
+      <section className="flex flex-col gap-3 no-print" aria-labelledby="basics">
+        <h2 id="basics" className="text-2xl font-bold">
+          {t("board.ready.title")}
+        </h2>
+        {numberBasics.length === 0 ? (
+          <p className="text-gray-700">{t("board.ready.none")}</p>
+        ) : (
+          <>
+            <p className="text-gray-700">{t("board.ready.intro")}</p>
+            <ul className="flex flex-col gap-2">
+              {numberBasics.map((b) => (
+                <li key={b.code} className="flex flex-wrap items-center gap-3">
+                  <span className={`math text-lg ${b.seen ? "text-gray-700" : "font-semibold"}`}>
+                    {t("board.ready.child", { code: b.code, n: b.correct, total: b.total })}
+                  </span>
+                  {b.seen ? (
+                    <span className="text-gray-700">({t("board.ready.seenDone")})</span>
+                  ) : (
+                    <form action={markReadySeenAction.bind(null, cls.code, b.code)}>
+                      <button type="submit" className="btn">
+                        {t("board.ready.seen")}
+                      </button>
+                    </form>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
       </section>
 
       <section className="flex flex-col gap-3 no-print" aria-labelledby="mined">

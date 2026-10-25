@@ -4,6 +4,7 @@ import { diagnose } from "../core/diagnose";
 import { createRng } from "../core/rng";
 import type { ApplyItem } from "../core/skills/linear-both-sides-apply";
 import { childMessage } from "../core/childMessages";
+import { READY_CHECK_PLAN, readyCheckPassed, readyCheckSeeds, readyQuestion, READY_CHECK_ID, READY_CHECK_VERSION } from "../core/readyCheck";
 import { explainedErrors, validateMinedMistake, validationChecks, type ChildLabelSource, type MinedMistakeSpec, type ReportNumbers } from "../core/minedMistake";
 import { answerReceipt, type AnswerReceipt } from "../core/receipt";
 import { checkTeachStep, type TeachResult } from "../core/teach";
@@ -26,6 +27,7 @@ import type {
   NewClass,
   MasteryRow,
   ProofRunRow,
+  ReadyCheckRow,
   RecheckRow,
   Store,
   StudentRow,
@@ -443,6 +445,33 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     if (!(await store.finishRecheck(run.id, verdict.passed, iso()))) return null;
     await log(run.studentId, "recheck_finished", { skillId: run.skillId, runId: run.id, passed: verdict.passed });
     return mastery.recordRecheck(store, run.studentId, entry, run.id, now());
+  }
+
+  /** A Ready check as the child sees it: the 6 questions (re-created from their seeds) and whether each is answered. */
+  async function readyCheckView(check: ReadyCheckRow) {
+    const items = new Map((await store.getItems(check.itemIds)).map((i) => [i.id, i]));
+    return {
+      ok: true as const,
+      checkId: check.id,
+      items: check.itemIds.map((id) => {
+        const item = items.get(id)!;
+        return { itemId: id, text: readyQuestion(item.seed).text, answered: item.answeredAt !== null };
+      }),
+    };
+  }
+
+  /** How many of a Ready check's questions were right, re-checked from their seeds (stored answers are not trusted). */
+  async function readyCheckScore(check: ReadyCheckRow): Promise<number> {
+    const [items, attempts] = await Promise.all([store.getItems(check.itemIds), store.listAttemptsForItems(check.itemIds)]);
+    return check.itemIds.filter((id) => {
+      const item = items.find((i) => i.id === id);
+      const mine = attempts.filter((a) => a.itemId === id);
+      if (!item || item.skillId !== READY_CHECK_ID || item.studentId !== check.studentId || mine.length !== 1) return false;
+      const question = readyQuestion(item.seed);
+      if (JSON.stringify(question.params) !== item.paramsJson) return false;
+      const typed = parseAnswerFor("number", mine[0].answer);
+      return typed.ok && sameAnswer(typed.value, question.answer);
+    }).length;
   }
 
   /** A running re-check as the child sees it: the questions only (no hints), and whether each is answered. */
@@ -1103,6 +1132,81 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       });
     },
 
+    // ----- the Ready check (6 whole-number questions, once, before the first skill; never touches mastery) -----
+    /** due: not taken yet; running: started; done: finished, with how many were right. */
+    async readyCheckStatus(studentId: string): Promise<{ state: "due" | "running" | "done"; correct: number | null; total: number }> {
+      const check = await store.getStudentReadyCheck(studentId);
+      const state = !check ? "due" : check.finishedAt ? "done" : "running";
+      return { state, correct: check?.correct ?? null, total: READY_CHECK_PLAN.length };
+    },
+
+    /** Starts the child's one Ready check (or gives back the one that is running). */
+    async startReadyCheck(studentId: string): Promise<{ ok: true; checkId: string; items: { itemId: string; text: string; answered: boolean }[] } | Fail> {
+      await requireStudent(studentId);
+      return store.transaction(async () => {
+        const existing = await store.getStudentReadyCheck(studentId);
+        if (existing?.finishedAt) return fail("The Ready check is already done.", "finished");
+        if (existing) return readyCheckView(existing);
+        const checkId = randomUUID();
+        if (!(await store.insertReadyCheck({ id: checkId, studentId, itemIds: [], startedAt: iso() }))) return fail("The Ready check is already done.", "finished");
+        const itemIds: string[] = [];
+        for (const seed of readyCheckSeeds(createRng(newSeed()))) {
+          const q = readyQuestion(seed);
+          const item: Omit<ItemRow, "answeredAt"> = {
+            id: randomUUID(),
+            studentId,
+            skillId: READY_CHECK_ID,
+            version: READY_CHECK_VERSION,
+            seed,
+            kind: "practice",
+            format: "solve",
+            runId: checkId,
+            mistakeId: null,
+            paramsJson: JSON.stringify(q.params),
+            answer: answerText(q.answer),
+            servedAt: iso(),
+          };
+          await store.insertItem(item);
+          itemIds.push(item.id);
+        }
+        await store.setReadyCheckItems(checkId, itemIds);
+        await log(studentId, "ready_check_started", { checkId });
+        return readyCheckView((await store.getReadyCheck(checkId))!);
+      });
+    },
+
+    /** One answer of the Ready check. A wrong answer has no mistake id: it never reaches the board's mistakes or the Miner. */
+    async submitReadyCheckAnswer(
+      itemId: string,
+      typedText: string,
+    ): Promise<{ ok: true; finished: false } | { ok: true; finished: true; correct: number; total: number; ready: boolean } | Fail> {
+      const item = await store.getItem(itemId);
+      if (!item || item.skillId !== READY_CHECK_ID || !item.runId) throw new Error(`Unknown Ready check item: ${itemId}`);
+      const typed = parseAnswerFor("number", typedText);
+      if (!typed.ok) return fail(typed.error, "bad_answer", { errorKey: typed.errorKey });
+      return store.transaction(async () => {
+        const check = await store.getReadyCheck(item.runId!);
+        if (!check || check.finishedAt) return fail("The Ready check is already done.", "finished");
+        if (!(await store.markItemAnswered(item.id, iso()))) return fail("This question was already answered.", "already_answered");
+        const correct = sameAnswer(typed.value, readyQuestion(item.seed).answer);
+        await store.insertAttempt({ id: randomUUID(), studentId: item.studentId, itemId: item.id, answer: answerText(typed.value), correct, mistakeId: null, createdAt: iso() });
+        const items = await store.getItems(check.itemIds);
+        if (!items.every((i) => i.answeredAt)) return { ok: true as const, finished: false as const };
+        const score = await readyCheckScore(check);
+        if (!(await store.finishReadyCheck(check.id, score, iso()))) return fail("The Ready check is already done.", "finished");
+        await log(item.studentId, "ready_check_finished", { checkId: check.id, correct: score, ready: readyCheckPassed(score) });
+        return { ok: true as const, finished: true as const, correct: score, total: READY_CHECK_PLAN.length, ready: readyCheckPassed(score) };
+      });
+    },
+
+    /** "Seen" on the board's "Needs number basics first" list. False if the child is not in this class or has no check. */
+    async markReadyCheckSeen(classId: string, studentCode: string): Promise<boolean> {
+      await requireClass(classId);
+      const done = await store.markReadyCheckSeen(classId, normaliseCode(studentCode), iso());
+      if (done) await log(null, "ready_check_seen", { classId });
+      return done;
+    },
+
     // ----- the 7-day re-check (2 fresh questions, no hints, 15 minutes; never changes the MASTERED state) -----
     /** Can this child take the quick check now? (An expired one is closed first.) */
     async recheckStatus(studentId: string, skillId: string) {
@@ -1201,10 +1305,18 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     async getClassBoard(classId: string) {
       const cls = await requireClass(classId);
       // a tour class never sees (or decides) the real mistake library's drafts
-      const [students, mined] = await Promise.all([store.listStudents(classId), cls.kind === "sandbox" ? [] : pendingMined()]);
+      const [students, mined, ready] = await Promise.all([
+        store.listStudents(classId),
+        cls.kind === "sandbox" ? [] : pendingMined(),
+        store.listClassReadyChecks(classId),
+      ]);
       const [read, stuck] = await Promise.all([classStates(classId, students), stuckGroups(classId)]);
       return {
         stuck,
+        /** "Needs number basics first (outside Shishya)": children whose Ready check had 4 or fewer right. */
+        numberBasics: ready
+          .filter((r) => r.correct !== null && !readyCheckPassed(r.correct))
+          .map((r) => ({ code: r.code, correct: r.correct!, total: READY_CHECK_PLAN.length, seen: r.seenAt !== null })),
         progress: progressFrom(students, read),
         mined,
         codes: students.map((s) => s.code),

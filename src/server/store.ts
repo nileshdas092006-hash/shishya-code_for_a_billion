@@ -64,6 +64,7 @@ export type DeletedCounts = {
   events: number;
   worksheets: number;
   rechecks: number;
+  readyChecks: number;
 };
 export type StudentRow = { id: string; classId: string; code: string };
 export type ItemRow = {
@@ -141,6 +142,17 @@ export type RecheckRow = {
   passed: boolean | null;
   startedAt: string;
   finishedAt: string | null;
+};
+/** A child's one Ready check (P1d): 6 whole-number questions, not a skill. correct: how many were right, from the seeds. */
+export type ReadyCheckRow = {
+  id: string;
+  studentId: string;
+  itemIds: string[];
+  startedAt: string;
+  finishedAt: string | null;
+  correct: number | null;
+  /** When the teacher marked "seen" on the board (null: not yet). */
+  seenAt: string | null;
 };
 export type MasteryRow = {
   studentId: string;
@@ -374,6 +386,16 @@ CREATE TABLE IF NOT EXISTS rechecks (
 );
 -- At most one unfinished re-check per student and skill.
 CREATE UNIQUE INDEX IF NOT EXISTS recheck_one_open ON rechecks (studentId, skillId) WHERE finishedAt IS NULL;
+-- The Ready check (P1d): once per child, never part of the mastery chain (nothing about it is in the mastery table).
+CREATE TABLE IF NOT EXISTS readyChecks (
+  id TEXT PRIMARY KEY,
+  studentId TEXT NOT NULL UNIQUE REFERENCES students(id),
+  itemIds TEXT NOT NULL,
+  startedAt TEXT NOT NULL,
+  finishedAt TEXT,
+  correct INTEGER,
+  seenAt TEXT
+);
 `;
 
 type Row = Record<string, unknown>;
@@ -421,6 +443,15 @@ const toItem = (r: Row): ItemRow => ({
   servedAt: r.servedAt as string,
   answeredAt: (r.answeredAt as string | null) ?? null,
   source: ITEM_SOURCES.includes(r.source as string) ? (r.source as ItemSource) : "app",
+});
+const toReadyCheck = (r: Row): ReadyCheckRow => ({
+  id: r.id as string,
+  studentId: r.studentId as string,
+  itemIds: JSON.parse(r.itemIds as string),
+  startedAt: r.startedAt as string,
+  finishedAt: (r.finishedAt as string | null) ?? null,
+  correct: r.correct === null || r.correct === undefined ? null : Number(r.correct),
+  seenAt: (r.seenAt as string | null) ?? null,
 });
 const toRecheck = (r: Row): RecheckRow => ({
   id: r.id as string,
@@ -717,7 +748,8 @@ export async function openStore(config: StoreConfig | string = {}) {
          (SELECT COUNT(*) FROM mastery WHERE studentId IN ${ofClass}) AS mastery,
          (SELECT COUNT(*) FROM events WHERE studentId IN ${ofClass} OR json_extract(payloadJson, '$.classId') = c.id) AS events,
          (SELECT COUNT(*) FROM worksheets WHERE classId = c.id) AS worksheets,
-         (SELECT COUNT(*) FROM rechecks WHERE studentId IN ${ofClass}) AS rechecks
+         (SELECT COUNT(*) FROM rechecks WHERE studentId IN ${ofClass}) AS rechecks,
+         (SELECT COUNT(*) FROM readyChecks WHERE studentId IN ${ofClass}) AS readyChecks
        FROM classes c WHERE ${where}`,
       ...args,
     );
@@ -736,6 +768,7 @@ export async function openStore(config: StoreConfig | string = {}) {
         events: Number(r.events),
         worksheets: Number(r.worksheets),
         rechecks: Number(r.rechecks),
+        readyChecks: Number(r.readyChecks),
       }),
     );
     await writeBatch([
@@ -744,6 +777,7 @@ export async function openStore(config: StoreConfig | string = {}) {
       del("items"),
       del("proofRuns"),
       del("rechecks"),
+      del("readyChecks"),
       del("mastery"),
       {
         sql: `DELETE FROM events WHERE studentId IN ${ofIds} OR json_extract(payloadJson, '$.classId') IN (${marks(ids.length)})`,
@@ -1157,6 +1191,45 @@ export async function openStore(config: StoreConfig | string = {}) {
     /** False if the re-check was already finished. */
     finishRecheck(id: string, passed: boolean, at: string): Promise<boolean> {
       return changed("UPDATE rechecks SET passed = ?, finishedAt = ? WHERE id = ? AND finishedAt IS NULL", passed ? 1 : 0, at, id);
+    },
+
+    // ----- the Ready check (P1d; never part of the mastery chain) -----
+    /** False if this child already has a Ready check (there is only ever one). */
+    insertReadyCheck(r: Omit<ReadyCheckRow, "finishedAt" | "correct" | "seenAt">): Promise<boolean> {
+      return tryInsert("INSERT INTO readyChecks (id, studentId, itemIds, startedAt) VALUES (?, ?, ?, ?)", r.id, r.studentId, JSON.stringify(r.itemIds), r.startedAt);
+    },
+    async setReadyCheckItems(id: string, itemIds: string[]) {
+      await write("UPDATE readyChecks SET itemIds = ? WHERE id = ? AND finishedAt IS NULL", JSON.stringify(itemIds), id);
+    },
+    async getReadyCheck(id: string): Promise<ReadyCheckRow | undefined> {
+      const r = await one("SELECT * FROM readyChecks WHERE id = ?", id);
+      return r && toReadyCheck(r);
+    },
+    async getStudentReadyCheck(studentId: string): Promise<ReadyCheckRow | undefined> {
+      const r = await one("SELECT * FROM readyChecks WHERE studentId = ?", studentId);
+      return r && toReadyCheck(r);
+    },
+    /** False if it was already finished. */
+    finishReadyCheck(id: string, correct: number, at: string): Promise<boolean> {
+      return changed("UPDATE readyChecks SET correct = ?, finishedAt = ? WHERE id = ? AND finishedAt IS NULL", correct, at, id);
+    },
+    /** Every finished Ready check of a class with the child's code, in one read. */
+    async listClassReadyChecks(classId: string): Promise<(ReadyCheckRow & { code: string })[]> {
+      return (
+        await all(
+          `SELECT r.*, s.code FROM readyChecks r JOIN students s ON s.id = r.studentId
+           WHERE s.classId = ? AND r.finishedAt IS NOT NULL ORDER BY s.code`,
+          classId,
+        )
+      ).map((r) => ({ ...toReadyCheck(r), code: r.code as string }));
+    },
+    /** The teacher has seen this child's low Ready check. False if the child is not in this class or has none. */
+    markReadyCheckSeen(classId: string, studentCode: string, at: string): Promise<boolean> {
+      return changed(
+        `UPDATE readyChecks SET seenAt = ? WHERE finishedAt IS NOT NULL
+           AND studentId = (SELECT id FROM students WHERE classId = ? AND code = ?)`,
+        at, classId, studentCode,
+      );
     },
 
     // ----- mastery (ONLY src/server/mastery.ts may call writeMastery) -----

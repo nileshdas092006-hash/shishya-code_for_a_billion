@@ -391,6 +391,28 @@ export const ui = {
     "Checked again: of the children who mastered a skill, how many answered a quick check of 2 new questions correctly 7 days or more later. A missed check never takes Mastered away.",
   "board.recheck.needsLook": "Needs another look ({skill}): {codes}",
 
+  // P1d: the Ready check before the first skill (child) and "Needs number basics first" (teacher)
+  "ready.link": "Ready check: 6 quick questions",
+  "ready.title": "Ready check",
+  "ready.intro":
+    "Before the first skill: 6 quick questions with whole numbers (adding, subtracting and multiplying). Work them out on paper if you like, then type each answer. Whatever you score, you can start the first skill.",
+  "ready.start": "Start the Ready check",
+  "ready.question": "Question {n} of {total}",
+  "ready.task": "Work out:",
+  "ready.answer": "Answer:",
+  "ready.hint": "Type a whole number, like 452.",
+  "ready.submit": "Save my answer",
+  "ready.done.good": "Well done! {n} of {total} right. You are ready for the first skill.",
+  "ready.done.more": "Thank you! {n} of {total} right. Your teacher will also help you with some number work. You can start the first skill now.",
+  "ready.already": "You have already done the Ready check.",
+  "board.ready.title": "Needs number basics first (outside Shishya)",
+  "board.ready.intro":
+    "These children got 4 or fewer of the 6 whole-number questions of the Ready check right. They can still use Shishya, but they may need help with adding, subtracting and multiplying whole numbers.",
+  "board.ready.none": "No child needs this now.",
+  "board.ready.child": "{code}: {n} of {total} right",
+  "board.ready.seen": "Mark as seen",
+  "board.ready.seenDone": "seen",
+
   "skill.alg.integers.ops.title": "Adding and subtracting integers",
   "skill.alg.integers.ops.example": "like −7 + 3 and 5 − (−4)",
   "skill.alg.integers.ops.task": "Work out:",

@@ -155,6 +155,26 @@ export async function submitProof(itemId: string, answer: string) {
   return (await getServices()).submitProofAnswer(id, str(answer, 40));
 }
 
+// ---------------- student: the Ready check (6 whole-number questions, once, before the first skill) ----------------
+
+export async function readyOverview() {
+  const student = await studentOrNull();
+  if (!student) return notAllowed();
+  return { ok: true as const, status: await (await getServices()).readyCheckStatus(student.studentId) };
+}
+
+export async function startReadyCheckRun() {
+  const student = await studentOrNull();
+  if (!student) return notAllowed();
+  return (await getServices()).startReadyCheck(student.studentId);
+}
+
+export async function submitReadyCheck(itemId: string, answer: string) {
+  const id = await ownedItem(itemId);
+  if (!id) return notAllowed();
+  return (await getServices()).submitReadyCheckAnswer(id, str(answer, 40));
+}
+
 // ---------------- student: the 7-day quick check of a mastered skill (no hints, 15 minutes) ----------------
 
 export async function recheckOverview(skillId: string) {
@@ -273,6 +293,14 @@ export async function deleteClassAction(classCode: string, form: FormData) {
   const result = await (await getServices()).deleteClass(cls.id, str(form.get("confirmCode"), 20));
   if (!result.ok && result.code === "confirm_mismatch") redirect(`${boardOf(cls.code)}/delete?wrong=1`);
   redirect("/teacher/deleted");
+}
+
+/** "Mark as seen" on the board's "Needs number basics first" list. */
+export async function markReadySeenAction(classCode: string, studentCode: string) {
+  const cls = await classOrNull(classCode);
+  if (!cls) return;
+  await (await getServices()).markReadyCheckSeen(cls.id, str(studentCode, 20));
+  refresh();
 }
 
 export async function unlockSkillForClass(classCode: string, skillId: string) {
