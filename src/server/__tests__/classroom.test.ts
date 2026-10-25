@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { SetupError } from "../instance";
 import { createServices } from "../services";
 import { openStore } from "../store";
-import { answerProof, correctFix, makeClock, SKILL, tempDbUrl } from "./helpers";
+import { answerProof, classroomReady, correctFix, makeClock, SKILL, tempDbUrl } from "./helpers";
 
 /** Rows actually in the database file (read with a separate connection). */
 async function rowCounts(url: string) {
@@ -129,7 +129,7 @@ describe("logging in", () => {
 
   it("a student logs in with class code + student code (case and spaces do not matter)", async () => {
     const { svc } = await fresh();
-    const room = await svc.createClassroom({ grade: 8, section: "B", studentCount: 5 });
+    const room = await classroomReady(svc, { grade: 8, section: "B", studentCount: 5 });
     const r = await svc.studentLogin(` ${room.classCode.toLowerCase()} `, ` ${room.studentCodes[2].toLowerCase()}`);
     expect(r.ok).toBe(true);
     if (r.ok) expect(await svc.getStudentContext(r.studentId)).toMatchObject({ code: room.studentCodes[2], grade: 8, aiAllowed: true });
@@ -141,7 +141,7 @@ describe("logging in", () => {
 describe("skill map, class progress and unlocking", () => {
   it("shows every skill's state and counts states for the class", async () => {
     const { svc } = await fresh();
-    const room = await svc.createClassroom({ grade: 8, section: "B", studentCount: 3 });
+    const room = await classroomReady(svc, { grade: 8, section: "B", studentCount: 3 });
     const login = await svc.studentLogin(room.classCode, room.studentCodes[0]);
     if (!login.ok) throw new Error();
     const chain = ["alg.integers.ops", "alg.like-terms", "alg.linear.one-step", "alg.linear.two-step", SKILL];
@@ -160,7 +160,7 @@ describe("skill map, class progress and unlocking", () => {
 describe("proof status, resume and the result", () => {
   it("resumes an open proof, and the result lists what to practise", async () => {
     const { svc, store } = await fresh(24);
-    const room = await svc.createClassroom({ grade: 8, section: "B", studentCount: 1 });
+    const room = await classroomReady(svc, { grade: 8, section: "B", studentCount: 1 });
     const login = await svc.studentLogin(room.classCode, room.studentCodes[0]);
     if (!login.ok) throw new Error();
     const id = login.studentId;

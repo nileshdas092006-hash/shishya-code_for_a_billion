@@ -4,8 +4,9 @@ import { getSkillEntry } from "@/core/skills";
 import { toMistake } from "@/core/minedMistake";
 import { skillKey, t } from "@/i18n";
 import { getServices } from "@/server/instance";
+import { COOLDOWN_CHOICES } from "@/server/services";
 import type { ClassRow } from "@/server/store";
-import { closeProofs, giveNewCodes, openProofs, unlockSkillForClass } from "../../actions";
+import { closeProofs, giveNewCodes, openProofs, recordConsentAction, setCooldownAction, unlockSkillForClass } from "../../actions";
 import { MinedDecision } from "./MinedDecision";
 import { PatternGrid, SlipList } from "./PatternGrid";
 import { Equation } from "../../_components/Equation";
@@ -20,8 +21,9 @@ const EXAMPLE_SEED = 20261018;
 type Query = Record<string, string | string[] | undefined>;
 
 export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Query }) {
-  const { stuck, progress, mined, codes, proofWindow } = await (await getServices()).getClassBoard(cls.id);
+  const { stuck, progress, mined, codes, proofWindow, proofCooldown } = await (await getServices()).getClassBoard(cls.id);
   const base = `/teacher/${encodeURIComponent(cls.code)}`;
+  const tour = cls.kind === "sandbox";
 
   return (
     <div className="flex flex-col gap-8">
@@ -42,7 +44,10 @@ export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Que
       <p className="text-base text-gray-700 no-print">{t("board.export.impact")}</p>
       {!cls.aiAllowed && <p className="msg-note no-print">Class 7: AI chat is switched off for this class, always.</p>}
 
+      {!cls.consentRecordedAt && <ConsentForm classCode={cls.code} showCheck={query.consent === "check"} />}
+
       <ProofWindow classCode={cls.code} proof={proofWindow} />
+      {!tour && <Cooldown classCode={cls.code} cooldown={proofCooldown} />}
 
       <section className="flex flex-col gap-3 no-print" aria-labelledby="stuck">
         <h2 id="stuck" className="text-2xl font-bold">
@@ -80,11 +85,12 @@ export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Que
                 <th className="py-2 pr-3">Key 1</th>
                 <th className="py-2 pr-3">Not yet</th>
                 <th className="py-2 pr-3">Mastered</th>
+                <th className="py-2 pr-3">{t("board.goneAhead.head")}</th>
                 <th className="py-2" />
               </tr>
             </thead>
             <tbody>
-              {progress.map(({ skillId, counts }) => (
+              {progress.map(({ skillId, counts, goneAhead }) => (
                 <tr key={skillId} className="border-b border-gray-300">
                   <td className="py-2 pr-3 font-semibold">{t(skillKey(skillId, "title"))}</td>
                   <td className="py-2 pr-3">{counts.LOCKED}</td>
@@ -92,6 +98,7 @@ export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Que
                   <td className="py-2 pr-3">{counts.KEY1}</td>
                   <td className="py-2 pr-3">{counts.NOT_YET}</td>
                   <td className="py-2 pr-3">{counts.MASTERED}</td>
+                  <td className={`py-2 pr-3 ${goneAhead > 0 ? "font-bold text-amber-900" : ""}`}>{goneAhead}</td>
                   <td className="py-2">
                     {counts.LOCKED > 0 && (
                       <form action={unlockSkillForClass.bind(null, cls.code, skillId)}>
@@ -106,6 +113,7 @@ export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Que
             </tbody>
           </table>
         </div>
+        <p className="text-base text-gray-700">{t("board.goneAhead.intro")}</p>
       </section>
 
       <section className="flex flex-col gap-3 no-print" aria-labelledby="mined">
@@ -171,7 +179,78 @@ export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Que
         )}
         <StudentCodeSheet classCode={cls.code} codes={codes} />
       </section>
+
+      {!tour && (
+        <section className="flex flex-col gap-3 no-print" aria-label={t("board.delete.link")}>
+          {cls.consentRecordedAt && (
+            <p className="text-base text-gray-700">
+              {cls.consentSlips === null
+                ? t("board.consent.doneOld", { date: cls.consentRecordedAt.slice(0, 10) })
+                : t("board.consent.done", { date: cls.consentRecordedAt.slice(0, 10), n: cls.consentSlips })}
+            </p>
+          )}
+          <Link href={`${base}/delete`} className="btn self-start text-red-800">
+            {t("board.delete.link")}
+          </Link>
+        </section>
+      )}
     </div>
+  );
+}
+
+/** At the top of the board until it is saved: children of this class cannot log in before. */
+function ConsentForm({ classCode, showCheck }: { classCode: string; showCheck: boolean }) {
+  return (
+    <section id="consent" className="card flex flex-col gap-3 border-amber-700 no-print" aria-labelledby="consent-title">
+      <h2 id="consent-title" className="text-2xl font-bold">
+        {t("board.consent.title")}
+      </h2>
+      <p className="font-semibold">{t("board.consent.needed")}</p>
+      {showCheck && (
+        <p role="alert" className="msg-bad">
+          {t("board.consent.check")}
+        </p>
+      )}
+      <form action={recordConsentAction.bind(null, classCode)} className="flex flex-col gap-4">
+        <label className="flex items-start gap-3 text-lg">
+          <input type="checkbox" name="allowed" required className="mt-1 h-6 w-6 shrink-0" />
+          <span>{t("board.consent.allowed")}</span>
+        </label>
+        <label className="flex flex-wrap items-center gap-3 text-lg font-semibold">
+          {t("board.consent.slips")}
+          <input name="slips" type="number" min={0} max={999} step={1} required inputMode="numeric" className="field w-28" />
+        </label>
+        <button type="submit" className="btn btn-primary self-start">
+          {t("board.consent.save")}
+        </button>
+      </form>
+    </section>
+  );
+}
+
+/** "After a missed proof, the next try opens": tomorrow, next period or straight away (per class). */
+function Cooldown({ classCode, cooldown }: { classCode: string; cooldown: Board["proofCooldown"] }) {
+  return (
+    <section className="card flex flex-col gap-3 no-print" aria-labelledby="cooldown">
+      <h2 id="cooldown" className="text-2xl font-bold">
+        {t("board.cooldown.title")}
+      </h2>
+      <form key={cooldown.hours} action={setCooldownAction.bind(null, classCode)} className="flex flex-col gap-3">
+        <fieldset className="flex flex-col gap-2">
+          <legend className="mb-1 text-lg font-semibold">{t("board.cooldown.intro")}</legend>
+          {COOLDOWN_CHOICES.map((h) => (
+            <label key={h} className="flex items-center gap-3 text-lg">
+              <input type="radio" name="hours" value={h} required defaultChecked={cooldown.hours === h} className="h-6 w-6 shrink-0" />
+              {t(`board.cooldown.${h}`)}
+            </label>
+          ))}
+        </fieldset>
+        <button type="submit" className="btn self-start">
+          {t("board.cooldown.save")}
+        </button>
+      </form>
+      <p className="text-base text-gray-700">{t("board.cooldown.now", { h: cooldown.hours })}</p>
+    </section>
   );
 }
 

@@ -16,15 +16,21 @@ export function signSession(payload: Session, secret: string): string {
   return `${body}.${sign(body, secret)}`;
 }
 
-/** The payload if the token is genuine and not expired, else null. Never throws. */
-export function verifySession(token: string | undefined, secret: string, now = Date.now()): Session | null {
+/**
+ * The payload if the token is genuine and not expired, else null. Never throws. With several secrets (rotation:
+ * the current one first, then the previous one), a token signed with any of them is genuine.
+ */
+export function verifySession(token: string | undefined, secret: string | string[], now = Date.now()): Session | null {
   try {
     if (!token) return null;
     const [body, sig, extra] = token.split(".");
     if (!body || !sig || extra !== undefined) return null;
-    const expected = Buffer.from(sign(body, secret));
     const given = Buffer.from(sig);
-    if (expected.length !== given.length || !timingSafeEqual(expected, given)) return null;
+    const signedWith = (s: string) => {
+      const expected = Buffer.from(sign(body, s));
+      return expected.length === given.length && timingSafeEqual(expected, given);
+    };
+    if (![secret].flat().some(signedWith)) return null;
     const payload = JSON.parse(Buffer.from(body, "base64url").toString("utf8")) as Session;
     if (typeof payload.exp !== "number" || payload.exp <= now) return null;
     return payload;

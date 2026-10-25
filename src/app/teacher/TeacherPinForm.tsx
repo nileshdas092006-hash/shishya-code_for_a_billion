@@ -1,6 +1,8 @@
 "use client";
 
+import Link from "next/link";
 import { useActionState } from "react";
+import { t } from "@/i18n";
 import { teacherLogin } from "../actions";
 
 export function TeacherPinForm({ classCode }: { classCode?: string }) {
@@ -30,6 +32,9 @@ export function TeacherPinForm({ classCode }: { classCode?: string }) {
           {state.error}
         </p>
       )}
+      <Link href="/teacher/recover" className="underline self-start sm:col-span-3">
+        {t("recover.link")}
+      </Link>
     </form>
   );
 }

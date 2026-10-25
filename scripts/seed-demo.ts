@@ -26,6 +26,7 @@ const svc = createServices(store, { cooldownHours: 0 });
 const { spec } = getSkillEntry("alg.linear.both-sides")!;
 
 const room = await svc.createClassroom({ grade: 8, section: "D", studentCount: 5, pin: DEMO_PIN });
+await svc.recordConsent(room.classId, { allowed: true, slips: 5 }); // as the teacher does on the board; children log in after this
 await svc.teacherUnlockClass(room.classId, spec.id);
 
 /** One practice answer: a given mistake's wrong answer, a made-up wrong answer, or the right answer. */

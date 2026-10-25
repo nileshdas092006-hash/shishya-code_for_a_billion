@@ -114,3 +114,10 @@ export async function answerProof(svc: Svc, store: Store, itemIds: string[], wro
   }
   return last!;
 }
+
+/** A class made the way a teacher makes one, with consent recorded (as the teacher does on the board), so its children can log in. */
+export async function classroomReady(svc: Svc, input: Parameters<Svc["createClassroom"]>[0]) {
+  const room = await svc.createClassroom(input);
+  await svc.recordConsent(room.classId, { allowed: true, slips: input.studentCount });
+  return room;
+}

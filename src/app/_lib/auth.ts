@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { connection } from "next/server";
-import { getServices, getSessionSecret } from "@/server/instance";
+import { getServices, getSessionSecret, getSessionSecrets } from "@/server/instance";
 import { signSession, verifySession } from "@/server/session";
 
 // Who is using the app, from signed cookies. Server-side only (pages and server actions).
@@ -23,7 +23,7 @@ const cookieOptions = (maxAgeSeconds: number) => ({
 export async function currentStudent() {
   await connection();
   const token = (await cookies()).get(STUDENT_COOKIE)?.value;
-  const session = verifySession(token, getSessionSecret());
+  const session = verifySession(token, getSessionSecrets());
   if (!session || session.kind !== "student") return null;
   return (await (await getServices()).getStudentContext(session.studentId)) ?? null;
 }
@@ -45,7 +45,7 @@ export async function endStudentSession() {
 export async function teacherClassIds(): Promise<string[]> {
   await connection();
   const token = (await cookies()).get(TEACHER_COOKIE)?.value;
-  const session = verifySession(token, getSessionSecret());
+  const session = verifySession(token, getSessionSecrets());
   return session && session.kind === "teacher" ? session.classIds : [];
 }
 

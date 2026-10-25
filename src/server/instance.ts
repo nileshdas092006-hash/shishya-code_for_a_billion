@@ -9,6 +9,7 @@ import { DEFAULT_DATABASE_URL, openStore, type StoreConfig } from "./store";
 //                        The demo uses file:data/demo.db and is always labelled DEMO on screen.
 //   DATABASE_AUTH_TOKEN  Turso only.
 //   SESSION_SECRET       required in production; on a laptop a random one is kept in data/.session-secret.
+//   SESSION_SECRET_PREVIOUS  optional, while rotating: cookies signed with it still work; new ones use SESSION_SECRET.
 // In production nothing here writes to the local disk: Vercel's disk is not kept between requests.
 
 export { checkSetup, isSetupError, requireSetup, SetupError } from "./setup";
@@ -29,10 +30,19 @@ export function sessionSecretFrom(env: Env = process.env): string {
   return loadSessionSecret(join(process.cwd(), "data", ".session-secret"));
 }
 
+/**
+ * The secrets a session cookie may be signed with: SESSION_SECRET first (new cookies are always signed with it),
+ * then SESSION_SECRET_PREVIOUS if it is set (32+ characters), so nobody is logged out while the secret is changed.
+ */
+export function sessionSecretsFrom(env: Env = process.env): string[] {
+  const previous = env.SESSION_SECRET_PREVIOUS?.trim();
+  return [sessionSecretFrom(env), ...(previous && previous.length >= MIN_SECRET_LENGTH ? [previous] : [])];
+}
+
 /** True when the app runs on the demo database (never mixed with pilot data). */
 export const IS_DEMO = /(^|[/\\:])demo\.db$/.test(process.env.DATABASE_URL?.trim() ?? "");
 
-type Shared = { services?: Promise<Services>; secret?: string };
+type Shared = { services?: Promise<Services>; secrets?: string[] };
 const holder = globalThis as typeof globalThis & { __shishya?: Shared };
 const shared = (): Shared => (holder.__shishya ??= {});
 
@@ -49,8 +59,14 @@ export function getServices(): Promise<Services> {
   return s.services;
 }
 
+/** The secret new session cookies are signed with. */
 export function getSessionSecret(): string {
+  return getSessionSecrets()[0];
+}
+
+/** Every secret a session cookie may be signed with (the current one first). */
+export function getSessionSecrets(): string[] {
   const s = shared();
-  s.secret ??= sessionSecretFrom();
-  return s.secret;
+  s.secrets ??= sessionSecretsFrom();
+  return s.secrets;
 }

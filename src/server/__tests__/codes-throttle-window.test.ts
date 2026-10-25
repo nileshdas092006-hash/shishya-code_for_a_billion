@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createServices } from "../services";
 import { openStore } from "../store";
-import { answerProof, makeClock, SKILL, teachPerfectly, tempDbUrl } from "./helpers";
+import { answerProof, classroomReady, makeClock, SKILL, teachPerfectly, tempDbUrl } from "./helpers";
 
 // F3: nobody can log in as a classmate, and a proof opens only when the teacher opens it.
 // Student codes are random; wrong logins and wrong PINs are counted in the database (so every server instance
@@ -40,7 +40,7 @@ describe("random student codes", () => {
   it("new classes get codes like 8B-K7QM: unique in the class, never 0, O, 1, I or L", async () => {
     const { svc } = await fresh();
     for (let i = 0; i < 5; i++) {
-      const room = await svc.createClassroom({ grade: 8, section: "B", studentCount: 60 });
+      const room = await classroomReady(svc, { grade: 8, section: "B", studentCount: 60 });
       expect(room.studentCodes).toHaveLength(60);
       expect(new Set(room.studentCodes).size).toBe(60);
       for (const code of room.studentCodes) {
@@ -54,7 +54,7 @@ describe("random student codes", () => {
 
   it("old codes like 8B-17 are still accepted and still log in", async () => {
     const { svc } = await fresh();
-    const room = await svc.createClassroom({ grade: 8, section: "B", studentCount: 1 });
+    const room = await classroomReady(svc, { grade: 8, section: "B", studentCount: 1 });
     const old = await svc.createStudent(room.classId, "8B-17");
     expect(await svc.studentLogin(room.classCode, "8b-17")).toEqual({ ok: true, studentId: old.id });
     await expect(svc.createStudent(room.classId, "8B-K7QM")).resolves.toMatchObject({ code: "8B-K7QM" });
@@ -66,7 +66,7 @@ describe("random student codes", () => {
 describe("giving a class new codes", () => {
   it("changes every code; ids, mastery and history stay; old codes stop working", async () => {
     const { svc, store } = await fresh();
-    const room = await svc.createClassroom({ grade: 8, section: "B", studentCount: 30 });
+    const room = await classroomReady(svc, { grade: 8, section: "B", studentCount: 30 });
     const id = await loginId(svc, room.classCode, room.studentCodes[0]);
     await svc.teacherUnlockClass(room.classId, SKILL);
     await teachPerfectly(svc, store, id);
@@ -104,7 +104,7 @@ describe("giving a class new codes", () => {
 describe("wrong logins are counted in the database, not in memory", () => {
   it("after 30 wrong student codes, even a correct one is refused for 10 minutes, on every server instance", async () => {
     const { svc, another, clock, store } = await fresh();
-    const room = await svc.createClassroom({ grade: 8, section: "B", studentCount: 3 });
+    const room = await classroomReady(svc, { grade: 8, section: "B", studentCount: 3 });
     const right = room.studentCodes[0];
     // a class of 40 mistyping: 29 wrong codes in 10 minutes still lets a right code in
     for (let i = 0; i < 29; i++) {
@@ -122,7 +122,7 @@ describe("wrong logins are counted in the database, not in memory", () => {
     expect(await other.studentLogin(room.classCode, right)).toMatchObject({ ok: true });
 
     // another class is never affected
-    const room2 = await svc.createClassroom({ grade: 8, section: "C", studentCount: 1 });
+    const room2 = await classroomReady(svc, { grade: 8, section: "C", studentCount: 1 });
     for (let i = 0; i < 30; i++) await svc.studentLogin(room.classCode, "8B-99");
     expect(await svc.studentLogin(room2.classCode, room2.studentCodes[0])).toMatchObject({ ok: true });
 
@@ -136,7 +136,7 @@ describe("wrong logins are counted in the database, not in memory", () => {
 
   it("after 5 wrong teacher PINs, even the right PIN is refused for 15 minutes, on every server instance", async () => {
     const { svc, another, clock } = await fresh();
-    const room = await svc.createClassroom({ grade: 8, section: "B", studentCount: 1, pin: "123456" });
+    const room = await classroomReady(svc, { grade: 8, section: "B", studentCount: 1, pin: "123456" });
     for (let i = 0; i < 5; i++) {
       expect(await svc.verifyTeacherPin(room.classCode, "000000")).toMatchObject({ ok: false, code: "wrong_pin" });
       clock.advanceMinutes(1);
@@ -152,7 +152,7 @@ describe("wrong logins are counted in the database, not in memory", () => {
 describe("the proof opens only when the teacher opens it", () => {
   async function readyChild() {
     const ctx = await fresh();
-    const room = await ctx.svc.createClassroom({ grade: 8, section: "B", studentCount: 1 });
+    const room = await classroomReady(ctx.svc, { grade: 8, section: "B", studentCount: 1 });
     const id = await loginId(ctx.svc, room.classCode, room.studentCodes[0]);
     await ctx.svc.teacherUnlockClass(room.classId, SKILL);
     await teachPerfectly(ctx.svc, ctx.store, id);

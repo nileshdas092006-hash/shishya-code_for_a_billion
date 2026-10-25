@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { getSkillEntry } from "@/core/skills";
 import type { MessageKey } from "@/i18n";
 import { getServices, isSetupError, requireSetup } from "@/server/instance";
+import { COOLDOWN_CHOICES, type CooldownChoice } from "@/server/services";
 import { logServerError } from "@/server/setup";
 import { SETUP_MISSING_TEACHER } from "./_lib/page-guard";
 import {
@@ -63,7 +64,9 @@ async function ownedItem(itemId: unknown) {
 export async function loginStudent(_prev: { error?: MessageKey }, form: FormData): Promise<{ error?: MessageKey }> {
   if (notSetUp("student login")) return { error: "setup.missing" };
   const result = await (await getServices()).studentLogin(str(form.get("classCode"), 20), str(form.get("studentCode"), 20));
-  if (!result.ok) return { error: result.code === "locked_out" ? "login.tooMany" : "login.wrong" };
+  if (!result.ok) {
+    return { error: result.code === "locked_out" ? "login.tooMany" : result.code === "consent_needed" ? "login.consentNeeded" : "login.wrong" };
+  }
   await startStudentSession(result.studentId);
   redirect("/s/home");
 }
@@ -157,7 +160,7 @@ export async function submitProof(itemId: string, answer: string) {
 export type CreateClassState =
   | { status: "idle" }
   | { status: "error"; message: string }
-  | { status: "created"; classCode: string; pin: string; studentCodes: string[]; grade: number; section: string };
+  | { status: "created"; classCode: string; pin: string; recoveryCode: string; studentCodes: string[]; grade: number; section: string };
 
 export async function createClassAction(_prev: CreateClassState, form: FormData): Promise<CreateClassState> {
   try {
@@ -166,7 +169,15 @@ export async function createClassAction(_prev: CreateClassState, form: FormData)
     const studentCount = Number(form.get("studentCount"));
     const room = await (await getServices()).createClassroom({ grade, section, studentCount });
     await addTeacherClass(room.classId);
-    return { status: "created", classCode: room.classCode, pin: room.pin, studentCodes: room.studentCodes, grade, section: section.toUpperCase() };
+    return {
+      status: "created",
+      classCode: room.classCode,
+      pin: room.pin,
+      recoveryCode: room.recoveryCode,
+      studentCodes: room.studentCodes,
+      grade,
+      section: section.toUpperCase(),
+    };
   } catch (e) {
     if (isSetupError(e)) {
       logServerError("create class", e);
@@ -184,6 +195,60 @@ export async function teacherLogin(_prev: { error?: string }, form: FormData): P
   await addTeacherClass(result.classId);
   const cls = (await (await getServices()).getClass(result.classId))!;
   redirect(`/teacher/${encodeURIComponent(cls.code)}`);
+}
+
+export type RecoverPinState =
+  | { status: "idle" }
+  | { status: "error"; error: MessageKey; classCode: string }
+  | { status: "done"; classCode: string; pin: string; recoveryCode: string };
+
+/** "Forgot the PIN?": class code + recovery code → a new PIN and a new recovery code (shown once); this browser opens the class. */
+export async function recoverPinAction(_prev: RecoverPinState, form: FormData): Promise<RecoverPinState> {
+  const classCode = str(form.get("classCode"), 20);
+  if (notSetUp("PIN recovery")) return { status: "error", error: "setup.missing", classCode };
+  const result = await (await getServices()).recoverTeacherPin(classCode, str(form.get("recoveryCode"), 30));
+  if (!result.ok) {
+    const error: MessageKey = result.code === "locked_out" ? "recover.tooMany" : result.code === "no_recovery" ? "recover.none" : "recover.wrong";
+    return { status: "error", error, classCode }; // the class code stays typed in; only the recovery code is cleared
+  }
+  await addTeacherClass(result.classId);
+  return { status: "done", classCode: result.classCode, pin: result.pin, recoveryCode: result.recoveryCode };
+}
+
+const boardOf = (classCode: string) => `/teacher/${encodeURIComponent(classCode)}`;
+
+/** "Before children log in": the school has allowed this class and parents have been told; the parent slips received. */
+export async function recordConsentAction(classCode: string, form: FormData) {
+  const cls = await classOrNull(classCode);
+  if (!cls) return;
+  const slips = str(form.get("slips"), 6).trim();
+  let saved = true;
+  try {
+    await (await getServices()).recordConsent(cls.id, { allowed: form.get("allowed") === "on", slips: slips === "" ? NaN : Number(slips) });
+  } catch (e) {
+    if (isSetupError(e)) throw e;
+    saved = false; // the box was not ticked, or the number of slips is not a whole number
+  }
+  if (!saved) redirect(`${boardOf(cls.code)}?consent=check#consent`);
+  refresh();
+}
+
+/** "After a missed proof, the next try opens": 24, 1 or 0 hours, for this class. */
+export async function setCooldownAction(classCode: string, form: FormData) {
+  const cls = await classOrNull(classCode);
+  const hours = Number(str(form.get("hours"), 3));
+  if (!cls || !(COOLDOWN_CHOICES as readonly number[]).includes(hours)) return;
+  await (await getServices()).setProofCooldown(cls.id, hours as CooldownChoice);
+  refresh();
+}
+
+/** Deletes the class and all its data, only if the teacher typed this class's code. */
+export async function deleteClassAction(classCode: string, form: FormData) {
+  const cls = await classOrNull(classCode);
+  if (!cls) redirect("/teacher");
+  const result = await (await getServices()).deleteClass(cls.id, str(form.get("confirmCode"), 20));
+  if (!result.ok && result.code === "confirm_mismatch") redirect(`${boardOf(cls.code)}/delete?wrong=1`);
+  redirect("/teacher/deleted");
 }
 
 export async function unlockSkillForClass(classCode: string, skillId: string) {

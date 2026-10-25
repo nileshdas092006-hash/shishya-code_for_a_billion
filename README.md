@@ -93,6 +93,26 @@ Vercel does not keep files between requests, so in the cloud the data lives in a
 
 If a token is ever exposed, revoke it in Turso, create a new one and update `DATABASE_AUTH_TOKEN` in Vercel.
 
+**Changing the session secret without logging everyone out.** Set `SESSION_SECRET_PREVIOUS` to the current
+`SESSION_SECRET`, set `SESSION_SECRET` to a new secret (step 3), and redeploy. Cookies signed with either secret
+keep working; new cookies are always signed with `SESSION_SECRET`. After 30 days (the longest a teacher cookie
+lasts) remove `SESSION_SECRET_PREVIOUS`. If the old secret leaked, skip `SESSION_SECRET_PREVIOUS`: everyone simply
+logs in again.
+
+**Health check and keep-warm.** `GET /api/health` answers `{ "ok": true, "db": true }` after one trivial database
+read (no secrets, counts or child data; never cached), or `503 { "ok": false }`. It also runs the hourly clean-up of
+expired Judge Tour classes. `.github/workflows/keep-warm.yml` calls it every 10 minutes, so the first child of the
+day does not wait for a cold start. GitHub turns off scheduled workflows in a repository with no commits for 60 days;
+re-enable it under *Actions* if that happens.
+
+## Privacy
+
+What Shishya stores, what it never stores, where, for how long and how a school deletes a class:
+[PRIVACY.md](PRIVACY.md). A template agreement between a school and the operator:
+[docs/privacy/PROCESSOR_AGREEMENT_TEMPLATE.md](docs/privacy/PROCESSOR_AGREEMENT_TEMPLATE.md).
+Children of a new class can log in only after the teacher records, on the class board, that the school has allowed
+the class and parents have been told.
+
 ## Licence
 
 MIT, see [LICENSE](LICENSE).

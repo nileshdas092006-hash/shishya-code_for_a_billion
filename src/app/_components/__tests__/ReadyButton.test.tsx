@@ -55,7 +55,9 @@ describe("every button that needs JavaScript waits for the page", () => {
     "s/home/page.tsx", // log out
     "teacher/CreateClassForm.tsx", // create a class
     "teacher/TeacherPinForm.tsx", // teacher PIN
-    "teacher/[class]/ClassBoardView.tsx", // Unlock for class, open / close proofs, give new codes
+    "teacher/[class]/ClassBoardView.tsx", // Unlock for class, open / close proofs, give new codes, consent, cooldown
+    "teacher/[class]/delete/page.tsx", // Delete this class and all its data
+    "teacher/recover/RecoverPinForm.tsx", // Forgot the PIN?
     "tour/StartTourForm.tsx", // Try it as a judge
     "tour/[stop]/page.tsx", // Skip ahead (Judge Tour, stop 3)
   ];

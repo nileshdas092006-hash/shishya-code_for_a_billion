@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useActionState } from "react";
+import { t } from "@/i18n";
 import { createClassAction, type CreateClassState } from "../actions";
 import { PrintButton } from "./PrintButton";
 
@@ -25,12 +26,25 @@ export function CreateClassForm() {
           <p className="msg-note no-print">
             Write the PIN down now. It is shown only once, and you need it to open this class on another computer.
           </p>
+          <p className="text-xl no-print">
+            {t("create.recovery")} <strong className="math text-2xl break-all">{state.recoveryCode}</strong>
+          </p>
+          <p className="msg-note no-print">{t("create.recoveryNote")}</p>
           <div className="flex flex-wrap gap-3 no-print">
             <PrintButton label="Print student codes" />
             <Link href={`/teacher/${encodeURIComponent(state.classCode)}`} className="btn btn-primary">
               Open the class board
             </Link>
           </div>
+        </div>
+        {/* printed on the code sheet, for the teacher only: the one place the recovery code is ever printed */}
+        <div className="hidden print:flex flex-col gap-1 border-2 border-black rounded-lg p-3">
+          <span className="font-bold">{t("create.teacherCopy")}</span>
+          <span>
+            Class code: <strong className="math">{state.classCode}</strong> · {t("create.recovery")}{" "}
+            <strong className="math">{state.recoveryCode}</strong>
+          </span>
+          <span className="text-sm">{t("create.recoveryNote")}</span>
         </div>
         <StudentCodeSheet classCode={state.classCode} codes={state.studentCodes} />
       </section>

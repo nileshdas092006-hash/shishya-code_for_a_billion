@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { sessionSecretsFrom } from "../instance";
 import { canShowAiChat } from "../policy";
 import { signSession, verifySession } from "../session";
 
@@ -20,6 +21,23 @@ describe("signed sessions", () => {
     expect(verifySession(`${body}.${sig}`, "another-secret-another-secret-xx", now)).toBeNull();
     expect(verifySession(token, SECRET, now + 2 * 3600_000)).toBeNull();
     for (const junk of ["", "abc", "a.b", "..", undefined]) expect(verifySession(junk, SECRET, now)).toBeNull();
+  });
+
+  it("secret rotation: a token signed with the previous secret still verifies; an unknown secret does not", () => {
+    const PREVIOUS = "old-secret-old-secret-old-secret-xx";
+    const secrets = [SECRET, PREVIOUS];
+    expect(verifySession(signSession(payload, SECRET), secrets, now)).toEqual(payload);
+    expect(verifySession(signSession(payload, PREVIOUS), secrets, now)).toEqual(payload);
+    expect(verifySession(signSession(payload, "unknown-secret-unknown-secret-xx"), secrets, now)).toBeNull();
+    expect(verifySession(signSession(payload, PREVIOUS), [SECRET], now)).toBeNull();
+  });
+
+  it("new tokens are always signed with SESSION_SECRET; SESSION_SECRET_PREVIOUS only verifies", () => {
+    const env = { SESSION_SECRET: SECRET, SESSION_SECRET_PREVIOUS: "old-secret-old-secret-old-secret-xx" };
+    expect(sessionSecretsFrom(env)).toEqual([SECRET, env.SESSION_SECRET_PREVIOUS]);
+    expect(sessionSecretsFrom({ SESSION_SECRET: SECRET })).toEqual([SECRET]);
+    expect(sessionSecretsFrom({ SESSION_SECRET: SECRET, SESSION_SECRET_PREVIOUS: " " })).toEqual([SECRET]);
+    expect(sessionSecretsFrom({ SESSION_SECRET: SECRET, SESSION_SECRET_PREVIOUS: "short" })).toEqual([SECRET]);
   });
 });
 

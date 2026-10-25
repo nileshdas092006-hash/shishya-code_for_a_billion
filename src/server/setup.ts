@@ -5,12 +5,12 @@ type Env = Record<string, string | undefined>;
 
 export const MIN_SECRET_LENGTH = 32;
 
+// (a plain field, not a constructor parameter property: the scripts run this file with Node's type stripping)
 export class SetupError extends Error {
-  constructor(
-    readonly setting: string,
-    message: string,
-  ) {
+  readonly setting: string;
+  constructor(setting: string, message: string) {
     super(message);
+    this.setting = setting;
     this.name = "SetupError";
   }
 }

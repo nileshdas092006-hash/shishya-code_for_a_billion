@@ -11,8 +11,9 @@ import { applies, type Instance, type StepType } from "../core/types";
 import { agentRunView, RECORDED_MINER_RUN } from "./agent-runs";
 import * as mastery from "./mastery";
 import { minedMistakes, toUnknownError, unknownErrors } from "./miner-ports";
+import { logServerError } from "./setup";
 import { defaultRegistry, getEntry, instanceFor, type Registry, type SkillEntry } from "./skills";
-import type { AttemptRow, ClassKind, ClassRow, ItemFormat, ItemKind, ItemRow, MistakeHitRow, ProofRunRow, Store, StudentRow } from "./store";
+import type { AttemptRow, ClassKind, ClassRow, DeletedCounts, ItemFormat, ItemKind, ItemRow, MistakeHitRow, NewClass, ProofRunRow, Store, StudentRow } from "./store";
 import { TOUR_CLASSMATE_CODE, TOUR_GRADE, TOUR_JUDGE_CODE, TOUR_JUDGE_STATES, TOUR_MAX_PER_HOUR, TOUR_SECTION, TOUR_SKILL, tourPlan } from "./tour";
 
 // Session services: what the student and teacher screens call. Correct answers and mistake answers come only
@@ -53,6 +54,10 @@ export type FailCode =
   | "window_closed"
   | "busy"
   | "not_tour"
+  | "consent_needed"
+  | "wrong_recovery"
+  | "no_recovery"
+  | "confirm_mismatch"
   | "none";
 type Fail = { ok: false; reason: string; code: FailCode; retryAt?: string; errorKey?: string };
 const fail = (reason: string, code: FailCode, extra: Partial<Fail> = {}): Fail => ({ ok: false, reason, code, ...extra });
@@ -86,10 +91,17 @@ const PIN_LOCKOUT_MINUTES = 15;
 const LOGIN_MAX_FAILURES = 30; // wrong student codes per class code (a class of 40 mistypes)
 const LOGIN_LOCKOUT_MINUTES = 10;
 const PROOF_WINDOW_MINUTES = 15;
+/** A teacher's PIN recovery code: 10 characters from CODE_ALPHABET (no look-alikes). Wrong ones are throttled like PINs. */
+const RECOVERY_LENGTH = 10;
+/** What a teacher may choose for "after a missed proof, the next try opens": tomorrow, next period, straight away. */
+export const COOLDOWN_CHOICES = [24, 1, 0] as const;
+export type CooldownChoice = (typeof COOLDOWN_CHOICES)[number];
+const MAX_CONSENT_SLIPS = 999;
 
 class NoFreshQuestion extends Error {}
 
-const randomSuffix = () => Array.from({ length: 4 }, () => CODE_ALPHABET[randomInt(0, CODE_ALPHABET.length)]).join("");
+const randomCode = (length: number) => Array.from({ length }, () => CODE_ALPHABET[randomInt(0, CODE_ALPHABET.length)]).join("");
+const randomSuffix = () => randomCode(4);
 
 /** count random student codes like 8B-K7QM, all different and none in avoid. */
 function randomStudentCodes(prefix: string, count: number, avoid: Set<string> = new Set()): string[] {
@@ -119,6 +131,11 @@ const normaliseCode = (code: string) =>
     .trim()
     .toUpperCase()
     .replace(/\s+/g, "");
+/** A recovery code as typed: case, spaces and dashes do not matter. */
+const normaliseRecovery = (code: string) =>
+  String(code ?? "")
+    .toUpperCase()
+    .replace(/[\s-]+/g, "");
 const MASTERY_STATES = ["LOCKED", "OPEN", "KEY1", "NOT_YET", "MASTERED"] as const;
 
 type ProofItemView = { itemId: string; format: ItemFormat; text: string; textHi?: string };
@@ -277,11 +294,21 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     return mastery.refreshUnlockMany(store, students.map((s) => s.id), rows, Object.values(registry), now());
   }
 
+  /**
+   * Per skill: how many students are in each state, and how many have "gone ahead": not MASTERED this skill while
+   * a skill that needs it is already open for them (for example a teacher unlocked it). From states already read.
+   */
   function progressFrom(students: StudentRow[], states: Map<string, Map<string, mastery.MasteryState>>) {
-    return Object.values(registry).map((e) => {
+    const entries = Object.values(registry);
+    return entries.map((e) => {
       const counts = Object.fromEntries(MASTERY_STATES.map((s) => [s, 0])) as Record<(typeof MASTERY_STATES)[number], number>;
       for (const s of students) counts[states.get(s.id)!.get(e.spec.id)!]++;
-      return { skillId: e.spec.id, counts };
+      const later = entries.filter((x) => x.spec.prerequisites.includes(e.spec.id)).map((x) => x.spec.id);
+      const goneAhead = students.filter((s) => {
+        const mine = states.get(s.id)!;
+        return mine.get(e.spec.id) !== "MASTERED" && later.some((id) => mine.get(id) !== "LOCKED");
+      }).length;
+      return { skillId: e.spec.id, counts, goneAhead };
     });
   }
 
@@ -414,17 +441,35 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     });
   }
 
-  /** In a tour there is no cooldown between proofs, so a judge can fail one on purpose and try again. */
-  const cooldownFor = (cls: ClassRow) => (cls.kind === "sandbox" ? 0 : cooldownHours);
+  /**
+   * Hours between a failed proof and the next try: the class's own choice, else the server default. In a tour there
+   * is none, so a judge can fail one on purpose and try again.
+   */
+  const cooldownFor = (cls: ClassRow) => (cls.kind === "sandbox" ? 0 : (cls.proofCooldownHours ?? cooldownHours));
+
+  /**
+   * GET /api/health: one trivial database read (it throws if the database cannot be reached), then the hourly
+   * sandbox clean-up. A failed clean-up goes to the server log only; it does not make the app unhealthy.
+   */
+  async function health(): Promise<void> {
+    await store.ping();
+    try {
+      await cleanUpSandboxes();
+    } catch (e) {
+      logServerError("sandbox clean-up", e);
+    }
+  }
 
   const api = {
     cleanUpSandboxes,
+    health,
 
     // ----- set-up (pseudonymous codes only) -----
     async createClass(code: string, grade: number): Promise<ClassRow> {
       if (!CLASS_CODE.test(code)) throw new Error("Class codes look like KV8B.");
       if (!Number.isInteger(grade) || grade < 1 || grade > 12) throw new Error("Grade must be 1 to 12.");
-      // the older set-up path (tests and scripts): no proof window, like classes made before windows existed
+      // the older set-up path (tests and scripts): like classes made before proof windows, consent records and
+      // recovery codes existed: no proof window, consent recorded, no PIN or recovery code
       const row: ClassRow = {
         id: randomUUID(),
         code,
@@ -435,6 +480,9 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         proofWindowOpenUntil: null,
         kind: "real",
         expiresAt: null,
+        consentRecordedAt: iso(),
+        consentSlips: null,
+        proofCooldownHours: null,
       };
       if (!(await store.insertClass(row))) throw new Error(`Class code ${code} is already taken.`);
       await log(null, "class_created", { classId: row.id, grade, aiAllowed: row.aiAllowed });
@@ -782,7 +830,10 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     },
 
     // ----- classes, codes and logins (pseudonymous only: no names are ever entered) -----
-    /** Creates a class with a class code, a 6-digit teacher PIN (shown once) and printable student codes. */
+    /**
+     * Creates a class with a class code, a 6-digit teacher PIN and a PIN recovery code (both shown once; only their
+     * hashes are kept) and printable student codes. Children can log in once the teacher records consent.
+     */
     async createClassroom(input: { grade: number; section: string; studentCount: number; pin?: string }) {
       const grade = input.grade;
       const section = String(input.section ?? "").trim().toUpperCase();
@@ -794,12 +845,13 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       if (!/^\d{6}$/.test(pin)) throw new Error("The PIN must be 6 digits.");
       opts.checkSetup?.(); // e.g. no SESSION_SECRET: the teacher could never be given the class, so write nothing
       const prefix = `${grade}${section}`;
+      const recoveryCode = randomCode(RECOVERY_LENGTH);
 
-      // the class, its PIN hash and every student code are written together or not at all
+      // the class, its PIN and recovery hashes and every student code are written together or not at all
       return store.transaction(async () => {
-        let cls: ClassRow | null = null;
+        let cls: NewClass | null = null;
         for (let i = 0; i < 20 && !cls; i++) {
-          const candidate: ClassRow = {
+          const candidate: NewClass = {
             id: randomUUID(),
             code: `${prefix}-${randomSuffix()}`,
             grade,
@@ -810,15 +862,72 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
             kind: "real",
             expiresAt: null,
           };
-          if (await store.insertClass(candidate, hashPin(pin))) cls = candidate;
+          if (await store.insertClass(candidate, hashPin(pin), hashPin(recoveryCode))) cls = candidate;
         }
         if (!cls) throw new Error("Could not make a class code. Try again.");
         // random, so knowing the class code and one child's code does not give a classmate's
         const studentCodes = randomStudentCodes(prefix, count).sort();
         for (const code of studentCodes) await store.insertStudent({ id: randomUUID(), classId: cls.id, code });
         await log(null, "class_created", { classId: cls.id, grade, students: count, aiAllowed: cls.aiAllowed });
-        return { classId: cls.id, classCode: cls.code, pin, studentCodes };
+        return { classId: cls.id, classCode: cls.code, pin, recoveryCode, studentCodes };
       });
+    },
+
+    /** "Forgot the PIN?": the class code and the recovery code give a new PIN and a new recovery code (both shown once). */
+    async recoverTeacherPin(
+      classCode: string,
+      recoveryCode: string,
+    ): Promise<{ ok: true; classId: string; classCode: string; pin: string; recoveryCode: string } | Fail> {
+      const wrong = () => fail("Wrong class code or recovery code.", "wrong_recovery");
+      const found = await store.getClassForRecovery(normaliseCode(classCode), minutesAgo(PIN_LOCKOUT_MINUTES));
+      if (!found) {
+        await log(null, "pin_recovery", { classId: null, ok: false });
+        return wrong();
+      }
+      const { cls, recoveryHash, recentFailures } = found;
+      if (recentFailures >= PIN_MAX_FAILURES) {
+        await log(null, "pin_recovery", { classId: cls.id, ok: false, lockedOut: true });
+        return fail(`Too many wrong recovery codes. Try again in ${PIN_LOCKOUT_MINUTES} minutes.`, "locked_out");
+      }
+      if (!recoveryHash) return fail("This class has no recovery code.", "no_recovery");
+      if (!pinMatches(normaliseRecovery(recoveryCode), recoveryHash)) {
+        await log(null, "pin_recovery", { classId: cls.id, ok: false });
+        return wrong();
+      }
+      const pin = String(randomInt(0, 1_000_000)).padStart(6, "0");
+      const next = randomCode(RECOVERY_LENGTH);
+      await store.resetTeacherPin(cls.id, hashPin(pin), hashPin(next), { studentId: null, type: "pin_recovery", payload: { classId: cls.id, ok: true }, at: iso() });
+      return { ok: true, classId: cls.id, classCode: cls.code, pin, recoveryCode: next };
+    },
+
+    /** The school has allowed this class to use Shishya and parents have been told: children may log in from now on. */
+    async recordConsent(classId: string, input: { allowed: boolean; slips: number }) {
+      await requireClass(classId);
+      if (input.allowed !== true) throw new Error("Tick the box first: the school has allowed this class, and parents have been told.");
+      if (!Number.isInteger(input.slips) || input.slips < 0 || input.slips > MAX_CONSENT_SLIPS) {
+        throw new Error(`Parent slips must be a whole number from 0 to ${MAX_CONSENT_SLIPS}.`);
+      }
+      await store.recordConsent(classId, input.slips, { studentId: null, type: "consent_recorded", payload: { classId, slips: input.slips }, at: iso() });
+    },
+
+    /** "After a missed proof, the next try opens": 24 h (tomorrow), 1 h (next period) or 0 (straight away). */
+    async setProofCooldown(classId: string, hours: CooldownChoice) {
+      const cls = await requireClass(classId);
+      if (!(COOLDOWN_CHOICES as readonly number[]).includes(hours)) throw new Error("Choose 24, 1 or 0 hours.");
+      if (cls.kind === "sandbox") return; // a tour never waits between proofs
+      await store.setProofCooldown(classId, hours, { studentId: null, type: "cooldown_set", payload: { classId, hours }, at: iso() });
+    },
+
+    /**
+     * Deletes the class and everything about it (deleteClassCascade), only when the typed class code is this
+     * class's code. Logged as class_deleted with counts only.
+     */
+    async deleteClass(classId: string, typedCode: string): Promise<{ ok: true; counts: DeletedCounts } | Fail> {
+      const cls = await store.getClass(classId);
+      if (!cls) return fail("This class no longer exists.", "none");
+      if (normaliseCode(typedCode) !== cls.code) return fail("That is not this class's code. Nothing was deleted.", "confirm_mismatch");
+      const counts = await store.deleteClassCascade(classId, iso());
+      return counts ? { ok: true, counts } : fail("This class no longer exists.", "none");
     },
 
     async verifyTeacherPin(classCode: string, pin: string): Promise<{ ok: true; classId: string } | Fail> {
@@ -834,7 +943,10 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       return ok ? { ok: true, classId: cls.id } : fail("Wrong class code or PIN.", "wrong_pin");
     },
 
-    /** After LOGIN_MAX_FAILURES wrong student codes for a class in LOGIN_LOCKOUT_MINUTES, even a right one waits. No codes are logged. */
+    /**
+     * After LOGIN_MAX_FAILURES wrong student codes for a class in LOGIN_LOCKOUT_MINUTES, even a right one waits.
+     * Refused (consent_needed) until the teacher has recorded consent. No codes are logged.
+     */
     async studentLogin(classCode: string, studentCode: string): Promise<{ ok: true; studentId: string } | Fail> {
       const found = await store.findLogin(normaliseCode(classCode), normaliseCode(studentCode), minutesAgo(LOGIN_LOCKOUT_MINUTES));
       if (!found) {
@@ -845,6 +957,11 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       if (recentFailures >= LOGIN_MAX_FAILURES) {
         await log(null, "student_login", { classId: cls.id, ok: false, lockedOut: true });
         return fail(`Too many wrong codes. Try again in ${LOGIN_LOCKOUT_MINUTES} minutes.`, "locked_out");
+      }
+      // no child logs in before the teacher records the school's permission (no code is checked, so it is not counted)
+      if (!cls.consentRecordedAt) {
+        await log(null, "student_login", { classId: cls.id, ok: false, consentNeeded: true });
+        return fail("Your teacher needs to finish setting up the class.", "consent_needed");
       }
       await log(student?.id ?? null, "student_login", { classId: cls.id, ok: Boolean(student) });
       return student ? { ok: true, studentId: student.id } : fail("We could not find these codes.", "wrong_codes");
@@ -932,7 +1049,14 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       // a tour class never sees (or decides) the real mistake library's drafts
       const [students, mined] = await Promise.all([store.listStudents(classId), cls.kind === "sandbox" ? [] : pendingMined()]);
       const [states, stuck] = await Promise.all([classStates(classId, students), stuckGroups(classId)]);
-      return { stuck, progress: progressFrom(students, states), mined, codes: students.map((s) => s.code), proofWindow: proofWindowOf(cls) };
+      return {
+        stuck,
+        progress: progressFrom(students, states),
+        mined,
+        codes: students.map((s) => s.code),
+        proofWindow: proofWindowOf(cls),
+        proofCooldown: { chosen: cls.proofCooldownHours, hours: cooldownFor(cls) },
+      };
     },
 
     // ----- projector (class mode: no student accounts, never touches mastery) -----
@@ -1121,6 +1245,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
           proofWindowOpenUntil: null,
           kind: "sandbox" as const,
           expiresAt: new Date(start + SANDBOX_HOURS * 3600_000).toISOString(),
+          consentRecordedAt: iso(), // a made-up class: nothing to ask a school
         };
         const judge: StudentRow = { id: randomUUID(), classId, code: TOUR_JUDGE_CODE };
         const children = plan.map((p) => ({ plan: p, row: { id: randomUUID(), classId, code: p.code } as StudentRow }));

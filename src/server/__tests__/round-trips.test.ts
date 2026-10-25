@@ -8,7 +8,7 @@ import { answerProof, makeClock, SKILL, teachPerfectly, tempDbUrl } from "./help
 // number of students.
 
 const CLASS_SIZE = 40;
-const LIMITS = { classBoard: 8, unlockClass: 8, skillMap: 3, teacherPin: 2, proofFinish: 20, tourStart: 7, cleanUp: 4 };
+const LIMITS = { classBoard: 8, unlockClass: 8, skillMap: 3, teacherPin: 2, proofFinish: 20, tourStart: 7, cleanUp: 4, health: 2, studentLogin: 2 };
 
 let cleanup: (() => void) | undefined;
 afterEach(() => {
@@ -37,6 +37,7 @@ async function counted() {
 
 async function classOf40(svc: Awaited<ReturnType<typeof counted>>["svc"]) {
   const room = await svc.createClassroom({ grade: 8, section: "Q", studentCount: CLASS_SIZE, pin: "123456" });
+  await svc.recordConsent(room.classId, { allowed: true, slips: CLASS_SIZE }); // children log in only after this
   await svc.openProofWindow(room.classId); // a class made now needs the teacher to open proofs
   const ids = [];
   for (const code of room.studentCodes) {
@@ -119,6 +120,19 @@ describe("database round trips stay small and do not grow with the class", () =>
     const second = await trips(() => svc.startTour()); // no clean-up within the hour
     expect(second.out.ok).toBe(true);
     expect(second.n).toBeLessThanOrEqual(LIMITS.tourStart - 1);
+  });
+
+  it(`a student login takes at most ${LIMITS.studentLogin}; the health check at most ${LIMITS.health} (${LIMITS.health + LIMITS.cleanUp} when the hourly clean-up runs)`, async () => {
+    const { svc, trips, clock } = await counted();
+    const { room } = await classOf40(svc);
+    const login = await trips(() => svc.studentLogin(room.classCode, room.studentCodes[3]));
+    expect(login.out.ok).toBe(true);
+    expect(login.n).toBeLessThanOrEqual(LIMITS.studentLogin);
+    const first = await trips(() => svc.health());
+    expect(first.n).toBeLessThanOrEqual(LIMITS.health + LIMITS.cleanUp);
+    clock.advanceMinutes(10);
+    const second = await trips(() => svc.health()); // no clean-up within the hour: one trivial read
+    expect(second.n).toBeLessThanOrEqual(LIMITS.health - 1);
   });
 
   it(`the hourly clean-up deletes any number of expired tours in at most ${LIMITS.cleanUp} round trips`, async () => {

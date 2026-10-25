@@ -34,9 +34,19 @@ export type ClassRow = {
   kind: ClassKind;
   /** When a sandbox class is deleted (null for real and test classes). */
   expiresAt: string | null;
+  /**
+   * When the teacher recorded that the school allowed this class to use Shishya and parents were told. Children
+   * cannot log in while it is null. Classes made before this existed got the migration time.
+   */
+  consentRecordedAt: string | null;
+  /** How many parent slips the teacher said were received (null: not recorded). */
+  consentSlips: number | null;
+  /** Hours between a failed proof and the next try, chosen by the teacher (null: the server default). */
+  proofCooldownHours: number | null;
 };
-/** A new class: real, with no expiry, unless it says otherwise. */
-export type NewClass = Omit<ClassRow, "kind" | "expiresAt"> & Partial<Pick<ClassRow, "kind" | "expiresAt">>;
+/** A new class: real, with no expiry and no consent recorded yet, unless it says otherwise. */
+export type NewClass = Omit<ClassRow, "kind" | "expiresAt" | "consentRecordedAt" | "consentSlips" | "proofCooldownHours"> &
+  Partial<Pick<ClassRow, "kind" | "expiresAt" | "consentRecordedAt" | "consentSlips" | "proofCooldownHours">>;
 /** How many rows deleteClassCascade removed, per table. */
 export type DeletedCounts = {
   students: number;
@@ -180,7 +190,12 @@ CREATE TABLE IF NOT EXISTS classes (
   proofWindowRequired INTEGER NOT NULL DEFAULT 1 CHECK (proofWindowRequired IN (0, 1)),
   proofWindowOpenUntil TEXT,
   kind TEXT NOT NULL DEFAULT 'real' CHECK (kind IN ('real', 'test', 'sandbox')),
-  expiresAt TEXT
+  expiresAt TEXT,
+  consentRecordedAt TEXT,
+  consentSlips INTEGER,
+  proofCooldownHours INTEGER,
+  -- salted scrypt hash of the teacher's PIN recovery code; the code itself is never stored
+  recoveryHash TEXT
 );
 CREATE TABLE IF NOT EXISTS students (
   id TEXT PRIMARY KEY,
@@ -312,17 +327,22 @@ const toClass = (r: Row): ClassRow => ({
   proofWindowOpenUntil: (r.proofWindowOpenUntil as string | null) ?? null,
   kind: r.kind as ClassKind,
   expiresAt: (r.expiresAt as string | null) ?? null,
+  consentRecordedAt: (r.consentRecordedAt as string | null) ?? null,
+  consentSlips: r.consentSlips === null || r.consentSlips === undefined ? null : Number(r.consentSlips),
+  proofCooldownHours: r.proofCooldownHours === null || r.proofCooldownHours === undefined ? null : Number(r.proofCooldownHours),
 });
-const CLASS_COLUMNS = "id, code, grade, section, aiAllowed, proofWindowRequired, proofWindowOpenUntil, kind, expiresAt";
+const CLASS_COLUMNS =
+  "id, code, grade, section, aiAllowed, proofWindowRequired, proofWindowOpenUntil, kind, expiresAt, consentRecordedAt, consentSlips, proofCooldownHours";
 const CLASS_COLUMNS_OF_C = CLASS_COLUMNS.split(", ").map((c) => `c.${c}`).join(", ");
 /**
- * How many failed logins of this type the class c has had since a time, as a subquery (it uses the
- * events_type_time index). Refusals during a lockout (lockedOut) are not counted again.
+ * How many failed logins (or PIN recoveries) of this type the class c has had since a time, as a subquery (it uses
+ * the events_type_time index). Refusals during a lockout (lockedOut) and before consent (consentNeeded) are not
+ * counted: neither checked a code.
  */
-const recentFailures = (type: "student_login" | "teacher_login") =>
+const recentFailures = (type: "student_login" | "teacher_login" | "pin_recovery") =>
   `(SELECT COUNT(*) FROM events WHERE type = '${type}' AND createdAt >= ?
      AND json_extract(payloadJson, '$.classId') = c.id AND json_extract(payloadJson, '$.ok') = 0
-     AND json_extract(payloadJson, '$.lockedOut') IS NULL)`;
+     AND json_extract(payloadJson, '$.lockedOut') IS NULL AND json_extract(payloadJson, '$.consentNeeded') IS NULL)`;
 const toItem = (r: Row): ItemRow => ({
   id: r.id as string,
   studentId: r.studentId as string,
@@ -437,6 +457,26 @@ async function migrate(client: Client) {
     );
   }
   if (!classColumns.includes("expiresAt")) await client.execute("ALTER TABLE classes ADD COLUMN expiresAt TEXT");
+  // Consent record: children of a class log in only once it is recorded. Classes that already exist are recorded
+  // now (the migration time), with one note in the event log, so no class that is in use stops working.
+  if (!classColumns.includes("consentRecordedAt")) {
+    const at = new Date().toISOString();
+    await client.batch(
+      [
+        "ALTER TABLE classes ADD COLUMN consentRecordedAt TEXT",
+        { sql: "UPDATE classes SET consentRecordedAt = ?", args: [at] },
+        {
+          sql: `INSERT INTO events (studentId, type, payloadJson, createdAt)
+                SELECT NULL, 'consent_recorded_by_migration', json_object('classes', COUNT(*)), ? FROM classes`,
+          args: [at],
+        },
+      ],
+      "write",
+    );
+  }
+  if (!classColumns.includes("consentSlips")) await client.execute("ALTER TABLE classes ADD COLUMN consentSlips INTEGER");
+  if (!classColumns.includes("proofCooldownHours")) await client.execute("ALTER TABLE classes ADD COLUMN proofCooldownHours INTEGER");
+  if (!classColumns.includes("recoveryHash")) await client.execute("ALTER TABLE classes ADD COLUMN recoveryHash TEXT");
 
   // Mined mistake statuses were draft/approved/rejected; now DRAFT_TESTED/APPROVED/REJECTED.
   const mined = await client.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'minedMistakes'");
@@ -571,20 +611,22 @@ export async function openStore(config: StoreConfig | string = {}) {
   }
 
   /**
-   * Deletes the classes the condition picks (on classes c), with EVERY row of their students: one read of the counts,
-   * then ONE batch (all or nothing), however many classes. Logs one class_deleted event per class, counts only.
+   * Deletes the classes the condition picks (on classes c), with EVERY row of their students and every log line
+   * about the class: one read of the counts, then ONE batch (all or nothing), however many classes. A mistake the
+   * class's teacher approved stays in the library, but no longer names the class. Logs one class_deleted event per
+   * class, counts only.
    */
   async function deleteClassesWhere(where: string, args: InValue[], at: string): Promise<DeletedCounts[]> {
     const ofClass = "(SELECT id FROM students WHERE classId = c.id)";
     const found = await all(
-      `SELECT c.id, c.kind,
+      `SELECT c.id, c.code, c.kind,
          (SELECT COUNT(*) FROM students WHERE classId = c.id) AS students,
          (SELECT COUNT(*) FROM items WHERE studentId IN ${ofClass}) AS items,
          (SELECT COUNT(*) FROM attempts WHERE studentId IN ${ofClass}) AS attempts,
          (SELECT COUNT(*) FROM teachTraces WHERE studentId IN ${ofClass}) AS teachTraces,
          (SELECT COUNT(*) FROM proofRuns WHERE studentId IN ${ofClass}) AS proofRuns,
          (SELECT COUNT(*) FROM mastery WHERE studentId IN ${ofClass}) AS mastery,
-         (SELECT COUNT(*) FROM events WHERE studentId IN ${ofClass}) AS events
+         (SELECT COUNT(*) FROM events WHERE studentId IN ${ofClass} OR json_extract(payloadJson, '$.classId') = c.id) AS events
        FROM classes c WHERE ${where}`,
       ...args,
     );
@@ -609,7 +651,14 @@ export async function openStore(config: StoreConfig | string = {}) {
       del("items"),
       del("proofRuns"),
       del("mastery"),
-      del("events"),
+      {
+        sql: `DELETE FROM events WHERE studentId IN ${ofIds} OR json_extract(payloadJson, '$.classId') IN (${marks(ids.length)})`,
+        args: [...ids, ...ids],
+      },
+      ...found.map((r) => ({
+        sql: "UPDATE minedMistakes SET approver = 'teacher of a deleted class' WHERE approver = ? OR approver LIKE ?",
+        args: [`teacher of class ${r.code as string}`, `teacher of class ${r.code as string} %`] as InValue[],
+      })),
       { sql: `DELETE FROM students WHERE classId IN (${marks(ids.length)})`, args: ids },
       { sql: `DELETE FROM classes WHERE id IN (${marks(ids.length)})`, args: ids },
       ...found.map((r, i) => eventStatement({ studentId: null, type: "class_deleted", payload: { kind: r.kind, ...counts[i] }, at })),
@@ -624,12 +673,13 @@ export async function openStore(config: StoreConfig | string = {}) {
 
     // ----- classes and students -----
     /** False if the class code is already taken. */
-    insertClass(c: NewClass, teacherPinHash: string | null = null): Promise<boolean> {
+    insertClass(c: NewClass, teacherPinHash: string | null = null, recoveryHash: string | null = null): Promise<boolean> {
       return tryInsert(
-        `INSERT INTO classes (id, code, grade, section, aiAllowed, teacherPinHash, proofWindowRequired, proofWindowOpenUntil, kind, expiresAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO classes (id, code, grade, section, aiAllowed, teacherPinHash, proofWindowRequired, proofWindowOpenUntil, kind, expiresAt,
+                              consentRecordedAt, consentSlips, proofCooldownHours, recoveryHash)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         c.id, c.code, c.grade, c.section, c.aiAllowed ? 1 : 0, teacherPinHash, c.proofWindowRequired ? 1 : 0, c.proofWindowOpenUntil,
-        c.kind ?? "real", c.expiresAt ?? null,
+        c.kind ?? "real", c.expiresAt ?? null, c.consentRecordedAt ?? null, c.consentSlips ?? null, c.proofCooldownHours ?? null, recoveryHash,
       );
     },
     /**
@@ -660,9 +710,13 @@ export async function openStore(config: StoreConfig | string = {}) {
       try {
         await writeBatch([
           {
-            sql: `INSERT INTO classes (id, code, grade, section, aiAllowed, teacherPinHash, proofWindowRequired, proofWindowOpenUntil, kind, expiresAt)
-                  VALUES (?, ?, ?, ?, ?, NULL, ?, ?, 'sandbox', ?)`,
-            args: [c.id, c.code, c.grade, c.section, c.aiAllowed ? 1 : 0, c.proofWindowRequired ? 1 : 0, c.proofWindowOpenUntil, c.expiresAt ?? null],
+            sql: `INSERT INTO classes (id, code, grade, section, aiAllowed, teacherPinHash, proofWindowRequired, proofWindowOpenUntil, kind, expiresAt,
+                                       consentRecordedAt)
+                  VALUES (?, ?, ?, ?, ?, NULL, ?, ?, 'sandbox', ?, ?)`,
+            args: [
+              c.id, c.code, c.grade, c.section, c.aiAllowed ? 1 : 0, c.proofWindowRequired ? 1 : 0, c.proofWindowOpenUntil, c.expiresAt ?? null,
+              c.consentRecordedAt ?? null,
+            ],
           },
           ...rows("students", ["id", "classId", "code"], s.students, (x) => [x.id, x.classId, x.code]),
           ...rows(
@@ -731,6 +785,36 @@ export async function openStore(config: StoreConfig | string = {}) {
       if (!r) return undefined;
       const student = r.studentId ? { id: r.studentId as string, classId: r.id as string, code: studentCode } : undefined;
       return { cls: toClass(r), student, recentFailures: Number(r.failures) };
+    },
+    /** The class, its PIN recovery hash and its failed recoveries since a time, in one read (for PIN recovery). */
+    async getClassForRecovery(
+      code: string,
+      failuresSince: string,
+    ): Promise<{ cls: ClassRow; recoveryHash: string | null; recentFailures: number } | undefined> {
+      const r = await one(`SELECT c.*, ${recentFailures("pin_recovery")} AS failures FROM classes c WHERE c.code = ?`, failuresSince, code);
+      return r && { cls: toClass(r), recoveryHash: (r.recoveryHash as string | null) ?? null, recentFailures: Number(r.failures) };
+    },
+    /** A new PIN hash and a new recovery hash, with the log line, in one round trip, all or nothing. */
+    async resetTeacherPin(classId: string, pinHash: string, recoveryHash: string, event: EventInput) {
+      await writeBatch([
+        { sql: "UPDATE classes SET teacherPinHash = ?, recoveryHash = ? WHERE id = ?", args: [pinHash, recoveryHash, classId] },
+        eventStatement(event),
+      ]);
+    },
+    /** Records the school's permission and the parent slips received, with the log line, in one round trip. */
+    async recordConsent(classId: string, slips: number, event: EventInput) {
+      await writeBatch([
+        { sql: "UPDATE classes SET consentRecordedAt = ?, consentSlips = ? WHERE id = ?", args: [event.at, slips, classId] },
+        eventStatement(event),
+      ]);
+    },
+    /** The hours between a failed proof and the next try for this class (null: the server default), with the log line. */
+    async setProofCooldown(classId: string, hours: number | null, event: EventInput) {
+      await writeBatch([{ sql: "UPDATE classes SET proofCooldownHours = ? WHERE id = ?", args: [hours, classId] }, eventStatement(event)]);
+    },
+    /** The most trivial read there is (for the health check). */
+    async ping(): Promise<void> {
+      await read("SELECT 1");
     },
     /** Opens the proof window until a time, or closes it (null). */
     async setProofWindow(classId: string, openUntil: string | null) {
