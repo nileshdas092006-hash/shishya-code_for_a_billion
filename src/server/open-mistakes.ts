@@ -1,7 +1,7 @@
 import { answerText } from "../core/answer";
 import { toMistake, type MinedMistakeSpec } from "../core/minedMistake";
-import { createRng } from "../core/rng";
-import { applies, type Mistake, type SkillSpec } from "../core/types";
+import { mistakeExample } from "../core/example";
+import type { Mistake, SkillSpec } from "../core/types";
 import type { Services } from "./services";
 import { logServerError } from "./setup";
 import type { Registry } from "./skills";
@@ -38,17 +38,9 @@ export type OpenMistakes = {
 
 /** The first question (seeds 1, 2, …) this mistake makes sense for, worked through with it. Deterministic. */
 function exampleOf(skill: SkillSpec, m: Mistake): { example: Example; firstWrongLine: number } | null {
-  for (let seed = 1; seed <= EXAMPLE_SEEDS; seed++) {
-    const instance = skill.generate(createRng(seed));
-    if (!applies(m, instance)) continue;
-    try {
-      const out = m.apply(instance);
-      return { example: { question: instance.text, working: out.trace.map((l) => l.text), result: answerText(out.answer) }, firstWrongLine: out.firstWrongLine };
-    } catch {
-      // e.g. a formula that divides by 0 on this question: try the next one
-    }
-  }
-  return null;
+  const ex = mistakeExample(skill, m, 1, EXAMPLE_SEEDS);
+  if (!ex) return null;
+  return { example: { question: ex.instance.text, working: ex.trace.map((l) => l.text), result: answerText(ex.answer) }, firstWrongLine: ex.firstWrongLine };
 }
 
 /** The approved row's mistake spec, if it is complete and still loads (src/core checks its formula and templates). */

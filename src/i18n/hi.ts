@@ -40,6 +40,8 @@ export const hi: Record<string, string> = {
   "tour.tip.5": "पैटर्न का अर्थ है 2 अलग प्रश्नों पर एक ही गलती; एक बार मिलना केवल चूक है। आपका अपना बच्चा {code} है।",
   "tour.tip.6": "यह AI एजेंट का एक रिकॉर्ड किया हुआ रन है। इस पेज पर कुछ भी सहेजा नहीं जाता।",
   "tour.skip": "आगे बढ़ें (कक्षा में इसमें लगभग 20 मिनट लगते हैं)",
+  "tour.skipping": "सिखाना पूरा हो रहा है…", // HINDI-REVIEW
+  "tour.starting": "आपकी बनावटी कक्षा तैयार हो रही है…", // HINDI-REVIEW
   "tour.skip.explain":
     "कक्षा में बच्चा परीक्षा से पहले शिष्य को 3 प्रश्न सिखाता है। यह बटन सही पंक्तियों से आपका सिखाना पूरा करता है, उन्हीं जाँचों से होकर, इसलिए \"शिष्य को सिखा दिया\" सामान्य नियम से ही मिलता है।", // HINDI-REVIEW
   "tour.classmate.title": "एक सहपाठी की परीक्षा",
@@ -59,8 +61,12 @@ export const hi: Record<string, string> = {
   "tour.agent.proposal": "इसने यह गलती सुझाई: x = {formula}",
   "tour.agent.trace": "इस गलती के साथ शिष्य का हल ({correct} सही है):",
   "tour.agent.firstWrong": "← पहली गलत पंक्ति",
-  "tour.agent.checks": "कोड से जाँचा गया: यह दर्ज उत्तरों में से {explained} को समझाती है, और {checked} नए प्रश्नों पर कभी सही उत्तर नहीं देती।",
+  "tour.agent.checks": "कोड से जाँचा गया: यह दर्ज उत्तरों में से {explained} को समझाती है, और {checked} नए {checked|प्रश्न|प्रश्नों} पर कभी सही उत्तर नहीं देती।",
   "tour.agent.advice": "जो कोड नहीं जाँच सकता: बच्चे के लिए AI का संदेश गलत था। उसने कहा: \"{quote}\"। यह बच्चे को गलती करना सिखाता है।",
+  "tour.agent.since": "तब से बच्चे AI के लिखे शब्द कभी नहीं देखते। इस गलती के लिए अब बच्चा यह देखता है: “{message}”।", // HINDI-REVIEW
+  "tour.agent.checkedNow": "कोड ने अभी फिर से जाँचा", // HINDI-REVIEW
+  "tour.agent.checkedNowNote":
+    "पहला निशान दर्ज रन के {explained} उत्तर गिनता है: उनमें से केवल एक प्रश्न की संख्याएँ रखी गईं, और कोड ने उसे फिर से जाँचा (नीचे)। बाकी निशान {n} नए {n|प्रश्न|प्रश्नों} पर फिर से निकाले गए।", // HINDI-REVIEW
   "tour.agent.why": "इसीलिए हर मसौदे को किसी भी कक्षा में इस्तेमाल होने से पहले शिक्षक को पढ़कर स्वीकार करना होता है।",
   "tour.agent.approve": "स्वीकार करें",
   "tour.agent.approveNote": "असली कक्षा में शिक्षक की स्वीकृति से यह गलती हर कक्षा के लिए जुड़ जाती है। टूर में कुछ भी सहेजा नहीं जाता।",
@@ -79,8 +85,8 @@ export const hi: Record<string, string> = {
   "review.evidence.none": "अभी दर्ज किया गया कोई गलत उत्तर इससे मेल नहीं खाता।",
   "review.checks.title": "कोड से जाँचा गया",
   "review.check.explains": "3 या अधिक असली उत्तर समझाती है (यह {n} समझाती है)",
-  "review.check.neverRight": "{n} यादृच्छिक प्रश्नों में कभी सही उत्तर नहीं देती",
-  "review.check.noDivideByZero": "{n} यादृच्छिक प्रश्नों में कभी शून्य से भाग नहीं देती",
+  "review.check.neverRight": "{n} यादृच्छिक {n|प्रश्न|प्रश्नों} में कभी सही उत्तर नहीं देती",
+  "review.check.noDivideByZero": "{n} यादृच्छिक {n|प्रश्न|प्रश्नों} में कभी शून्य से भाग नहीं देती",
   "review.check.different": "हर जानी हुई गलती से अलग है",
   "review.howAgent": "एजेंट ने कैसे काम किया",
   "agentRuns.title": "एजेंट ने कैसे काम किया",
@@ -99,17 +105,17 @@ export const hi: Record<string, string> = {
   "agentRuns.status.failed": "विफल: {error}",
   "agentRuns.status.other": "समाप्त: {status}",
   "agentRuns.verdict.accepted": "स्वीकार: {n} असली उत्तर समझाती है",
-  "agentRuns.verdict.right": "अस्वीकार: {total} में से {n} प्रश्नों पर सही उत्तर देती है",
-  "agentRuns.verdict.zero": "अस्वीकार: {total} में से {n} प्रश्नों पर शून्य से भाग देती है",
+  "agentRuns.verdict.right": "अस्वीकार: {total} में से {n} {n|प्रश्न|प्रश्नों} पर सही उत्तर देती है",
+  "agentRuns.verdict.zero": "अस्वीकार: {total} में से {n} {n|प्रश्न|प्रश्नों} पर शून्य से भाग देती है",
   "agentRuns.verdict.few": "अस्वीकार: केवल {n} असली उत्तर समझाती है (3 चाहिए)",
-  "agentRuns.verdict.known": "अस्वीकार: {total} में से {n} प्रश्नों पर जानी हुई गलती \"{id}\" जैसा ही उत्तर देती है",
+  "agentRuns.verdict.known": "अस्वीकार: {total} में से {n} {n|प्रश्न|प्रश्नों} पर जानी हुई गलती \"{id}\" जैसा ही उत्तर देती है",
   "agentRuns.verdict.other": "अस्वीकार: {reason}",
 
   "login.title": "नमस्ते! अपने कोड लिखो",
   "login.classCode": "कक्षा कोड",
   "login.classCodeHint": "तुम्हारे शिक्षक इसे बोर्ड पर लिखेंगे, जैसे 8B-K7QM।",
   "login.studentCode": "तुम्हारा कोड",
-  "login.studentCodeHint": "जैसे 8B-R4TX। यह तुम्हें तुम्हारे शिक्षक देंगे।",
+  "login.studentCodeHint": "जैसे 8B-R4TX, तुम्हारे कार्ड पर। यह तुम्हें तुम्हारे शिक्षक देंगे।", // HINDI-REVIEW
   "login.go": "शुरू करो",
   "login.wrong": "ये कोड नहीं मिले। अपने शिक्षक से जाँच लो।",
   // HINDI-REVIEW
@@ -252,8 +258,8 @@ export const hi: Record<string, string> = {
 
   // HINDI-REVIEW (the teacher's stuck board, all lines below)
   "board.patterns.none": "अभी कोई गलती का पैटर्न नहीं है। पैटर्न का मतलब है 2 अलग-अलग प्रश्नों पर एक ही गलती।",
-  "board.patterns.evidence": "{n} प्रश्नों पर एक ही चरण",
-  "board.unknown.evidence": "{n} प्रश्नों पर गलत",
+  "board.patterns.evidence": "{n} {n|प्रश्न|प्रश्नों} पर एक ही चरण",
+  "board.unknown.evidence": "{n} {n|प्रश्न|प्रश्नों} पर गलत",
   "board.unknown.title": "किसी जानी हुई गलती से मेल नहीं खाता", // HINDI-REVIEW
   "board.slips.title": "एक चूक, नज़र रखें",
   "board.slips.intro": "इन बच्चों की एक जानी-पहचानी गलती केवल एक प्रश्न पर मिली। एक बार की गलती लापरवाही की चूक हो सकती है, इसलिए वे अभी किसी समूह में नहीं हैं।",
@@ -271,6 +277,7 @@ export const hi: Record<string, string> = {
   "board.proofs.closed": "परीक्षा बंद है। बच्चे अभ्यास कर सकते हैं और शिष्य को सिखा सकते हैं, पर परीक्षा शुरू नहीं कर सकते।",
   "board.proofs.started": "जो परीक्षा शुरू हो चुकी है, उसे अपने पूरे 30 मिनट मिलते हैं, परीक्षा बंद होने के बाद भी।",
   "board.proofs.always": "यह कक्षा परीक्षा-समय की सुविधा से पहले बनी थी, इसलिए बच्चे कभी भी परीक्षा शुरू कर सकते हैं।",
+  "board.proofs.tour": "टूर में परीक्षा हमेशा खुली रहती है। असली कक्षा में शिक्षक इसे 15 मिनट के लिए खोलते हैं।", // HINDI-REVIEW
   "board.codes.give": "नए कोड दें",
   "board.codes.confirm": "हर बच्चे को नया कोड मिलेगा, और पुराने कोड तुरंत काम करना बंद कर देंगे। उनकी प्रगति बनी रहेगी।",
   "board.codes.yes": "हाँ, नए कोड दें",
@@ -283,7 +290,7 @@ export const hi: Record<string, string> = {
   "board.mined.title": "आपकी कक्षा में मिली नई गलतियाँ",
   "board.mined.none": "आपके निर्णय के लिए कुछ भी बाकी नहीं है।",
   "board.mined.draft": "आपकी कक्षा में मिली नई गलती: {label}",
-  "board.mined.explains": "दर्ज किए गए {n} गलत उत्तर समझाती है · कोड ने {checked} प्रश्नों पर जाँचा",
+  "board.mined.explains": "दर्ज किए गए {n} गलत उत्तर समझाती है · कोड ने {checked} {checked|प्रश्न|प्रश्नों} पर जाँचा",
   "board.mined.unreadable": "यह मसौदा पढ़ा नहीं जा सका। इसे अस्वीकार करें।",
   "board.mined.note":
     "गलती खोजने वाले (एक AI सहायक) ने इसका मसौदा बनाया और कोड ने इसे जाँचा। यह आपकी स्वीकृति के बाद ही इस्तेमाल होता है, और यह किसी भी बच्चे की महारत कभी नहीं बदलता।",
@@ -297,7 +304,7 @@ export const hi: Record<string, string> = {
   "board.consent.save": "सहेजें",
   "board.consent.needed": "जब तक यह सहेजा नहीं जाता, बच्चे लॉग इन नहीं कर सकते।",
   "board.consent.check": "बॉक्स पर निशान लगाएँ और अभिभावकों की पर्चियों की संख्या (0 या अधिक) लिखें, फिर सहेजें।",
-  "board.consent.done": "{date} को दर्ज किया गया: विद्यालय ने इस कक्षा को अनुमति दी, और अभिभावकों को बताया गया ({n} पर्चियाँ मिलीं)।",
+  "board.consent.done": "{date} को दर्ज किया गया: विद्यालय ने इस कक्षा को अनुमति दी, और अभिभावकों को बताया गया ({n} {n|पर्ची मिली|पर्चियाँ मिलीं})।",
   "board.consent.doneOld": "यह कक्षा अनुमति दर्ज करने की सुविधा से पहले से चल रही थी, इसलिए इसे {date} को दर्ज माना गया है।",
   "board.cooldown.title": "परीक्षा में चूकने के बाद",
   "board.cooldown.intro": "परीक्षा में चूकने के बाद, अगली कोशिश खुलती है:",
@@ -369,7 +376,7 @@ export const hi: Record<string, string> = {
   "paper.grid.q": "प्र{n}",
   "paper.grid.save": "उत्तर सहेजें",
   "paper.grid.saved": "{n} उत्तर सहेजे गए ({right} सही)।",
-  "paper.grid.already": "{n} डिब्बे पहले से सहेजे हुए थे, इसलिए वे नहीं बदले गए।",
+  "paper.grid.already": "{n} {n|डिब्बा पहले से सहेजा हुआ था, इसलिए वह नहीं बदला गया|डिब्बे पहले से सहेजे हुए थे, इसलिए वे नहीं बदले गए}।",
   "paper.grid.unreadable": "ये उत्तर पढ़े नहीं जा सके, इसलिए सहेजे नहीं गए। इन्हें जाँचें और फिर से सहेजें:",
   "paper.grid.unreadableItem": "{code}, प्र{n}: {text}",
   "paper.grid.right": "सही",

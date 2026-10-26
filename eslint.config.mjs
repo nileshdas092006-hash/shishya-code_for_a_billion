@@ -37,6 +37,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // an old local clone of this repo kept inside app/ (git-ignored, not part of this project)
+    "shishya-code_for_a_billion/**",
   ]),
 ]);
 

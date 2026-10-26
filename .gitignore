@@ -47,3 +47,6 @@ next-env.d.ts
 
 # local SQLite database
 /data/
+
+# an old local clone of this repo kept inside app/ (not part of this project; never commit or type-check it)
+/shishya-code_for_a_billion/

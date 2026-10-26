@@ -2,9 +2,14 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { childMessage } from "@/core/childMessages";
+import { validateMinedMistake, validationChecks } from "@/core/minedMistake";
+import { linearBothSides } from "@/core/skills/linear-both-sides";
+import { t } from "@/i18n";
 import { en } from "@/i18n/en";
 import { RECORDED_MINER_RUN } from "@/server/agent-runs";
 import { recordedRun } from "../agent-run";
+import { AgentRunView } from "../AgentRun";
 import { TourApprove } from "../TourApprove";
 import { TourBanner } from "../TourBanner";
 
@@ -65,6 +70,46 @@ describe("the recorded Misconception Miner run (stop 6)", () => {
     expect(run.example.trace[4]).toBe("x = 5/2");
     expect(run.example.wrongAnswer).toBe(run.example.recordedWrongAnswer);
     expect(run.example.correct).toBe("x = 5");
+  });
+
+  it("says what a child sees now: the fixed message for the step type, never the AI's words", () => {
+    expect(en["tour.agent.since"]).toBe(
+      "Since then, children never see words written by the AI. For this mistake a child now sees: “{message}”.",
+    );
+    const run = recordedRun();
+    expect(run.childNow).toBe(childMessage("divide", 5));
+    expect(run.childNow).not.toContain(run.proposal.childLabelExcerpt);
+    const html = render(<AgentRunView run={run} />);
+    const advice = html.indexOf("What code cannot test");
+    const since = html.indexOf(`Since then, children never see words written by the AI. For this mistake a child now sees: “${run.childNow}”.`);
+    expect(advice).toBeGreaterThan(-1);
+    expect(since).toBeGreaterThan(advice); // right after the paragraph about the AI's wrong message
+  });
+
+  it("shows the 4 ticks, worked out again by the validator now, and only the evidence row that was recorded", () => {
+    const run = recordedRun();
+    // the same validator, run here on the recorded formula and the one recorded question that kept its numbers
+    const spec = { id: run.proposal.id, label: run.proposal.id, childLabel: run.proposal.childLabelExcerpt, stepType: "divide" as const,
+      firstWrongLine: 5, lines: run.proposal.lines, answerFormula: run.proposal.answerFormula };
+    const now = validateMinedMistake(spec, {
+      skill: linearBothSides,
+      unknownErrors: [{ params: { a: 4, b: -3, c: 2, d: 7 }, wrongAnswer: "5/2" }],
+      existing: linearBothSides.mistakes,
+    });
+    expect(now.checkedInstances).toBe(1000);
+    expect(run.checkedNow.map((c) => c.id)).toEqual(["explains", "neverRight", "noDivideByZero", "different"]);
+    expect(run.checkedNow).toEqual(validationChecks({ ...now, reproduced: run.validation.explained }));
+    expect(run.checkedNow.every((c) => c.ok)).toBe(true);
+    expect(run.evidence).toEqual([{ question: "4x − 3 = 2x + 7", wrongAnswer: "5/2", predicted: "5/2", count: 1 }]);
+
+    expect(en["tour.agent.checkedNow"]).toBe("Checked again by code just now");
+    const html = render(<AgentRunView run={run} />);
+    expect(html).toContain("Checked again by code just now");
+    for (const c of run.checkedNow) expect(html).toContain(t(`review.check.${c.id}`, { n: c.n.toLocaleString("en-IN") }));
+    expect(html).toContain("4x − 3 = 2x + 7");
+    expect(html).toContain("x = 5/2");
+    expect(html).toContain(t("tour.agent.checkedNowNote", { explained: run.validation.explained, n: "1,000" }));
+    expect(html).toMatch(/overflow-x-auto/); // the evidence table scrolls in its own box at 360 px
   });
 
   it("Approve explains and saves nothing: no form, no server action", () => {

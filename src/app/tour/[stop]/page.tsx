@@ -4,7 +4,6 @@ import { Suspense } from "react";
 import { skillKey, t } from "@/i18n";
 import { getServices } from "@/server/instance";
 import { TOUR_SKILL, TOUR_STOPS } from "@/server/tour";
-import { skipAheadInTour } from "../../actions";
 import { Equation } from "../../_components/Equation";
 import { Receipt } from "../../_components/Receipt";
 import { currentStudent, teacherClass } from "../../_lib/auth";
@@ -16,6 +15,7 @@ import { ProveScreen } from "../../s/prove/[skill]/ProveScreen";
 import { TeachScreen } from "../../s/teach/[skill]/TeachScreen";
 import { ClassBoardView } from "../../teacher/[class]/ClassBoardView";
 import { AgentRun } from "../AgentRun";
+import { SkipAheadForm } from "../SkipAheadForm";
 import { StartTourForm } from "../StartTourForm";
 import { TourBanner } from "../TourBanner";
 
@@ -81,11 +81,7 @@ async function stopContent(stop: number) {
           {state === "OPEN" ? (
             <div className="card flex flex-col items-start gap-4">
               <p className="text-lg">{t("tour.skip.explain")}</p>
-              <form action={skipAheadInTour}>
-                <button type="submit" className="btn btn-primary text-xl">
-                  {t("tour.skip")}
-                </button>
-              </form>
+              <SkipAheadForm />
             </div>
           ) : (
             <ProveScreen skillId={TOUR_SKILL} answerKind="number" />

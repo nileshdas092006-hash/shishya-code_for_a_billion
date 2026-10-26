@@ -60,20 +60,29 @@ describe("every button that needs JavaScript waits for the page", () => {
     "teacher/[class]/paper/page.tsx", // Make the worksheet (Paper Mode)
     "teacher/[class]/paper/[sheet]/PaperEntryForm.tsx", // Save answers (Paper Mode)
     "teacher/recover/RecoverPinForm.tsx", // Forgot the PIN?
+  ];
+  // Server-action forms whose submit button is a PendingSubmit (it says what is happening while a slow action runs)
+  const PENDING_FORMS = [
     "tour/StartTourForm.tsx", // Try it as a judge
-    "tour/[stop]/page.tsx", // Skip ahead (Judge Tour, stop 3)
+    "tour/SkipAheadForm.tsx", // Skip ahead (Judge Tour, stop 3)
   ];
 
-  it("raw <button> appears only in ReadyButton and in server-action forms", () => {
+  it("raw <button> appears only in ReadyButton, PendingSubmit and server-action forms", () => {
     const withRawButton = files(APP)
       .filter((p) => /<button\b/.test(readFileSync(p, "utf8")))
       .map(rel)
       .sort();
-    expect(withRawButton).toEqual(["_components/ReadyButton.tsx", ...SERVER_ACTION_FORMS].sort());
+    expect(withRawButton).toEqual(["_components/PendingSubmit.tsx", "_components/ReadyButton.tsx", ...SERVER_ACTION_FORMS].sort());
+  });
+
+  it("PendingSubmit is only a form's submit button: no handlers of its own", () => {
+    const src = readFileSync(join(APP, "_components/PendingSubmit.tsx"), "utf8");
+    expect(src).toMatch(/<button type="submit"/);
+    expect(src).not.toMatch(/onSubmit=|onClick=/);
   });
 
   it("those server-action forms really post to a server action (no onClick / onSubmit needed)", () => {
-    for (const f of SERVER_ACTION_FORMS) {
+    for (const f of [...SERVER_ACTION_FORMS, ...PENDING_FORMS]) {
       const src = readFileSync(join(APP, f), "utf8");
       expect(src, f).toMatch(/<form[^>]*\baction=\{/);
       expect(src, f).not.toMatch(/onSubmit=|<button[^>]*onClick=/);

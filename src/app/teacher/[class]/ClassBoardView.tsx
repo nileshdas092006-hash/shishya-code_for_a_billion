@@ -1,15 +1,12 @@
 import Link from "next/link";
-import { createRng } from "@/core/rng";
-import { getSkillEntry } from "@/core/skills";
-import { toMistake } from "@/core/minedMistake";
 import { skillKey, t } from "@/i18n";
 import { getServices } from "@/server/instance";
 import { COOLDOWN_CHOICES } from "@/server/services";
 import type { ClassRow } from "@/server/store";
 import { closeProofs, giveNewCodes, markReadySeenAction, openProofs, recordConsentAction, setCooldownAction, unlockSkillForClass } from "../../actions";
 import { MinedDecision } from "./MinedDecision";
+import { boardExample, minedExample, MistakeExampleLines } from "./MistakeExample";
 import { PatternGrid, SlipList } from "./PatternGrid";
-import { Equation } from "../../_components/Equation";
 import { StudentCodeSheet } from "../CreateClassForm";
 import { PrintButton } from "../PrintButton";
 import { stateWord } from "../../_lib/state-words";
@@ -17,7 +14,6 @@ import { stateWord } from "../../_lib/state-words";
 // The teacher's class board itself (the page checks the PIN first). Also shown, unchanged, as stop 5 of the Judge
 // Tour for the tour's made-up class. Shows student CODES only, never names.
 
-const EXAMPLE_SEED = 20261018;
 /** The Progress columns, in the order a child goes through them. */
 const STATES = ["LOCKED", "OPEN", "KEY1", "NOT_YET", "MASTERED"] as const;
 
@@ -52,7 +48,7 @@ export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Que
 
       {!cls.consentRecordedAt && <ConsentForm classCode={cls.code} showCheck={query.consent === "check"} />}
 
-      <ProofWindow classCode={cls.code} proof={proofWindow} />
+      <ProofWindow classCode={cls.code} proof={proofWindow} tour={tour} />
       {!tour && <Cooldown classCode={cls.code} cooldown={proofCooldown} />}
 
       <section className="flex flex-col gap-3 no-print" aria-labelledby="stuck">
@@ -303,15 +299,18 @@ function Cooldown({ classCode, cooldown }: { classCode: string; cooldown: Board[
 
 type Board = Awaited<ReturnType<Awaited<ReturnType<typeof getServices>>["getClassBoard"]>>;
 
-/** Open or close the proof window (classes made before windows existed show a note instead). */
-function ProofWindow({ classCode, proof }: { classCode: string; proof: Board["proofWindow"] }) {
+/**
+ * Open or close the proof window. A class with no window shows a note instead: a tour class (no window on purpose)
+ * says what a real class does; a real class made before windows existed says why it has none.
+ */
+export function ProofWindow({ classCode, proof, tour }: { classCode: string; proof: Board["proofWindow"]; tour: boolean }) {
   return (
     <section className="card flex flex-col gap-3 no-print" aria-labelledby="proofs">
       <h2 id="proofs" className="text-2xl font-bold">
         {t("board.proofs.title")}
       </h2>
       {!proof.required ? (
-        <p>{t("board.proofs.always")}</p>
+        <p>{t(tour ? "board.proofs.tour" : "board.proofs.always")}</p>
       ) : (
         <>
           <p className={`text-xl font-semibold ${proof.minutesLeft > 0 ? "text-green-800" : ""}`}>
@@ -345,37 +344,14 @@ type Draft = Awaited<ReturnType<Awaited<ReturnType<typeof getServices>>["listPen
  * (each logged wrong answer it explains) and the 4 code checks.
  */
 function MinedDraft({ draft, agentHref }: { draft: Draft; agentHref: string }) {
-  const entry = getSkillEntry(draft.skillId);
   const spec = draft.spec;
-  let example: { text: string }[] | null = null;
-  let wrongLine = 0;
-  try {
-    if (entry && spec) {
-      const out = toMistake(spec, entry.spec).apply(entry.spec.generate(createRng(EXAMPLE_SEED)));
-      example = out.trace;
-      wrongLine = out.firstWrongLine;
-    }
-  } catch {
-    example = null;
-  }
   if (!spec) return <p className="msg-bad">{t("board.mined.unreadable")}</p>;
+  const example = minedExample(draft.skillId, spec);
   return (
     <div className="flex flex-col gap-2">
       <h3 className="text-xl font-bold">{t("board.mined.draft", { label: spec.label })}</h3>
       {draft.report && <p>{t("board.mined.explains", { n: draft.report.reproduced, checked: draft.report.checkedInstances })}</p>}
-      {example && (
-        <ol className="flex flex-col gap-1">
-          {example.map((line, i) => (
-            <li key={i} className={`flex items-baseline gap-3 ${i + 1 === wrongLine ? "text-red-800" : ""}`}>
-              <span className="shrink-0 font-semibold">L{i + 1}</span>
-              <span className="flex-1 min-w-0">
-                <Equation text={line.text} size="sm" />
-                {i + 1 === wrongLine && <span className="block text-base font-bold">← first wrong line</span>}
-              </span>
-            </li>
-          ))}
-        </ol>
-      )}
+      {example && <MistakeExampleLines example={example} />}
       <h4 className="text-lg font-bold">{t("review.evidence.title")}</h4>
       {draft.evidence.length === 0 ? (
         <p className="text-gray-700">{t("review.evidence.none")}</p>
@@ -433,9 +409,7 @@ function MinedDraft({ draft, agentHref }: { draft: Draft; agentHref: string }) {
 type Group = Awaited<ReturnType<Awaited<ReturnType<typeof getServices>>["getStuckBoard"]>>["groups"][number];
 
 function StuckGroup({ group }: { group: Group }) {
-  const entry = getSkillEntry(group.skillId);
-  const mistake = entry?.spec.mistakes.find((m) => m.id === group.mistakeId);
-  const example = entry && mistake ? mistake.apply(entry.spec.generate(createRng(EXAMPLE_SEED))) : null;
+  const example = boardExample(group.skillId, group.mistakeId);
   return (
     <article className="card flex flex-col gap-3">
       <h3 className="text-xl font-bold">
@@ -445,17 +419,7 @@ function StuckGroup({ group }: { group: Group }) {
       {example && (
         <div>
           <p className="font-semibold">Example of this mistake:</p>
-          <ol className="flex flex-col gap-1">
-            {example.trace.map((line, i) => (
-              <li key={i} className={`flex items-baseline gap-3 ${i + 1 === example.firstWrongLine ? "text-red-800" : ""}`}>
-                <span className="shrink-0 font-semibold">L{i + 1}</span>
-                <span className="flex-1 min-w-0">
-                  <Equation text={line.text} size="sm" />
-                  {i + 1 === example.firstWrongLine && <span className="block text-base font-bold">← first wrong line</span>}
-                </span>
-              </li>
-            ))}
-          </ol>
+          <MistakeExampleLines example={example} />
         </div>
       )}
       <ul className="flex flex-col gap-1">

@@ -3,16 +3,18 @@
 import { useActionState } from "react";
 import { t } from "@/i18n";
 import { startJudgeTour } from "../actions";
+import { PendingSubmit } from "../_components/PendingSubmit";
 
-// "Try it as a judge": a plain server-action form, so it works even before the page is ready.
+// "Try it as a judge": a plain server-action form, so it works even before the page is ready. While the server
+// sets up the made-up class (a few seconds), the button says so and is disabled.
 
 export function StartTourForm() {
-  const [state, action, pending] = useActionState(startJudgeTour, {});
+  const [state, action] = useActionState(startJudgeTour, {});
   return (
     <form action={action} className="flex flex-col items-center gap-2 w-full max-w-xl">
-      <button type="submit" className="btn w-full text-xl min-h-16 border-amber-700 bg-amber-100" disabled={pending}>
+      <PendingSubmit className="btn w-full text-xl min-h-16 border-amber-700 bg-amber-100" pendingLabel={t("tour.starting")}>
         {t("home.tour")}
-      </button>
+      </PendingSubmit>
       <p className="text-base text-gray-700">{t("home.tourNote")}</p>
       {state.error && (
         <p role="alert" className="msg-bad">

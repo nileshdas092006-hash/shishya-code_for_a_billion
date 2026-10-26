@@ -20,6 +20,7 @@ import type {
   ClassKind,
   ClassRow,
   DeletedCounts,
+  EventInput,
   ItemFormat,
   ItemKind,
   ItemRow,
@@ -31,6 +32,7 @@ import type {
   RecheckRow,
   Store,
   StudentRow,
+  TeachTraceRow,
   WorksheetRow,
 } from "./store";
 import { TOUR_CLASSMATE_CODE, TOUR_GRADE, TOUR_JUDGE_CODE, TOUR_JUDGE_STATES, TOUR_MAX_PER_HOUR, TOUR_SECTION, TOUR_SKILL, tourPlan } from "./tour";
@@ -1634,9 +1636,10 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
      * start per hour, counted in the database. Expired tours are cleaned up first (at most once an hour).
      */
     async startTour(): Promise<{ ok: true; classId: string; classCode: string; studentId: string } | Fail> {
-      await cleanUpSandboxes();
       const hourAgo = new Date(now().getTime() - 3600_000).toISOString();
-      if ((await store.countEventsSince("tour_started", hourAgo)) >= TOUR_MAX_PER_HOUR) {
+      // side by side: the clean-up only deletes expired sandboxes, so it never changes this hour's count
+      const [, startedThisHour] = await Promise.all([cleanUpSandboxes(), store.countEventsSince("tour_started", hourAgo)]);
+      if (startedThisHour >= TOUR_MAX_PER_HOUR) {
         return fail("Many judges are trying Shishya right now. Please try again in a few minutes.", "busy");
       }
       const plan = tourPlan(registry);
@@ -1745,16 +1748,17 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     },
 
     /**
-     * Stop 3 of the tour, "Skip ahead": finishes the judge's teaching on the tour's skill THROUGH the real teach
-     * code (submitTeachStep), typing the correct line worked out by src/core for each trace still to fix. KEY1 is
-     * then earned only by the normal teach rule in mastery.ts. A new session is started if the last one can no
-     * longer meet the rule. Refused for any child who is not in a tour class.
+     * Stop 3 of the tour, "Skip ahead": finishes the judge's teaching on the tour's skill with the correct line worked
+     * out by src/core for each trace still to fix. Each fix is checked by the same teach check as a child's typed fix
+     * (checkTeachStep) and saved as a real try with its teach_step log line, all in ONE batch; KEY1 is then earned only
+     * by the normal teach rule in mastery.evaluateTeach, which re-checks every saved try. A new session is started if
+     * the last one can no longer meet the rule. Refused for any child who is not in a tour class.
      */
     async tourSkipAhead(studentId: string): Promise<{ ok: true; state: mastery.MasteryState } | Fail> {
       const student = await requireStudent(studentId);
       if ((await requireClass(student.classId)).kind !== "sandbox") return fail("Skip ahead is only for the Judge Tour.", "not_tour");
       const entry = await entryOf(TOUR_SKILL);
-      let state = await mastery.refreshUnlock(store, studentId, entry, now());
+      const state = await mastery.refreshUnlock(store, studentId, entry, now());
       if (state !== "OPEN") return { ok: true, state };
       const { traces, triesMax } = entry.spec.teachRule;
       const accepted = (t: { lineCorrect: boolean; fixAccepted: boolean }) => t.lineCorrect && t.fixAccepted;
@@ -1762,26 +1766,48 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       const teachItems = await store.listItems({ studentId, skillId: TOUR_SKILL, kind: "teach", version: entry.spec.version });
       const lastSession = teachItems.at(-1)?.runId;
       let session = teachItems.filter((i) => lastSession && i.runId === lastSession);
-      let tries: { lineCorrect: boolean; fixAccepted: boolean }[][] = await Promise.all(session.map((i) => store.listTeachTraces(i.id)));
-      const canQualify = session.length === traces && tries.every((t) => t.some(accepted) || t.length < triesMax);
+      let tries = await store.listTeachTracesForItems(session.map((i) => i.id));
+      const canQualify =
+        session.length === traces && session.every((i) => (tries.get(i.id) ?? []).some(accepted) || (tries.get(i.id) ?? []).length < triesMax);
       if (!canQualify) {
         const started = await api.startTeach(studentId, TOUR_SKILL);
         if (!started.ok) return started;
         const byId = new Map((await store.getItems(started.traces.map((t) => t.itemId))).map((i) => [i.id, i]));
         session = started.traces.map((t) => byId.get(t.itemId)!);
-        tries = session.map(() => []);
+        tries = new Map(session.map((i) => [i.id, []]));
       }
-      for (const [i, item] of session.entries()) {
-        if (tries[i].some(accepted)) continue;
+
+      const at = iso();
+      const rows: TeachTraceRow[] = [];
+      const events: EventInput[] = [];
+      for (const item of session) {
+        const done = tries.get(item.id) ?? [];
+        if (done.some(accepted)) continue;
         const instance = instanceFor(entry, item);
         const mistake = entry.spec.mistakes.find((m) => m.id === item.mistakeId);
         if (!mistake) throw new Error(`Unknown mistake on teach item ${item.id}`);
         const line = mistake.apply(instance).firstWrongLine;
         const fix = entry.spec.solve(instance).trace[line - 1].text;
-        const step = await api.submitTeachStep(item.id, line, fix);
-        if (step.ok) state = step.state;
+        const result = checkTeachStep(instance, mistake.id, line, fix, entry.spec.mistakes);
+        const tryNumber = done.length + 1;
+        rows.push({
+          id: randomUUID(),
+          studentId,
+          itemId: item.id,
+          mistakeId: mistake.id,
+          tryNumber,
+          tappedLine: line,
+          typedLine: fix,
+          lineCorrect: result.lineCorrect,
+          fixAccepted: result.fixAccepted,
+          createdAt: at,
+        });
+        const payload = { skillId: item.skillId, itemId: item.id, tryNumber, lineCorrect: result.lineCorrect, fixAccepted: result.fixAccepted };
+        events.push({ studentId, type: "teach_step", payload, at });
       }
-      return { ok: true, state };
+      // false only if a try was saved meanwhile (e.g. a second tap): then nothing of this batch was written
+      if (rows.length) await store.insertTeachTraces(rows, events);
+      return { ok: true, state: await mastery.evaluateTeach(store, studentId, entry, now()) };
     },
 
     /** Stop 3 of the tour: the made-up classmate's finished proof, to show that every child gets different numbers. */

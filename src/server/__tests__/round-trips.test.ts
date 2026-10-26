@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { createServices } from "../services";
 import { openStore } from "../store";
+import { TOUR_SKILL } from "../tour";
 import { answerProof, makeClock, SKILL, teachPerfectly, tempDbUrl } from "./helpers";
 
 // On Turso every query is a network round trip, so a page that runs one query per student per skill gets slow
@@ -14,7 +15,10 @@ const LIMITS = {
   skillMap: 3,
   teacherPin: 2,
   proofFinish: 20,
-  tourStart: 7,
+  tourStart: 5,
+  /** "Skip ahead" when the judge has a teach session (stop 2 starts one), and when a new one must be started. */
+  tourSkip: 12,
+  tourSkipNewSession: 24,
   cleanUp: 4,
   health: 2,
   studentLogin: 2,
@@ -131,6 +135,25 @@ describe("database round trips stay small and do not grow with the class", () =>
     const second = await trips(() => svc.startTour()); // no clean-up within the hour
     expect(second.out.ok).toBe(true);
     expect(second.n).toBeLessThanOrEqual(LIMITS.tourStart - 1);
+  });
+
+  it(`"Skip ahead" in a tour takes at most ${LIMITS.tourSkip} (${LIMITS.tourSkipNewSession} if it starts a new teach session), and KEY1 still comes from the teach rule`, async () => {
+    const { svc, store, trips } = await counted();
+    const tour = await svc.startTour();
+    if (!tour.ok) throw new Error(tour.reason);
+    const fresh = await trips(() => svc.tourSkipAhead(tour.studentId)); // no teach session yet: one is started
+    expect(fresh.out).toEqual({ ok: true, state: "KEY1" });
+    expect(fresh.n).toBeLessThanOrEqual(LIMITS.tourSkipNewSession);
+
+    const other = await svc.startTour();
+    if (!other.ok) throw new Error(other.reason);
+    const session = await svc.startTeach(other.studentId, TOUR_SKILL); // what stop 2 does
+    if (!session.ok) throw new Error(session.reason);
+    const skip = await trips(() => svc.tourSkipAhead(other.studentId));
+    expect(skip.out).toEqual({ ok: true, state: "KEY1" });
+    expect(skip.n).toBeLessThanOrEqual(LIMITS.tourSkip);
+    const evidence = JSON.parse((await store.getMastery(other.studentId, TOUR_SKILL))!.evidenceJson);
+    expect(evidence.key1.sessionId).toBe(session.sessionId);
   });
 
   it(`a student login takes at most ${LIMITS.studentLogin}; the health check at most ${LIMITS.health} (${LIMITS.health + LIMITS.cleanUp} when the hourly clean-up runs)`, async () => {

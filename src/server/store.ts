@@ -963,6 +963,12 @@ export async function openStore(config: StoreConfig | string = {}) {
       const r = await one("SELECT id, classId, code FROM students WHERE classId = ? AND code = ?", classId, code);
       return r && toStudent(r);
     },
+    /** A class's kind and its students' ids in one read (undefined if there is no such class). */
+    async getClassKindAndStudentIds(classId: string): Promise<{ kind: ClassKind; studentIds: string[] } | undefined> {
+      const rows = await all("SELECT c.kind AS kind, s.id AS studentId FROM classes c LEFT JOIN students s ON s.classId = c.id WHERE c.id = ?", classId);
+      if (rows.length === 0) return undefined;
+      return { kind: rows[0].kind as ClassKind, studentIds: rows.map((r) => r.studentId).filter((id): id is string => typeof id === "string") };
+    },
     async listStudents(classId: string): Promise<StudentRow[]> {
       return (await all("SELECT id, classId, code FROM students WHERE classId = ? ORDER BY code", classId)).map(toStudent);
     },
@@ -1133,8 +1139,36 @@ export async function openStore(config: StoreConfig | string = {}) {
         t.lineCorrect ? 1 : 0, t.fixAccepted ? 1 : 0, t.createdAt,
       );
     },
+    /**
+     * Several tries (e.g. the Judge Tour's "Skip ahead" fixing a whole teach session) and their log lines in ONE
+     * round trip, all or nothing. False if a unique rule refused one (that try number was already used).
+     */
+    async insertTeachTraces(traces: TeachTraceRow[], events: EventInput[]): Promise<boolean> {
+      try {
+        await writeBatch([
+          ...traces.map((t) => ({
+            sql: `INSERT INTO teachTraces (id, studentId, itemId, mistakeId, tryNumber, tappedLine, typedLine, lineCorrect, fixAccepted, createdAt)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            args: [t.id, t.studentId, t.itemId, t.mistakeId, t.tryNumber, t.tappedLine, t.typedLine, t.lineCorrect ? 1 : 0, t.fixAccepted ? 1 : 0, t.createdAt] as InValue[],
+          })),
+          ...events.map(eventStatement),
+        ]);
+        return true;
+      } catch (e) {
+        if (isUniqueViolation(e)) return false;
+        throw e;
+      }
+    },
     async listTeachTraces(itemId: string): Promise<TeachTraceRow[]> {
       return (await all("SELECT * FROM teachTraces WHERE itemId = ? ORDER BY tryNumber", itemId)).map(toTrace);
+    },
+    /** The tries of several items in one read, by item id (an item with no tries has an empty list). */
+    async listTeachTracesForItems(itemIds: string[]): Promise<Map<string, TeachTraceRow[]>> {
+      const out = new Map<string, TeachTraceRow[]>(itemIds.map((id) => [id, []]));
+      if (itemIds.length === 0) return out;
+      const rows = (await all(`SELECT * FROM teachTraces WHERE itemId IN (${marks(itemIds.length)}) ORDER BY itemId, tryNumber`, ...itemIds)).map(toTrace);
+      for (const r of rows) out.get(r.itemId)?.push(r);
+      return out;
     },
 
     // ----- proof runs -----

@@ -1,7 +1,7 @@
 import { parseAnswerFor, sameAnswer } from "../core/answer";
 import { checkTeachStep } from "../core/teach";
 import { defaultRegistry, getEntry, instanceFor, type Registry, type SkillEntry } from "./skills";
-import type { AttemptRow, EventInput, ItemRow, MasteryRow, MasteryState, ProofRunRow, RecheckRow, Store } from "./store";
+import type { AttemptRow, EventInput, ItemRow, MasteryRow, MasteryState, ProofRunRow, RecheckRow, Store, TeachTraceRow } from "./store";
 
 // The mastery engine: the ONLY code allowed to write the mastery table (a test enforces this).
 //
@@ -136,8 +136,8 @@ export async function teacherUnlock(store: Store, studentId: string, entry: Skil
 
 const paramsMatch = (entry: SkillEntry, item: ItemRow) => JSON.stringify(instanceFor(entry, item).params) === item.paramsJson;
 
-/** The accepted try ids of a teach session if it meets the teach rule, else null. */
-async function qualifyingTraceIds(store: Store, entry: SkillEntry, items: ItemRow[]): Promise<string[] | null> {
+/** The accepted try ids of a teach session if it meets the teach rule, else null. `triesByItem`: the tries of each item. */
+function qualifyingTraceIds(entry: SkillEntry, items: ItemRow[], triesByItem: Map<string, TeachTraceRow[]>): string[] | null {
   const { traces, distinctMistakesMin, triesMax } = entry.spec.teachRule;
   if (items.length !== traces) return null;
   const known = new Set(entry.spec.mistakes.map((m) => m.id));
@@ -148,7 +148,7 @@ async function qualifyingTraceIds(store: Store, entry: SkillEntry, items: ItemRo
   for (const item of items) {
     if (!paramsMatch(entry, item)) return null;
     const instance = instanceFor(entry, item);
-    const tries = (await store.listTeachTraces(item.id)).slice(0, triesMax);
+    const tries = (triesByItem.get(item.id) ?? []).slice(0, triesMax);
     const fixed = tries.find((t) => {
       if (t.mistakeId !== item.mistakeId) return false;
       const check = checkTeachStep(instance, item.mistakeId!, t.tappedLine, t.typedLine, entry.spec.mistakes);
@@ -168,9 +168,10 @@ export async function evaluateTeach(store: Store, studentId: string, entry: Skil
   const items = await store.listItems({ studentId, skillId: entry.spec.id, kind: "teach", version: entry.spec.version });
   const sessions = new Map<string, ItemRow[]>();
   for (const item of items) if (item.runId) sessions.set(item.runId, [...(sessions.get(item.runId) ?? []), item]);
+  const triesByItem = await store.listTeachTracesForItems([...sessions.values()].flat().map((i) => i.id)); // one read, every session
 
   for (const [sessionId, sessionItems] of sessions) {
-    const traceIds = await qualifyingTraceIds(store, entry, sessionItems);
+    const traceIds = qualifyingTraceIds(entry, sessionItems, triesByItem);
     if (!traceIds) continue;
     const evidence: Evidence = {
       ...evidenceOf(current),
@@ -268,9 +269,9 @@ export async function seedSandboxMastery(
   now: Date,
   registry: Registry = defaultRegistry,
 ): Promise<number> {
-  const [cls, students] = await Promise.all([store.getClass(classId), store.listStudents(classId)]);
+  const cls = await store.getClassKindAndStudentIds(classId);
   if (!cls || cls.kind !== "sandbox") throw new Error("Mastery can be seeded only in a sandbox (Judge Tour) class");
-  const inClass = new Set(students.map((s) => s.id));
+  const inClass = new Set(cls.studentIds);
   const outsider = seeds.find((s) => !inClass.has(s.studentId));
   if (outsider) throw new Error(`Student ${outsider.studentId} is not in this sandbox class`);
   const at = now.toISOString();
