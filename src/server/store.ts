@@ -19,10 +19,13 @@ export type ItemKind = "practice" | "teach" | "proof";
 export type ItemFormat = "solve" | "apply";
 /**
  * Where an answer came from: typed in the app, typed in by the teacher from a paper worksheet (P1a), or a question
- * of a 7-day re-check (P1b: kind 'proof', single-use, runId is the re-check's id).
+ * of a 7-day re-check (P1b: kind 'proof', single-use, runId is the re-check's id), or a question of a Shishya
+ * Challenge check (F11: 'pre', 'post' or 'delayed'; kind 'proof', single-use, runId is the check's id).
  */
-export type ItemSource = "app" | "paper" | "recheck";
-const ITEM_SOURCES: readonly string[] = ["app", "paper", "recheck"];
+export type ItemSource = "app" | "paper" | "recheck" | CheckPhase;
+const ITEM_SOURCES: readonly string[] = ["app", "paper", "recheck", "pre", "post", "delayed"];
+/** A Shishya Challenge check: before the practise, after it, or 3 to 21 days later. */
+export type CheckPhase = "pre" | "post" | "delayed";
 /** real: a school class. test: our own test classes (all 8Q-…). sandbox: a Judge Tour class, deleted when it expires. */
 export type ClassKind = "real" | "test" | "sandbox";
 /** classroom: a teacher hands out codes in class. challenge: students join alone through one public link (F11). */
@@ -77,6 +80,8 @@ export type DeletedCounts = {
   worksheets: number;
   rechecks: number;
   readyChecks: number;
+  checks: number;
+  feedback: number;
 };
 export type StudentRow = { id: string; classId: string; code: string };
 /** What a challenge student said and was given at join (all null for a classroom student). */
@@ -167,6 +172,29 @@ export type ReadyCheckRow = {
   correct: number | null;
   /** When the teacher marked "seen" on the board (null: not yet). */
   seenAt: string | null;
+};
+/** One Shishya Challenge check of a student (F11). score: right answers, worked out again from the seeds. */
+export type CheckRow = {
+  id: string;
+  studentId: string;
+  classId: string;
+  phase: CheckPhase;
+  itemIds: string[];
+  startedAt: string;
+  finishedAt: string | null;
+  score: number | null;
+};
+/** A challenge student's feedback (F11). approved: null not decided yet, true on the impact page, false hidden. */
+export type FeedbackRow = {
+  id: string;
+  studentId: string;
+  classId: string;
+  useful: number;
+  teachHelped: number | null;
+  comment: string | null;
+  quoteOk: boolean;
+  approved: boolean | null;
+  createdAt: string;
 };
 export type MasteryRow = {
   studentId: string;
@@ -419,6 +447,32 @@ CREATE TABLE IF NOT EXISTS readyChecks (
   correct INTEGER,
   seenAt TEXT
 );
+-- Shishya Challenge checks (F11): each student takes each phase at most once. Never part of mastery or proofs.
+CREATE TABLE IF NOT EXISTS checks (
+  id TEXT PRIMARY KEY,
+  studentId TEXT NOT NULL REFERENCES students(id),
+  classId TEXT NOT NULL REFERENCES classes(id),
+  phase TEXT NOT NULL CHECK (phase IN ('pre', 'post', 'delayed')),
+  itemIds TEXT NOT NULL,
+  startedAt TEXT NOT NULL,
+  finishedAt TEXT,
+  score INTEGER,
+  UNIQUE (studentId, phase)
+);
+CREATE INDEX IF NOT EXISTS checks_class ON checks (classId);
+-- Shishya Challenge feedback (F11), once per student. approved: NULL not decided, 1 shown on /impact, 0 hidden.
+CREATE TABLE IF NOT EXISTS feedback (
+  id TEXT PRIMARY KEY,
+  studentId TEXT NOT NULL UNIQUE REFERENCES students(id),
+  classId TEXT NOT NULL REFERENCES classes(id),
+  useful INTEGER NOT NULL CHECK (useful BETWEEN 1 AND 5),
+  teachHelped INTEGER CHECK (teachHelped BETWEEN 1 AND 5),
+  comment TEXT,
+  quoteOk INTEGER NOT NULL DEFAULT 0 CHECK (quoteOk IN (0, 1)),
+  approved INTEGER CHECK (approved IN (0, 1)),
+  createdAt TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS feedback_class ON feedback (classId);
 `;
 
 type Row = Record<string, unknown>;
@@ -490,6 +544,27 @@ const toRecheck = (r: Row): RecheckRow => ({
   passed: r.passed === null || r.passed === undefined ? null : bool(r.passed),
   startedAt: r.startedAt as string,
   finishedAt: (r.finishedAt as string | null) ?? null,
+});
+const toCheck = (r: Row): CheckRow => ({
+  id: r.id as string,
+  studentId: r.studentId as string,
+  classId: r.classId as string,
+  phase: r.phase as CheckPhase,
+  itemIds: JSON.parse(r.itemIds as string),
+  startedAt: r.startedAt as string,
+  finishedAt: (r.finishedAt as string | null) ?? null,
+  score: r.score === null || r.score === undefined ? null : Number(r.score),
+});
+const toFeedback = (r: Row): FeedbackRow => ({
+  id: r.id as string,
+  studentId: r.studentId as string,
+  classId: r.classId as string,
+  useful: Number(r.useful),
+  teachHelped: r.teachHelped === null || r.teachHelped === undefined ? null : Number(r.teachHelped),
+  comment: (r.comment as string | null) ?? null,
+  quoteOk: bool(r.quoteOk),
+  approved: r.approved === null || r.approved === undefined ? null : bool(r.approved),
+  createdAt: r.createdAt as string,
 });
 const toWorksheet = (r: Row): WorksheetRow => ({
   id: r.id as string,
@@ -796,7 +871,9 @@ export async function openStore(config: StoreConfig | string = {}) {
          (SELECT COUNT(*) FROM events WHERE studentId IN ${ofClass} OR json_extract(payloadJson, '$.classId') = c.id) AS events,
          (SELECT COUNT(*) FROM worksheets WHERE classId = c.id) AS worksheets,
          (SELECT COUNT(*) FROM rechecks WHERE studentId IN ${ofClass}) AS rechecks,
-         (SELECT COUNT(*) FROM readyChecks WHERE studentId IN ${ofClass}) AS readyChecks
+         (SELECT COUNT(*) FROM readyChecks WHERE studentId IN ${ofClass}) AS readyChecks,
+         (SELECT COUNT(*) FROM checks WHERE studentId IN ${ofClass} OR classId = c.id) AS checks,
+         (SELECT COUNT(*) FROM feedback WHERE studentId IN ${ofClass} OR classId = c.id) AS feedback
        FROM classes c WHERE ${where}`,
       ...args,
     );
@@ -816,8 +893,14 @@ export async function openStore(config: StoreConfig | string = {}) {
         worksheets: Number(r.worksheets),
         rechecks: Number(r.rechecks),
         readyChecks: Number(r.readyChecks),
+        checks: Number(r.checks),
+        feedback: Number(r.feedback),
       }),
     );
+    const delOfClass = (table: string) => ({
+      sql: `DELETE FROM ${table} WHERE studentId IN ${ofIds} OR classId IN (${marks(ids.length)})`,
+      args: [...ids, ...ids] as InValue[],
+    });
     await writeBatch([
       del("teachTraces"),
       del("attempts"),
@@ -825,6 +908,8 @@ export async function openStore(config: StoreConfig | string = {}) {
       del("proofRuns"),
       del("rechecks"),
       del("readyChecks"),
+      delOfClass("checks"),
+      delOfClass("feedback"),
       del("mastery"),
       {
         sql: `DELETE FROM events WHERE studentId IN ${ofIds} OR json_extract(payloadJson, '$.classId') IN (${marks(ids.length)})`,
@@ -1358,6 +1443,71 @@ export async function openStore(config: StoreConfig | string = {}) {
            AND studentId = (SELECT id FROM students WHERE classId = ? AND code = ?)`,
         at, classId, studentCode,
       );
+    },
+
+    // ----- Shishya Challenge checks and feedback (F11; never part of mastery or proofs) -----
+    /** False if this student already has a check of this phase (each is taken once). */
+    insertCheck(c: Omit<CheckRow, "finishedAt" | "score">): Promise<boolean> {
+      return tryInsert(
+        "INSERT INTO checks (id, studentId, classId, phase, itemIds, startedAt) VALUES (?, ?, ?, ?, ?, ?)",
+        c.id, c.studentId, c.classId, c.phase, JSON.stringify(c.itemIds), c.startedAt,
+      );
+    },
+    async setCheckItems(id: string, itemIds: string[]) {
+      await write("UPDATE checks SET itemIds = ? WHERE id = ? AND finishedAt IS NULL", JSON.stringify(itemIds), id);
+    },
+    async getCheck(id: string): Promise<CheckRow | undefined> {
+      const r = await one("SELECT * FROM checks WHERE id = ?", id);
+      return r && toCheck(r);
+    },
+    /** A student's checks (at most one per phase), in one read. */
+    async listStudentChecks(studentId: string): Promise<CheckRow[]> {
+      return (await all("SELECT * FROM checks WHERE studentId = ? ORDER BY startedAt, rowid", studentId)).map(toCheck);
+    },
+    /** False if it was already finished. */
+    finishCheck(id: string, score: number, at: string): Promise<boolean> {
+      return changed("UPDATE checks SET score = ?, finishedAt = ? WHERE id = ? AND finishedAt IS NULL", score, at, id);
+    },
+    /**
+     * How many practice answers a student typed in the app on a skill after the last answer of a check, by the order
+     * they were saved (so it never depends on the clock).
+     */
+    async countPracticeAnswersAfterCheck(studentId: string, skillId: string, checkId: string): Promise<number> {
+      const r = await one(
+        `SELECT COUNT(*) AS n FROM attempts a JOIN items i ON i.id = a.itemId
+         WHERE a.studentId = ? AND i.skillId = ? AND i.kind = 'practice' AND i.source = 'app'
+           AND a.rowid > (SELECT COALESCE(MAX(x.rowid), 0) FROM attempts x JOIN items y ON y.id = x.itemId WHERE y.runId = ?)`,
+        studentId, skillId, checkId,
+      );
+      return Number(r?.n ?? 0);
+    },
+    /** The teach items a student was given on a skill after a check's questions, in the order they were saved. */
+    async listTeachItemsAfterCheck(studentId: string, skillId: string, checkId: string): Promise<ItemRow[]> {
+      return (
+        await all(
+          `SELECT * FROM items WHERE studentId = ? AND skillId = ? AND kind = 'teach'
+             AND rowid > (SELECT COALESCE(MAX(rowid), 0) FROM items WHERE runId = ?) ORDER BY rowid`,
+          studentId, skillId, checkId,
+        )
+      ).map(toItem);
+    },
+    /** Every question (skill and numbers) a student has been given on these skills, in one read. */
+    async listStudentQuestions(studentId: string, skillIds: string[]): Promise<{ skillId: string; paramsJson: string }[]> {
+      if (skillIds.length === 0) return [];
+      return (
+        await all(`SELECT DISTINCT skillId, paramsJson FROM items WHERE studentId = ? AND skillId IN (${marks(skillIds.length)})`, studentId, ...skillIds)
+      ).map((r) => ({ skillId: r.skillId as string, paramsJson: r.paramsJson as string }));
+    },
+    /** False if this student has already given feedback (once only). */
+    insertFeedback(f: FeedbackRow): Promise<boolean> {
+      return tryInsert(
+        "INSERT INTO feedback (id, studentId, classId, useful, teachHelped, comment, quoteOk, approved, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        f.id, f.studentId, f.classId, f.useful, f.teachHelped, f.comment, f.quoteOk ? 1 : 0, f.approved === null ? null : f.approved ? 1 : 0, f.createdAt,
+      );
+    },
+    async getStudentFeedback(studentId: string): Promise<FeedbackRow | undefined> {
+      const r = await one("SELECT * FROM feedback WHERE studentId = ?", studentId);
+      return r && toFeedback(r);
     },
 
     // ----- mastery (ONLY src/server/mastery.ts may call writeMastery) -----

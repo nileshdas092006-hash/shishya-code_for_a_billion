@@ -165,7 +165,7 @@ describe("deleting a class", () => {
     const logged = (await store.listEvents()).filter((e) => e.type === "class_deleted");
     expect(logged).toHaveLength(1);
     expect(Object.keys(JSON.parse(logged[0].payloadJson)).sort()).toEqual(
-      ["attempts", "events", "items", "kind", "mastery", "proofRuns", "students", "teachTraces", "worksheets", "rechecks", "readyChecks"].sort(),
+      ["attempts", "events", "items", "kind", "mastery", "proofRuns", "students", "teachTraces", "worksheets", "rechecks", "readyChecks", "checks", "feedback"].sort(),
     );
     expect(await svc.deleteClass(gone.room.classId, gone.room.classCode)).toMatchObject({ ok: false, code: "none" });
   });

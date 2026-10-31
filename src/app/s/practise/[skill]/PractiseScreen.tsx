@@ -16,7 +16,14 @@ const HINT_LEVELS = 4;
 
 type Feedback = { kind: "good" | "bad" | "note"; text: string; detail?: string; receipt?: AnswerReceipt | null } | null;
 
-export function PractiseScreen({ skillId, answerKind }: { skillId: string; answerKind: "number" | "expression" }) {
+/**
+ * Inside the Shishya Challenge (F11): the same screen, with hints and receipts, but it counts down a set (left: how
+ * many answers are still to give), says so when an answer is given, and after the last one "Next" leaves the
+ * screen. It never offers teaching (group A practises only).
+ */
+type InChallenge = { left: number; onAnswered: () => void; onDone: () => void };
+
+export function PractiseScreen({ skillId, answerKind, challenge }: { skillId: string; answerKind: "number" | "expression"; challenge?: InChallenge }) {
   const [item, setItem] = useState<{ itemId: string; text: string } | null>(null);
   const [answer, setAnswer] = useState("");
   const answerBox = useRef<HTMLInputElement>(null);
@@ -54,6 +61,7 @@ export function PractiseScreen({ skillId, answerKind }: { skillId: string; answe
         return;
       }
       setAnswered(true);
+      challenge?.onAnswered();
       if (r.correct) {
         setStreak((s) => s + 1);
         setFeedback({ kind: "good", text: t("practise.correct"), receipt: r.receipt });
@@ -132,11 +140,16 @@ export function PractiseScreen({ skillId, answerKind }: { skillId: string; answe
       )}
       {feedback?.receipt && <Receipt receipt={feedback.receipt} />}
 
-      {answered && (
-        <ReadyButton type="button" className="btn btn-primary text-xl self-start" onClick={loadNext} disabled={pending}>
-          {t("practise.next")}
-        </ReadyButton>
-      )}
+      {answered &&
+        (challenge && challenge.left <= 0 ? (
+          <ReadyButton type="button" className="btn btn-primary text-xl self-start" onClick={challenge.onDone} disabled={pending}>
+            {t("challenge.practise.finish")}
+          </ReadyButton>
+        ) : (
+          <ReadyButton type="button" className="btn btn-primary text-xl self-start" onClick={loadNext} disabled={pending}>
+            {t("practise.next")}
+          </ReadyButton>
+        ))}
 
       <section aria-label={t("practise.hint")} className="flex flex-col gap-3">
         {Array.from({ length: hints }, (_, i) => (
@@ -154,8 +167,8 @@ export function PractiseScreen({ skillId, answerKind }: { skillId: string; answe
         )}
       </section>
 
-      <p className="text-lg">{t("practise.streak", { n: streak })}</p>
-      {streak >= STREAK_FOR_TEACH && (
+      {!challenge && <p className="text-lg">{t("practise.streak", { n: streak })}</p>}
+      {!challenge && streak >= STREAK_FOR_TEACH && (
         <div className="msg-good flex flex-wrap items-center gap-4 text-xl">
           <span>{t("practise.offerTeach")}</span>
           <Link href={`/s/teach/${encodeURIComponent(skillId)}`} className="btn btn-primary">

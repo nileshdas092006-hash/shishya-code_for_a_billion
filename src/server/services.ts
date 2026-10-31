@@ -7,6 +7,16 @@ import { childMessage } from "../core/childMessages";
 import { READY_CHECK_PLAN, readyCheckPassed, readyCheckSeeds, readyQuestion, READY_CHECK_ID, READY_CHECK_VERSION } from "../core/readyCheck";
 import { explainedErrors, validateMinedMistake, validationChecks, type ChildLabelSource, type MinedMistakeSpec, type ReportNumbers } from "../core/minedMistake";
 import { answerReceipt, type AnswerReceipt } from "../core/receipt";
+import { CHECK_PLANS, checkKey, checkQuestion, nextCheckSeed, scoreCheck } from "../core/challengeCheck";
+import {
+  commentProblem,
+  DELAYED_FROM_DAYS,
+  DELAYED_UNTIL_DAYS,
+  PRACTISE_SKILL,
+  PRACTISE_TARGET,
+  SKIP_AFTER_MINUTES,
+  TEACHES,
+} from "./challenge";
 import { checkTeachStep, type TeachResult } from "../core/teach";
 import { applies, type Instance, type StepType } from "../core/types";
 import { agentRunView, RECORDED_MINER_RUN } from "./agent-runs";
@@ -17,9 +27,12 @@ import { logServerError } from "./setup";
 import { defaultRegistry, getEntry, instanceFor, type Registry, type SkillEntry } from "./skills";
 import type {
   AttemptRow,
+  CheckPhase,
+  CheckRow,
   ClassKind,
   ClassRow,
   DeletedCounts,
+  FeedbackRow,
   EventInput,
   ItemFormat,
   ItemKind,
@@ -32,6 +45,7 @@ import type {
   RecheckRow,
   Store,
   StudentRow,
+  StudyArm,
   TeachTraceRow,
   WorksheetRow,
 } from "./store";
@@ -500,6 +514,72 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       items: run.itemIds.map((id) => {
         const item = items.get(id)!;
         return { itemId: id, text: instanceFor(entry, item).text, answered: item.answeredAt !== null };
+      }),
+    };
+  }
+
+  // ----- the Shishya Challenge (F11) -----
+
+  /** A challenge student with their class, or null (no such student, or a classroom student). */
+  async function challengeStudent(studentId: string) {
+    const student = await store.getChallengeStudent(studentId);
+    const cls = student && (await store.getClass(student.classId));
+    if (!student || !cls || cls.mode !== "challenge" || !student.studyArm) return null;
+    return { student, cls, arm: student.studyArm };
+  }
+  const notChallenge = () => fail("This is only for the Shishya Challenge.", "none");
+
+  /**
+   * The practise step (after the before check's last answer): the practice answers on "x on both sides", and for
+   * group B also its latest teach session (done when every trace is fixed or out of tries). ready: the set is done,
+   * or SKIP_AFTER_MINUTES have passed since the before check ended. The teach rule itself is never looked at here:
+   * KEY1 is mastery.ts's alone.
+   */
+  async function practiseStatus(studentId: string, arm: StudyArm, pre: CheckRow) {
+    const entry = getEntry(registry, PRACTISE_SKILL);
+    const [done, teachItems] = await Promise.all([
+      store.countPracticeAnswersAfterCheck(studentId, PRACTISE_SKILL, pre.id),
+      TEACHES[arm] ? store.listTeachItemsAfterCheck(studentId, PRACTISE_SKILL, pre.id) : Promise.resolve([]),
+    ]);
+    const latest = teachItems.at(-1)?.runId ?? null;
+    const session = teachItems.filter((i) => latest !== null && i.runId === latest);
+    let teachDone = false;
+    if (session.length > 0) {
+      const tries = await store.listTeachTracesForItems(session.map((i) => i.id));
+      const { traces, triesMax } = entry.spec.teachRule;
+      teachDone =
+        session.length === traces &&
+        session.every((i) => {
+          const mine = tries.get(i.id) ?? [];
+          return mine.some((t) => t.lineCorrect && t.fixAccepted) || mine.length >= triesMax;
+        });
+    }
+    const target = PRACTISE_TARGET[arm];
+    const setDone = done >= target && (!TEACHES[arm] || teachDone);
+    const skipAt = Date.parse(pre.finishedAt!) + SKIP_AFTER_MINUTES * 60_000;
+    const skipInSeconds = Math.max(0, Math.ceil((skipAt - now().getTime()) / 1000));
+    return { target, done, teachStarted: session.length > 0, teachDone, ready: setDone || skipInSeconds === 0, skipInSeconds };
+  }
+
+  /** The later check's window: from DELAYED_FROM_DAYS to DELAYED_UNTIL_DAYS after the after check. */
+  function delayedWindow(post: CheckRow, delayed: CheckRow | undefined) {
+    const from = Date.parse(post.finishedAt!) + DELAYED_FROM_DAYS * 86_400_000;
+    const until = Date.parse(post.finishedAt!) + DELAYED_UNTIL_DAYS * 86_400_000;
+    const t = now().getTime();
+    const state = delayed?.finishedAt ? "done" : delayed ? "running" : t < from ? "later" : t <= until ? "due" : "missed";
+    return { state: state as "later" | "due" | "running" | "done" | "missed", opensAt: new Date(from).toISOString(), closesAt: new Date(until).toISOString() };
+  }
+
+  /** A running check as the student sees it: the questions only (no hints), and whether each is answered. */
+  async function checkView(check: CheckRow) {
+    const items = new Map((await store.getItems(check.itemIds)).map((i) => [i.id, i]));
+    return {
+      ok: true as const,
+      checkId: check.id,
+      phase: check.phase,
+      items: check.itemIds.map((id) => {
+        const item = items.get(id)!;
+        return { itemId: id, skillId: item.skillId, text: instanceFor(getEntry(registry, item.skillId), item).text, answered: item.answeredAt !== null };
       }),
     };
   }
@@ -1077,6 +1157,219 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         return full ? fail("This challenge is full.", "full") : fail("Too many people are joining right now. Try again in a few minutes.", "busy");
       }
       return { ok: true, studentId: out.id, code: out.code, classCode: cls.code };
+    },
+
+    /**
+     * Where a challenge student is: welcome (not started) → pre (the before check) → practise → post (the after
+     * check) → feedback → done, with the later check (delayed) 3 to 21 days after the after check. teach: whether
+     * the practise step includes teaching the Shishya (group B); the group's letter is never given out.
+     */
+    async challengeOverview(studentId: string) {
+      const me = await challengeStudent(studentId);
+      if (!me) return notChallenge();
+      const [checks, feedback] = await Promise.all([store.listStudentChecks(studentId), store.getStudentFeedback(studentId)]);
+      const of = (phase: CheckPhase) => checks.find((c) => c.phase === phase);
+      const [pre, post, delayed] = [of("pre"), of("post"), of("delayed")];
+      const running = checks.find((c) => !c.finishedAt);
+      const step: "welcome" | "pre" | "practise" | "post" | "feedback" | "done" | "delayed" = !pre
+        ? "welcome"
+        : !pre.finishedAt
+          ? "pre"
+          : !post
+            ? "practise"
+            : !post.finishedAt
+              ? "post"
+              : !feedback
+                ? "feedback"
+                : delayed && !delayed.finishedAt
+                  ? "delayed"
+                  : "done";
+      const showCheck = running && (step === "pre" || step === "post" || step === "delayed");
+      return {
+        ok: true as const,
+        step,
+        code: me.student.code,
+        classCode: me.cls.code,
+        title: me.cls.title ?? "",
+        teach: TEACHES[me.arm],
+        practise: step === "practise" ? await practiseStatus(studentId, me.arm, pre!) : null,
+        check: showCheck ? await checkView(running) : null,
+        scores: {
+          pre: pre?.score ?? null,
+          post: post?.score ?? null,
+          delayed: delayed?.score ?? null,
+          total: CHECK_PLANS.pre.length,
+          delayedTotal: CHECK_PLANS.delayed.length,
+        },
+        feedbackGiven: Boolean(feedback),
+        delayed: post?.finishedAt ? delayedWindow(post, delayed) : null,
+      };
+    },
+
+    /**
+     * Starts the before, after or later check (or gives back the one that is running). Its questions are single-use
+     * (kind 'proof', like proof questions: never given to anyone again), made from seeds by src/core, and never one
+     * this student has already seen (so the after check never repeats the before check's numbers). The after check
+     * needs the practise step to be done (or 12 minutes in it); the later check is offered 3 to 21 days after the
+     * after check. Each is taken once. Never touches mastery and is never a proof run.
+     */
+    async startChallengeCheck(studentId: string, phase: CheckPhase) {
+      const me = await challengeStudent(studentId);
+      if (!me) return notChallenge();
+      if (!["pre", "post", "delayed"].includes(phase)) return fail("Unknown check.", "bad_request");
+      try {
+        return await store.transaction(async () => {
+          const checks = await store.listStudentChecks(studentId);
+          const of = (p: CheckPhase) => checks.find((c) => c.phase === p);
+          const mine = of(phase);
+          if (mine?.finishedAt) return fail("This check is already done.", "finished");
+          if (mine) return checkView(mine);
+          if (phase === "post") {
+            const pre = of("pre");
+            if (!pre?.finishedAt || !(await practiseStatus(studentId, me.arm, pre)).ready) return fail("Finish the practise step first.", "not_ready");
+          }
+          if (phase === "delayed") {
+            const post = of("post");
+            if (!post?.finishedAt) return fail("Finish the after check first.", "not_ready");
+            if (delayedWindow(post, undefined).state !== "due") return fail("The later check is not open now.", "not_due");
+          }
+          const checkId = randomUUID();
+          if (!(await store.insertCheck({ id: checkId, studentId, classId: me.cls.id, phase, itemIds: [], startedAt: iso() }))) {
+            return fail("This check is already running.", "running");
+          }
+          const plan = CHECK_PLANS[phase];
+          const seen = new Set((await store.listStudentQuestions(studentId, [...new Set(plan)])).map((q) => `${q.skillId}|${q.paramsJson}`));
+          const rng = createRng(newSeed());
+          const itemIds: string[] = [];
+          for (const skillId of plan) {
+            const entry = getEntry(registry, skillId);
+            let saved: string | null = null;
+            for (let tries = 0; tries < FRESH_TRIES && !saved; tries++) {
+              const seed = nextCheckSeed(rng, skillId, seen);
+              const instance = checkQuestion(skillId, seed);
+              seen.add(checkKey(skillId, instance.params));
+              const item: Omit<ItemRow, "answeredAt"> = {
+                id: randomUUID(),
+                studentId,
+                skillId,
+                version: entry.spec.version,
+                seed,
+                kind: "proof",
+                format: "solve",
+                runId: checkId,
+                mistakeId: null,
+                paramsJson: JSON.stringify(instance.params),
+                answer: answerText(instance.answer),
+                servedAt: iso(),
+                source: phase,
+              };
+              if (await store.insertItem(item)) saved = item.id; // false: someone already had this seed (single-use)
+            }
+            if (!saved) throw new NoFreshQuestion();
+            itemIds.push(saved);
+          }
+          await store.setCheckItems(checkId, itemIds);
+          await log(studentId, "check_started", { classId: me.cls.id, phase, checkId });
+          return checkView((await store.getCheck(checkId))!);
+        });
+      } catch (e) {
+        if (e instanceof NoFreshQuestion) return fail("Could not find fresh questions. Try again.", "no_fresh");
+        throw e;
+      }
+    },
+
+    /**
+     * One answer of a check: saved, with no verdict, hint or receipt until the check is finished. The answer that
+     * finishes it returns the score (worked out again from the seeds by src/core), and a receipt per question; the
+     * after check also returns the before check's score. Wrong answers are diagnosed like any answer (and an
+     * unexplained one from a real class goes to the mistake finder).
+     */
+    async submitChallengeCheckAnswer(
+      itemId: string,
+      typedText: string,
+    ): Promise<
+      | { ok: true; finished: false }
+      | { ok: true; finished: true; phase: CheckPhase; score: number; total: number; before: number | null; receipts: ProofReceipt[] }
+      | Fail
+    > {
+      const item = await store.getItem(itemId);
+      if (!item || item.kind !== "proof" || !["pre", "post", "delayed"].includes(item.source ?? "") || !item.runId) {
+        throw new Error(`Unknown check item: ${itemId}`);
+      }
+      const entry = await entryOf(item.skillId);
+      const typed = parseAnswerFor(entry.spec.answerKind, typedText);
+      if (!typed.ok) return fail(typed.error, "bad_answer", { errorKey: typed.errorKey });
+      return store.transaction(async () => {
+        const check = await store.getCheck(item.runId!);
+        if (!check || check.finishedAt) return fail("This check is already done.", "finished");
+        if (check.studentId !== item.studentId) throw new Error(`Check item ${itemId} is not in its student's check`);
+        if (!(await store.markItemAnswered(item.id, iso()))) return fail("This question was already answered.", "already_answered");
+        const instance = instanceFor(entry, item);
+        const correct = sameAnswer(typed.value, instance.answer);
+        const mistakeId = correct ? null : diagnose(entry.spec, instance, typed.value);
+        await store.insertAttempt({ id: randomUUID(), studentId: item.studentId, itemId: item.id, answer: answerText(typed.value), correct, mistakeId, createdAt: iso() });
+        // logged for the mistake finder only from real classes (never test or tour classes)
+        if (mistakeId === "unknown") await store.recordUnknownError(item.skillId, item.paramsJson, answerText(typed.value), item.studentId);
+        await log(item.studentId, "check_answered", { phase: check.phase, checkId: check.id, itemId: item.id, correct });
+
+        const [items, attempts] = await Promise.all([store.getItems(check.itemIds), store.listAttemptsForItems(check.itemIds)]);
+        if (!check.itemIds.every((id) => items.find((i) => i.id === id)?.answeredAt)) return { ok: true as const, finished: false as const };
+        const ordered = check.itemIds.map((id) => items.find((i) => i.id === id)!);
+        const answerOf = (id: string) => attempts.find((a) => a.itemId === id)?.answer ?? null;
+        // scored again from the seeds: the stored "correct" answers and flags are never trusted
+        const score = scoreCheck(ordered.map((i) => ({ skillId: i.skillId, seed: i.seed, paramsJson: i.paramsJson, answer: answerOf(i.id) })));
+        if (!(await store.finishCheck(check.id, score, iso()))) return fail("This check is already done.", "finished");
+        await log(item.studentId, "check_finished", { classId: check.classId, phase: check.phase, checkId: check.id, score });
+        const receipts = ordered.map((i): ProofReceipt => {
+          const inst = instanceFor(getEntry(registry, i.skillId), i);
+          const given = answerOf(i.id);
+          const parsed = given === null ? null : parseAnswerFor(getEntry(registry, i.skillId).spec.answerKind, given);
+          return { itemId: i.id, question: inst.text, receipt: parsed?.ok ? answerReceipt(inst, parsed.value) : null };
+        });
+        const before = check.phase === "post" ? ((await store.listStudentChecks(item.studentId)).find((c) => c.phase === "pre")?.score ?? null) : null;
+        return { ok: true as const, finished: true as const, phase: check.phase, score, total: CHECK_PLANS[check.phase].length, before, receipts };
+      });
+    },
+
+    /**
+     * "How useful was this for you?" (1–5, required), for group B also "Did teaching the Shishya help you
+     * understand?" (1–5, required), an optional comment (at most 200 characters, never with an email address, a
+     * link, a handle or a long number) and whether we may quote it without a name. Once, after the after check.
+     * Only the organiser's approval ever makes a comment public. The log line never has the comment in it.
+     */
+    async saveChallengeFeedback(
+      studentId: string,
+      input: { useful: number | null; teachHelped: number | null; comment: string; quoteOk: boolean | null },
+    ): Promise<{ ok: true } | Fail> {
+      const me = await challengeStudent(studentId);
+      if (!me) return notChallenge();
+      const post = (await store.listStudentChecks(studentId)).find((c) => c.phase === "post");
+      if (!post?.finishedAt) return fail("Finish the after check first.", "not_ready");
+      const rating = (v: unknown) => (typeof v === "number" && Number.isInteger(v) && v >= 1 && v <= 5 ? v : null);
+      const useful = rating(input.useful);
+      if (useful === null) return fail("Choose how useful it was, from 1 to 5.", "bad_request", { errorKey: "challenge.fb.usefulNeeded" });
+      const teachHelped = TEACHES[me.arm] ? rating(input.teachHelped) : null;
+      if (TEACHES[me.arm] && teachHelped === null) {
+        return fail("Choose whether teaching the Shishya helped, from 1 to 5.", "bad_request", { errorKey: "challenge.fb.teachNeeded" });
+      }
+      const comment = String(input.comment ?? "").replace(/\s+/g, " ").trim();
+      const problem = commentProblem(comment);
+      if (problem) return fail("Please change the comment.", "bad_request", { errorKey: problem === "tooLong" ? "challenge.fb.tooLong" : "challenge.fb.personal" });
+      if (comment && typeof input.quoteOk !== "boolean") return fail("Say whether we may quote the comment.", "bad_request", { errorKey: "challenge.fb.quoteNeeded" });
+      const row: FeedbackRow = {
+        id: randomUUID(),
+        studentId,
+        classId: me.cls.id,
+        useful,
+        teachHelped,
+        comment: comment || null,
+        quoteOk: Boolean(comment) && input.quoteOk === true,
+        approved: null,
+        createdAt: iso(),
+      };
+      if (!(await store.insertFeedback(row))) return fail("You have already given feedback. Thank you!", "finished");
+      await log(studentId, "feedback_given", { classId: me.cls.id, useful, teachHelped, comment: Boolean(row.comment), quoteOk: row.quoteOk });
+      return { ok: true };
     },
 
     /** "Forgot the PIN?": the class code and the recovery code give a new PIN and a new recovery code (both shown once). */

@@ -1,13 +1,14 @@
-import Link from "next/link";
 import { Suspense } from "react";
 import { t } from "@/i18n";
+import { getServices } from "@/server/instance";
 import { currentStudent } from "../../_lib/auth";
 import { guardPage, LoggedOutNotice } from "../../_lib/page-guard";
 import { BackHome, Loading } from "../../_lib/student-pages";
-import { CodeCard } from "./CodeCard";
+import { ChallengeScreen } from "./ChallengeScreen";
 
-// The Shishya Challenge (F11), for a student who joined with the challenge link. First the student's code, big,
-// to write down (it is the only way back in), with the class code.
+// The Shishya Challenge (F11), for a student who joined with the challenge link: 1 Before · 2 Practise · 3 After ·
+// 4 Feedback. The first step is worked out here on the server, so a new student sees their code (to write down)
+// before the page is ready. No AI tutor slot, for any student.
 
 export default function ChallengePage() {
   return (
@@ -21,7 +22,8 @@ function Challenge() {
   return guardPage("student", async () => {
     const student = await currentStudent();
     if (!student) return <LoggedOutNotice />;
-    if (student.classMode !== "challenge") {
+    const overview = student.classMode === "challenge" ? await (await getServices()).challengeOverview(student.studentId) : null;
+    if (!overview || !overview.ok) {
       return (
         <div className="flex flex-col gap-4">
           <p className="msg-note text-xl">{t("challenge.only")}</p>
@@ -31,11 +33,8 @@ function Challenge() {
     }
     return (
       <div className="flex flex-col gap-6">
-        <h1 className="text-3xl font-extrabold break-words">{student.challengeTitle}</h1>
-        <CodeCard code={student.code} classCode={student.classCode} />
-        <Link href="/s/home" className="btn btn-primary self-start text-2xl">
-          {t("challenge.start")}
-        </Link>
+        <p className="text-xl font-bold text-gray-700 break-words">{overview.title}</p>
+        <ChallengeScreen initial={overview} />
       </div>
     );
   });

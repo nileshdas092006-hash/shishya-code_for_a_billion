@@ -114,6 +114,39 @@ export async function skipAheadInTour() {
   redirect("/tour/3");
 }
 
+// ---------------- student: the Shishya Challenge (1 Before · 2 Practise · 3 After · 4 Feedback) ----------------
+
+export async function challengeOverviewAction() {
+  const student = await studentOrNull();
+  if (!student) return notAllowed();
+  return (await getServices()).challengeOverview(student.studentId);
+}
+
+export async function startChallengeCheckAction(phase: string) {
+  const student = await studentOrNull();
+  if (!student) return notAllowed();
+  if (phase !== "pre" && phase !== "post" && phase !== "delayed") return notAllowed("not_found");
+  return (await getServices()).startChallengeCheck(student.studentId, phase);
+}
+
+export async function submitChallengeCheckAction(itemId: string, answer: string) {
+  const id = await ownedItem(itemId);
+  if (!id) return notAllowed();
+  return (await getServices()).submitChallengeCheckAnswer(id, str(answer, 40));
+}
+
+export async function saveChallengeFeedbackAction(input: { useful: unknown; teachHelped: unknown; comment: unknown; quoteOk: unknown }) {
+  const student = await studentOrNull();
+  if (!student) return notAllowed();
+  const rating = (v: unknown) => (typeof v === "number" ? v : null);
+  return (await getServices()).saveChallengeFeedback(student.studentId, {
+    useful: rating(input?.useful),
+    teachHelped: rating(input?.teachHelped),
+    comment: str(input?.comment, 400), // longer than the limit, so an over-long comment is refused, not cut
+    quoteOk: typeof input?.quoteOk === "boolean" ? input.quoteOk : null,
+  });
+}
+
 // ---------------- student: practise ----------------
 
 export async function servePractice(skillId: string) {

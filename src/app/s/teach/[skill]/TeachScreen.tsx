@@ -16,7 +16,10 @@ type Result = { ok: boolean; text: string; receipt?: LineReceipt | null };
 
 const TRIES = 2;
 
-export function TeachScreen({ skillId }: { skillId: string }) {
+/** Inside the Shishya Challenge (F11): one session, then "Next" leaves the screen (no proof, no second session). */
+type InChallenge = { onDone: () => void };
+
+export function TeachScreen({ skillId, challenge }: { skillId: string; challenge?: InChallenge }) {
   const [traces, setTraces] = useState<Trace[] | null>(null);
   const [index, setIndex] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
@@ -120,6 +123,21 @@ export function TeachScreen({ skillId }: { skillId: string }) {
       </div>
     </div>
   );
+
+  if (allDone && challenge) {
+    return (
+      <div className="flex flex-col gap-5">
+        {bar}
+        <div className="flex flex-wrap items-center gap-4">
+          <Shishya mood="happy" size={140} />
+          <p className="text-2xl font-bold">{t("teach.done.thanks")}</p>
+        </div>
+        <ReadyButton type="button" className="btn btn-primary text-xl self-start" onClick={challenge.onDone}>
+          {t("challenge.next")}
+        </ReadyButton>
+      </div>
+    );
+  }
 
   if (allDone) {
     const key: MessageKey =
