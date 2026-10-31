@@ -18,6 +18,11 @@ export default function Home() {
       </div>
       <StartTourForm />
       <p className="text-gray-700">{t("app.isProgram")}</p>
+      <footer className="border-t-2 border-gray-300 pt-4 w-full max-w-xl">
+        <Link href="/impact" className="underline text-lg">
+          {t("home.impact")}
+        </Link>
+      </footer>
     </div>
   );
 }

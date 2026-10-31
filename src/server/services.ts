@@ -5,9 +5,9 @@ import { createRng } from "../core/rng";
 import type { ApplyItem } from "../core/skills/linear-both-sides-apply";
 import { childMessage } from "../core/childMessages";
 import { READY_CHECK_PLAN, readyCheckPassed, readyCheckSeeds, readyQuestion, READY_CHECK_ID, READY_CHECK_VERSION } from "../core/readyCheck";
-import { explainedErrors, validateMinedMistake, validationChecks, type ChildLabelSource, type MinedMistakeSpec, type ReportNumbers } from "../core/minedMistake";
-import { answerReceipt, type AnswerReceipt } from "../core/receipt";
-import { CHECK_PLANS, checkKey, checkQuestion, nextCheckSeed, scoreCheck } from "../core/challengeCheck";
+import { explainedErrors, validateMinedMistake, validationChecks, type ChildLabelSource, type MinedMistakeSpec, type ReportNumbers } from "../core/minedMistake";import { answerReceipt, type AnswerReceipt } from "../core/receipt";
+import { CHECK_PLANS, checkKey, checkQuestion, nextCheckSeed, scoreCheck, type CheckItem } from "../core/challengeCheck";
+import { computeImpact } from "./impact";
 import {
   commentProblem,
   DELAYED_FROM_DAYS,
@@ -21,7 +21,7 @@ import { checkTeachStep, type TeachResult } from "../core/teach";
 import { applies, type Instance, type StepType } from "../core/types";
 import { agentRunView, RECORDED_MINER_RUN } from "./agent-runs";
 import * as mastery from "./mastery";
-import { minedMistakes, toUnknownError, unknownErrors } from "./miner-ports";
+import { minedMistakes, mistakesFromRows, toUnknownError, unknownErrors } from "./miner-ports";
 import { buildOpenMistakes } from "./open-mistakes";
 import { logServerError } from "./setup";
 import { defaultRegistry, getEntry, instanceFor, type Registry, type SkillEntry } from "./skills";
@@ -37,6 +37,7 @@ import type {
   ItemFormat,
   ItemKind,
   ItemRow,
+  MinedMistakeRow,
   MistakeHitRow,
   NewClass,
   MasteryRow,
@@ -122,6 +123,8 @@ const NOT_COUNTED: Record<Exclude<ClassKind, "real">, string> = {
   sandbox: "tour class: not counted for impact",
 };
 const UNKNOWN_LABEL = "Not matched to a known mistake";
+/** The pilot CSV's challenge columns (F11), just before "note" (which stays last): empty on the per-skill rows. */
+const CHALLENGE_CSV_COLUMNS = ["selfGrade", "studyArm", "preScore", "postScore", "delayedScore", "useful", "teachHelped"];
 
 const MAX_STUDENTS = 60;
 // Failed log-ins are counted from the events table, so every server instance sees the same count.
@@ -581,6 +584,82 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         const item = items.get(id)!;
         return { itemId: id, skillId: item.skillId, text: instanceFor(getEntry(registry, item.skillId), item).text, answered: item.answeredAt !== null };
       }),
+    };
+  }
+
+  /** Each finished check's score, worked out again from its questions' seeds and the student's own answers. */
+  function rescoredChecks(answers: Awaited<ReturnType<Store["listCheckAnswers"]>>) {
+    const byCheck = new Map<string, { studentId: string; phase: CheckPhase; items: CheckItem[] }>();
+    for (const a of answers) {
+      const c = byCheck.get(a.checkId) ?? { studentId: a.studentId, phase: a.phase, items: [] };
+      c.items.push({ skillId: a.skillId, seed: a.seed, paramsJson: a.paramsJson, answer: a.answer });
+      byCheck.set(a.checkId, c);
+    }
+    return [...byCheck.values()].map((c) => ({ studentId: c.studentId, phase: c.phase, score: scoreCheck(c.items) }));
+  }
+
+  /**
+   * How many wrong answers from real classes each approved mined mistake explains: answers it was diagnosed as
+   * (after approval) plus 'unknown' answers its formula gives (before). Zero means it was not found from real answers.
+   */
+  async function minedFromRealAnswers(approved: MinedMistakeRow[]) {
+    const specs = approved
+      .filter((r) => registry[r.skillId])
+      .map((r) => {
+        try {
+          return { row: r, spec: JSON.parse(r.source) as MinedMistakeSpec };
+        } catch {
+          return null; // a damaged row is never counted
+        }
+      })
+      .filter((x): x is { row: MinedMistakeRow; spec: MinedMistakeSpec } => x !== null && typeof x.spec?.id === "string" && typeof x.spec.label === "string");
+    if (specs.length === 0) return [];
+    const real = await store.listRealWrongAnswers([...new Set(specs.map((s) => s.row.skillId))], specs.map((s) => s.spec.id));
+    return specs.map(({ row, spec }) => {
+      const mine = real.filter((w) => w.skillId === row.skillId);
+      const diagnosed = mine.filter((w) => w.mistakeId === spec.id).reduce((s, w) => s + w.count, 0);
+      const unknown = mine
+        .filter((w) => w.mistakeId === "unknown")
+        .map((w) => toUnknownError({ id: 0, skillId: w.skillId, paramsJson: w.paramsJson, wrongAnswer: w.answer, count: w.count }));
+      let explained = 0;
+      try {
+        explained = explainedErrors(spec, unknown).reduce((s, e) => s + e.count, 0);
+      } catch {
+        // a formula that cannot be read explains nothing
+      }
+      return { label: spec.label, realWrongAnswers: diagnosed + explained };
+    });
+  }
+
+  /** "skillId|mistakeId" → label, for every skill's authored mistakes and the approved mined ones (no extra read). */
+  function mistakeLabels(approved: MinedMistakeRow[]): Record<string, string> {
+    const out: Record<string, string> = {};
+    for (const e of Object.values(registry)) {
+      for (const m of [...e.spec.mistakes, ...mistakesFromRows(approved.filter((r) => r.skillId === e.spec.id), e.spec)]) out[`${e.spec.id}|${m.id}`] = m.label;
+    }
+    return out;
+  }
+
+  /** A challenge class's panel on the board, from one read: counts by class level, the groups, and comments to decide. */
+  async function challengePanel(cls: ClassRow) {
+    const rows = await store.listChallengeBoard(cls.id);
+    const count = (list: typeof rows) => ({
+      joined: list.length,
+      before: list.filter((r) => r.pre).length,
+      after: list.filter((r) => r.post).length,
+      feedback: list.filter((r) => r.feedback).length,
+    });
+    return {
+      joinToken: cls.joinToken,
+      levels: CHALLENGE_GRADES.map((level) => ({ level, ...count(rows.filter((r) => r.selfGrade === level)) })),
+      total: count(rows),
+      groups: { A: rows.filter((r) => r.studyArm === "A").length, B: rows.filter((r) => r.studyArm === "B").length },
+      // only comments the student allowed to be quoted; no code or class level beside them
+      comments: rows
+        .map((r) => r.feedback)
+        .filter((f): f is FeedbackRow => f !== null && f.quoteOk && f.comment !== null)
+        .sort((p, q) => p.createdAt.localeCompare(q.createdAt))
+        .map((f) => ({ id: f.id, comment: f.comment!, approved: f.approved })),
     };
   }
 
@@ -1372,6 +1451,42 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       return { ok: true };
     },
 
+    /**
+     * /impact and /api/impact: the Shishya Challenge's numbers from REAL challenge classes only, worked out by the
+     * pure computeImpact (src/server/impact.ts). Every check is scored again from its seeds here; a comment's text
+     * is read only when it may be quoted AND was approved. Set-based: the same few reads however many students.
+     */
+    async impact() {
+      const [{ classes, students }, answers, feedback, wrongAnswers, approved] = await Promise.all([
+        store.listChallengeStudents("real"),
+        store.listCheckAnswers("real"),
+        store.listChallengeFeedback("real", "approved"),
+        store.listWrongAnswerCounts("real"),
+        store.listMinedMistakes("APPROVED"),
+      ]);
+      return computeImpact(
+        {
+          classes,
+          students,
+          checks: rescoredChecks(answers),
+          feedback,
+          wrongAnswers: wrongAnswers.filter((w) => registry[w.skillId]), // the skills only (not the Ready check's sums)
+          mistakeLabels: mistakeLabels(approved),
+          mined: await minedFromRealAnswers(approved),
+        },
+        now(),
+      );
+    },
+
+    /** "Approve for the impact page" (true) or "Hide" (false) on the board. False if it is not a quotable comment of this class. */
+    async decideFeedback(classId: string, feedbackId: string, approve: boolean): Promise<boolean> {
+      const cls = await requireClass(classId);
+      if (cls.mode !== "challenge") return false;
+      const done = await store.decideFeedback(classId, feedbackId, approve);
+      if (done) await log(null, "feedback_decided", { classId, approved: approve });
+      return done;
+    },
+
     /** "Forgot the PIN?": the class code and the recovery code give a new PIN and a new recovery code (both shown once). */
     async recoverTeacherPin(
       classCode: string,
@@ -1711,13 +1826,16 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     async getClassBoard(classId: string) {
       const cls = await requireClass(classId);
       // a tour class never sees (or decides) the real mistake library's drafts
-      const [students, mined, ready] = await Promise.all([
+      const [students, mined, ready, challenge] = await Promise.all([
         store.listStudents(classId),
         cls.kind === "sandbox" ? [] : pendingMined(),
         store.listClassReadyChecks(classId),
+        cls.mode === "challenge" ? challengePanel(cls) : null,
       ]);
       const [read, stuck] = await Promise.all([classStates(classId, students), stuckGroups(classId)]);
       return {
+        /** The Challenge panel (a challenge class only): counts by class level and the comments to approve or hide. */
+        challenge,
         stuck,
         /** "Needs number basics first (outside Shishya)": children whose Ready check had 4 or fewer right. */
         numberBasics: ready
@@ -1998,8 +2116,12 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         "proofsPassed",
         "studentsKey1",
         "studentsMastered",
+        // a challenge class (F11): one row per student (skillId "challenge-student"), never a code
+        ...CHALLENGE_CSV_COLUMNS,
         "note",
       ];
+      const note = cls.kind !== "real" ? NOT_COUNTED[cls.kind] : students < SMALL_SAMPLE ? "small sample" : "";
+      const blank = CHALLENGE_CSV_COLUMNS.map(() => "");
       const rows = (await store.exportCounts(classId)).map((c) =>
         [
           cls.grade,
@@ -2016,9 +2138,28 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
           c.proofsPassed,
           c.studentsKey1,
           c.studentsMastered,
-          cls.kind !== "real" ? NOT_COUNTED[cls.kind] : students < SMALL_SAMPLE ? "small sample" : "",
+          ...blank,
+          note,
         ].join(","),
       );
+      if (cls.mode === "challenge") {
+        const scope = { classId };
+        const [{ students: joined }, answers, feedback] = await Promise.all([
+          store.listChallengeStudents(scope),
+          store.listCheckAnswers(scope),
+          store.listChallengeFeedback(scope, "all"),
+        ]);
+        const scores = rescoredChecks(answers); // worked out again from the seeds, like /impact
+        const scoreOf = (id: string, phase: CheckPhase) => scores.find((s) => s.studentId === id && s.phase === phase)?.score ?? "";
+        const perStudent = joined
+          .map((s) => {
+            const f = feedback.find((x) => x.studentId === s.id);
+            return [s.selfGrade ?? "", s.studyArm ?? "", scoreOf(s.id, "pre"), scoreOf(s.id, "post"), scoreOf(s.id, "delayed"), f?.useful ?? "", f?.teachHelped ?? ""];
+          })
+          // sorted by the values themselves, so the order says nothing about who joined when
+          .sort((p, q) => p.join(",").localeCompare(q.join(","), "en", { numeric: true }));
+        for (const values of perStudent) rows.push([cls.grade, "challenge-student", ...Array(header.length - 3 - CHALLENGE_CSV_COLUMNS.length).fill(""), ...values, note].join(","));
+      }
       await log(null, "pilot_export", { classId, rows: rows.length });
       return [header.join(","), ...rows].join("\n") + "\n";
     },

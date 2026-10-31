@@ -3,7 +3,16 @@ import { skillKey, t } from "@/i18n";
 import { getServices } from "@/server/instance";
 import { COOLDOWN_CHOICES } from "@/server/services";
 import type { ClassRow } from "@/server/store";
-import { closeProofs, giveNewCodes, markReadySeenAction, openProofs, recordConsentAction, setCooldownAction, unlockSkillForClass } from "../../actions";
+import {
+  closeProofs,
+  decideFeedbackAction,
+  giveNewCodes,
+  markReadySeenAction,
+  openProofs,
+  recordConsentAction,
+  setCooldownAction,
+  unlockSkillForClass,
+} from "../../actions";
 import { MinedDecision } from "./MinedDecision";
 import { boardExample, minedExample, MistakeExampleLines } from "./MistakeExample";
 import { PatternGrid, SlipList } from "./PatternGrid";
@@ -22,7 +31,7 @@ const STATES = ["LOCKED", "OPEN", "KEY1", "NOT_YET", "MASTERED"] as const;
 type Query = Record<string, string | string[] | undefined>;
 
 export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Query }) {
-  const { stuck, progress, mined, codes, proofWindow, proofCooldown, numberBasics } = await (await getServices()).getClassBoard(cls.id);
+  const { stuck, progress, mined, codes, proofWindow, proofCooldown, numberBasics, challenge: panel } = await (await getServices()).getClassBoard(cls.id);
   const base = `/teacher/${encodeURIComponent(cls.code)}`;
   const tour = cls.kind === "sandbox";
   const challenge = cls.mode === "challenge";
@@ -60,7 +69,7 @@ export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Que
         !cls.aiAllowed && <p className="msg-note no-print">Class 7: AI chat is switched off for this class, always.</p>
       )}
 
-      {challenge && cls.joinToken && <ChallengeLink token={cls.joinToken} trial={cls.kind === "test"} />}
+      {challenge && panel && <ChallengePanel classCode={cls.code} panel={panel} trial={cls.kind === "test"} />}
 
       {!cls.consentRecordedAt && <ConsentForm classCode={cls.code} showCheck={query.consent === "check"} />}
 
@@ -269,15 +278,100 @@ export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Que
   );
 }
 
-/** A challenge's one public join link, to share again (with Copy). */
-async function ChallengeLink({ token, trial }: { token: string; trial: boolean }) {
-  const link = joinLink(await siteOrigin(), token);
+type Panel = NonNullable<Board["challenge"]>;
+
+/**
+ * The Challenge panel at the top of a challenge class's board: its one public join link (Copy), how many students
+ * joined / finished the before check / finished the after check / gave feedback, by class level, the groups, and
+ * the comments students allowed us to quote, each with "Approve for the impact page" / "Hide". Only approved
+ * comments are ever public.
+ */
+async function ChallengePanel({ classCode, panel, trial }: { classCode: string; panel: Panel; trial: boolean }) {
+  const link = panel.joinToken ? joinLink(await siteOrigin(), panel.joinToken) : null;
+  const columns = ["joined", "before", "after", "feedback"] as const;
   return (
-    <section className="card flex flex-col gap-2 no-print" aria-label={t("board.challenge.link")}>
-      <p className="text-lg font-semibold">{t("board.challenge.link")}</p>
-      <p className="math text-lg font-bold break-all">{link}</p>
-      <CopyButton text={link} />
+    <section className="card flex flex-col gap-4 border-blue-800 no-print" aria-labelledby="challenge-panel">
+      <h2 id="challenge-panel" className="text-2xl font-bold">
+        {t("board.challenge.panel")}
+      </h2>
+      {link && (
+        <div className="flex flex-col gap-2">
+          <p className="text-lg font-semibold">{t("board.challenge.link")}</p>
+          <p className="math text-lg font-bold break-all">{link}</p>
+          <CopyButton text={link} />
+        </div>
+      )}
       {trial && <p className="msg-note">{t("board.challenge.trial")}</p>}
+      <div className="overflow-x-auto">
+        <table className="w-full border-collapse text-lg">
+          <thead>
+            <tr className="border-b-2 border-gray-400 text-left">
+              <th className="py-2 pr-3">{t("board.challenge.level")}</th>
+              {columns.map((c) => (
+                <th key={c} className="py-2 pr-3">
+                  {t(`board.challenge.${c}`)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {panel.levels.map((l) => (
+              <tr key={l.level} className="border-b border-gray-300">
+                <td className="py-2 pr-3 font-semibold">{l.level}</td>
+                {columns.map((c) => (
+                  <td key={c} className="py-2 pr-3">
+                    {l[c]}
+                  </td>
+                ))}
+              </tr>
+            ))}
+            <tr className="font-bold">
+              <td className="py-2 pr-3">{t("board.challenge.all")}</td>
+              {columns.map((c) => (
+                <td key={c} className="py-2 pr-3">
+                  {panel.total[c]}
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p className="text-base text-gray-700">{t("board.challenge.groups", { a: panel.groups.A, b: panel.groups.B })}</p>
+      <h3 className="text-xl font-bold">{t("board.challenge.comments")}</h3>
+      <p className="text-base text-gray-700">{t("board.challenge.commentsNote")}</p>
+      {panel.comments.length === 0 ? (
+        <p className="text-gray-700">{t("board.challenge.noComments")}</p>
+      ) : (
+        <ul className="flex flex-col gap-3">
+          {panel.comments.map((c) => (
+            <li key={c.id} className="flex flex-col gap-2 border-l-4 border-gray-400 pl-3">
+              <p className="text-lg break-words">“{c.comment}”</p>
+              <p className={`text-base font-semibold ${c.approved === true ? "text-green-800" : "text-gray-700"}`}>
+                {t(c.approved === true ? "board.challenge.approved" : c.approved === false ? "board.challenge.hidden" : "board.challenge.undecided")}
+              </p>
+              <div className="flex flex-wrap gap-3">
+                {c.approved !== true && (
+                  <form action={decideFeedbackAction.bind(null, classCode, c.id, true)}>
+                    <button type="submit" className="btn btn-primary">
+                      {t("board.challenge.approve")}
+                    </button>
+                  </form>
+                )}
+                {c.approved !== false && (
+                  <form action={decideFeedbackAction.bind(null, classCode, c.id, false)}>
+                    <button type="submit" className="btn">
+                      {t("board.challenge.hide")}
+                    </button>
+                  </form>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      <Link href="/impact" className="self-start underline text-lg">
+        {t("board.challenge.impactLink")}
+      </Link>
     </section>
   );
 }

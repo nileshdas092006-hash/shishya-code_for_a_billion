@@ -653,6 +653,10 @@ const toMastery = (r: Row): MasteryRow => ({
 });
 /** "?, ?, ?" for an IN (…) list. */
 const marks = (n: number) => Array.from({ length: n }, () => "?").join(", ");
+/** Which classes a Shishya Challenge read covers: one class (its board and CSV), or every REAL challenge class (/impact). */
+export type ChallengeScope = { classId: string } | "real";
+const scopeSql = (scope: ChallengeScope): { where: string; args: InValue[] } =>
+  scope === "real" ? { where: "c.kind = 'real' AND c.mode = 'challenge'", args: [] } : { where: "c.id = ?", args: [scope.classId] };
 /** An event log line (written in the same batch as the mastery change it describes). */
 export type EventInput = { studentId: string | null; type: string; payload: unknown; at: string };
 const eventStatement = (e: EventInput) => ({
@@ -1508,6 +1512,118 @@ export async function openStore(config: StoreConfig | string = {}) {
     async getStudentFeedback(studentId: string): Promise<FeedbackRow | undefined> {
       const r = await one("SELECT * FROM feedback WHERE studentId = ?", studentId);
       return r && toFeedback(r);
+    },
+    /**
+     * The organiser approves (true) or hides (false) a comment for the public impact page. Only a comment of this
+     * class that the student allowed to be quoted can be approved. False if there is no such comment.
+     */
+    decideFeedback(classId: string, feedbackId: string, approved: boolean): Promise<boolean> {
+      return changed(
+        "UPDATE feedback SET approved = ? WHERE id = ? AND classId = ? AND quoteOk = 1 AND comment IS NOT NULL",
+        approved ? 1 : 0, feedbackId, classId,
+      );
+    },
+
+    // ----- the Shishya Challenge's numbers: one class (board, CSV), or every REAL challenge class (/impact) -----
+    /** The classes in scope with their students (a class with no students has one row with student fields null), in one read. */
+    async listChallengeStudents(scope: ChallengeScope): Promise<{ classes: { id: string; kind: ClassKind; mode: ClassMode }[]; students: ChallengeStudentRow[] }> {
+      const s = scopeSql(scope);
+      const rows = await all(
+        `SELECT c.id AS cid, c.kind, c.mode, s.id, s.classId, s.code, s.selfGrade, s.studyArm, s.joinedAt
+         FROM classes c LEFT JOIN students s ON s.classId = c.id WHERE ${s.where}`,
+        ...s.args,
+      );
+      const classes = new Map<string, { id: string; kind: ClassKind; mode: ClassMode }>();
+      for (const r of rows) classes.set(r.cid as string, { id: r.cid as string, kind: r.kind as ClassKind, mode: r.mode === "challenge" ? "challenge" : "classroom" });
+      return { classes: [...classes.values()], students: rows.filter((r) => r.id).map(toChallengeStudent) };
+    },
+    /** Every FINISHED check in scope with its questions (skill, seed, numbers) and the student's own answers, in one read. */
+    async listCheckAnswers(scope: ChallengeScope): Promise<{ checkId: string; studentId: string; phase: CheckPhase; storedScore: number | null; skillId: string; seed: number; paramsJson: string; answer: string | null }[]> {
+      const s = scopeSql(scope);
+      return (
+        await all(
+          `SELECT k.id AS checkId, k.studentId, k.phase, k.score, i.skillId, i.seed, i.paramsJson, a.answer
+           FROM checks k JOIN classes c ON c.id = k.classId
+             JOIN items i ON i.runId = k.id AND i.studentId = k.studentId AND i.source = k.phase
+             LEFT JOIN attempts a ON a.itemId = i.id
+           WHERE k.finishedAt IS NOT NULL AND ${s.where}`,
+          ...s.args,
+        )
+      ).map((r) => ({
+        checkId: r.checkId as string,
+        studentId: r.studentId as string,
+        phase: r.phase as CheckPhase,
+        storedScore: r.score === null || r.score === undefined ? null : Number(r.score),
+        skillId: r.skillId as string,
+        seed: Number(r.seed),
+        paramsJson: r.paramsJson as string,
+        answer: (r.answer as string | null) ?? null,
+      }));
+    },
+    /**
+     * The feedback in scope, in one read. withText: "all" (the organiser's board and CSV) or "approved": a comment's
+     * text is read only when the student allowed it to be quoted AND it was approved (the public impact page).
+     */
+    async listChallengeFeedback(scope: ChallengeScope, withText: "all" | "approved"): Promise<FeedbackRow[]> {
+      const s = scopeSql(scope);
+      const comment = withText === "all" ? "f.comment" : "CASE WHEN f.approved = 1 AND f.quoteOk = 1 THEN f.comment END";
+      return (
+        await all(
+          `SELECT f.id, f.studentId, f.classId, f.useful, f.teachHelped, ${comment} AS comment, f.quoteOk, f.approved, f.createdAt
+           FROM feedback f JOIN classes c ON c.id = f.classId WHERE ${s.where} ORDER BY f.createdAt, f.rowid`,
+          ...s.args,
+        )
+      ).map(toFeedback);
+    },
+    /** How many wrong answers each student in scope gave, per skill and mistake (null: not diagnosed), in one read. */
+    async listWrongAnswerCounts(scope: ChallengeScope): Promise<{ studentId: string; skillId: string; mistakeId: string | null; count: number }[]> {
+      const s = scopeSql(scope);
+      return (
+        await all(
+          `SELECT a.studentId, i.skillId, a.mistakeId, COUNT(*) AS n
+           FROM attempts a JOIN items i ON i.id = a.itemId JOIN students st ON st.id = a.studentId JOIN classes c ON c.id = st.classId
+           WHERE a.correct = 0 AND ${s.where} GROUP BY a.studentId, i.skillId, a.mistakeId`,
+          ...s.args,
+        )
+      ).map((r) => ({ studentId: r.studentId as string, skillId: r.skillId as string, mistakeId: (r.mistakeId as string | null) ?? null, count: Number(r.n) }));
+    },
+    /**
+     * Wrong answers given in REAL classes (any kind of class use) on these skills that were not explained by a known
+     * mistake ('unknown') or were diagnosed as one of these mistake ids, grouped by question and answer, in one read.
+     * For the impact page's "found by the mistake finder from real answers".
+     */
+    async listRealWrongAnswers(skillIds: string[], mistakeIds: string[]): Promise<{ skillId: string; paramsJson: string; answer: string; mistakeId: string; count: number }[]> {
+      if (skillIds.length === 0) return [];
+      return (
+        await all(
+          `SELECT i.skillId, i.paramsJson, a.answer, a.mistakeId, COUNT(*) AS n
+           FROM attempts a JOIN items i ON i.id = a.itemId JOIN students st ON st.id = a.studentId JOIN classes c ON c.id = st.classId
+           WHERE c.kind = 'real' AND a.correct = 0 AND i.skillId IN (${marks(skillIds.length)})
+             AND (a.mistakeId = 'unknown'${mistakeIds.length ? ` OR a.mistakeId IN (${marks(mistakeIds.length)})` : ""})
+           GROUP BY i.skillId, i.paramsJson, a.answer, a.mistakeId`,
+          ...skillIds, ...mistakeIds,
+        )
+      ).map((r) => ({ skillId: r.skillId as string, paramsJson: r.paramsJson as string, answer: r.answer as string, mistakeId: r.mistakeId as string, count: Number(r.n) }));
+    },
+    /** A challenge class's board panel, in one read: per student, the class level, group, which checks are done and the feedback. */
+    async listChallengeBoard(classId: string): Promise<
+      { selfGrade: number | null; studyArm: StudyArm | null; pre: boolean; post: boolean; feedback: FeedbackRow | null }[]
+    > {
+      const rows = await all(
+        `SELECT s.selfGrade, s.studyArm,
+           EXISTS (SELECT 1 FROM checks k WHERE k.studentId = s.id AND k.phase = 'pre' AND k.finishedAt IS NOT NULL) AS pre,
+           EXISTS (SELECT 1 FROM checks k WHERE k.studentId = s.id AND k.phase = 'post' AND k.finishedAt IS NOT NULL) AS post,
+           f.id, f.studentId, f.classId, f.useful, f.teachHelped, f.comment, f.quoteOk, f.approved, f.createdAt
+         FROM students s LEFT JOIN feedback f ON f.studentId = s.id WHERE s.classId = ?`,
+        classId,
+      );
+      return rows.map((r) => ({
+        selfGrade: r.selfGrade === null || r.selfGrade === undefined ? null : Number(r.selfGrade),
+        studyArm: r.studyArm === "A" || r.studyArm === "B" ? r.studyArm : null,
+        pre: bool(r.pre),
+        post: bool(r.post),
+        feedback: r.id ? toFeedback(r) : null,
+      }));
     },
 
     // ----- mastery (ONLY src/server/mastery.ts may call writeMastery) -----

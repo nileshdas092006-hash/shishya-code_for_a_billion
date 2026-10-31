@@ -373,6 +373,14 @@ export async function deleteClassAction(classCode: string, form: FormData) {
   redirect("/teacher/deleted");
 }
 
+/** A challenge comment: "Approve for the impact page" or "Hide" (only comments the student allowed to be quoted). */
+export async function decideFeedbackAction(classCode: string, feedbackId: string, approve: boolean) {
+  const cls = await classOrNull(classCode);
+  if (!cls) return;
+  await (await getServices()).decideFeedback(cls.id, str(feedbackId, 64), approve === true);
+  refresh();
+}
+
 /** "Mark as seen" on the board's "Needs number basics first" list. */
 export async function markReadySeenAction(classCode: string, studentCode: string) {
   const cls = await classOrNull(classCode);

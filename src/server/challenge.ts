@@ -22,15 +22,20 @@ const HANDLE = /(^|\s)@[\w.]{2,}/;
 const LINK = /\bhttps?:\/\/|\bwww\.|\b[a-z0-9-]+\.(com|in|org|net|io|co|me|app|xyz|info|edu|gov|ai|ly|gg|tv|online|site)\b/i;
 /** 6 or more digits in a row, also with single spaces, dots or dashes between them (98765 43210, a PIN code). */
 const LONG_NUMBER = /\d(?:[\s.-]?\d){5,}/;
+/**
+ * A student code like 8C-K7QM (with at least one letter after the dash, so maths like 2x-1234 is not one) or a
+ * challenge class code like CH-K7QM: together they log in as that student, so they are never kept in a comment.
+ */
+const LOGIN_CODE = /\b\d{1,2}[a-z]-(?=[a-z0-9]*[a-z])[a-z0-9]{4}\b|\bch-[a-z0-9]{4}\b/i;
 
 /**
  * Why a feedback comment cannot be saved: "tooLong" (over COMMENT_MAX characters) or "personal" (it has an email
- * address, a link, a handle or a long number such as a phone number or PIN code, in any keyboard's digits). Null
- * when it is fine. The comment is checked as the student typed it, after trimming.
+ * address, a link, a handle, a long number such as a phone number or PIN code in any keyboard's digits, or a
+ * login code). Null when it is fine. The comment is checked as the student typed it, after trimming.
  */
 export function commentProblem(comment: string): "tooLong" | "personal" | null {
   if (comment.length > COMMENT_MAX) return "tooLong";
   const text = normaliseInput(comment); // Devanagari and full-width digits read as 0–9
-  if (EMAIL.test(text) || HANDLE.test(text) || LINK.test(text) || LONG_NUMBER.test(text)) return "personal";
+  if (EMAIL.test(text) || HANDLE.test(text) || LINK.test(text) || LONG_NUMBER.test(text) || LOGIN_CODE.test(text)) return "personal";
   return null;
 }
