@@ -54,6 +54,8 @@ describe("every button that needs JavaScript waits for the page", () => {
     "s/StudentLoginForm.tsx", // log in
     "s/home/page.tsx", // log out
     "teacher/CreateClassForm.tsx", // create a class
+    "teacher/CreateChallengeForm.tsx", // create a challenge link (F11)
+    "join/[token]/page.tsx", // I understand, start (joining a challenge, F11: works before the page is ready)
     "teacher/TeacherPinForm.tsx", // teacher PIN
     "teacher/[class]/ClassBoardView.tsx", // Unlock for class, open / close proofs, give new codes, consent, cooldown
     "teacher/[class]/delete/page.tsx", // Delete this class and all its data

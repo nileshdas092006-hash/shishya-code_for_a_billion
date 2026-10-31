@@ -82,6 +82,7 @@ export type FailCode =
   | "bad_request"
   | "old_version"
   | "not_due"
+  | "full"
   | "none";
 type Fail = { ok: false; reason: string; code: FailCode; retryAt?: string; errorKey?: string };
 const fail = (reason: string, code: FailCode, extra: Partial<Fail> = {}): Fail => ({ ok: false, reason, code, ...extra });
@@ -126,6 +127,19 @@ export const PAPER_DEFAULT_QUESTIONS = 8;
 export const PAPER_MAX_QUESTIONS = 20;
 /** One cell of the paper grid as the teacher typed it: a child's final answer to question n (1-based). */
 export type PaperEntry = { studentCode: string; question: number; text: string };
+/** The Shishya Challenge (F11): the class levels a student may say they are in, and the join limits per class. */
+export const CHALLENGE_GRADES = [7, 8, 9, 10] as const;
+export const CHALLENGE_MAX_STUDENTS = 300;
+export const CHALLENGE_MAX_JOINS = 60;
+export const CHALLENGE_JOIN_MINUTES = 10;
+export const CHALLENGE_TITLE_MAX = 60;
+/** A join link token: 12 characters from CODE_ALPHABET. It is a public invite, so it is stored as it is. */
+const JOIN_TOKEN = new RegExp(`^[${CODE_ALPHABET}]{12}$`);
+/**
+ * A challenge class's grade column: the lowest class level that may join, so any rule that looks at a class's grade
+ * treats the whole challenge as Class 7 (its children may be under 13; it also never allows AI).
+ */
+const CHALLENGE_CLASS_GRADE = 7;
 
 class NoFreshQuestion extends Error {}
 
@@ -585,6 +599,10 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         consentRecordedAt: iso(),
         consentSlips: null,
         proofCooldownHours: null,
+        mode: "classroom",
+        joinToken: null,
+        title: null,
+        armStart: null,
       };
       if (!(await store.insertClass(row))) throw new Error(`Class code ${code} is already taken.`);
       await log(null, "class_created", { classId: row.id, grade, aiAllowed: row.aiAllowed });
@@ -975,6 +993,92 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       });
     },
 
+    /**
+     * "Create a challenge link (online, no classroom)": a class that students join alone through one public link.
+     * The organiser must tick that it runs online, that students are told never to write their name, and that
+     * students under 13 are asked to check with a parent first; that tick is the class's consent record. No
+     * students yet, every skill opens for anyone who joins, proofs are always open, no wait after a missed proof, and
+     * no AI. A trial run is a test class (never counted for impact). The PIN and recovery code are shown once.
+     */
+    async createChallenge(input: { title: string; trial: boolean; online: boolean; pin?: string }) {
+      const title = String(input.title ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
+      if (input.online !== true) throw new Error("Tick the box first: this runs online, students never write their name, and students under 13 check with a parent.");
+      if (title.length < 1 || title.length > CHALLENGE_TITLE_MAX) throw new Error(`The name shown to students must be 1 to ${CHALLENGE_TITLE_MAX} characters.`);
+      const pin = input.pin ?? String(randomInt(0, 1_000_000)).padStart(6, "0");
+      if (!/^\d{6}$/.test(pin)) throw new Error("The PIN must be 6 digits.");
+      opts.checkSetup?.();
+      const recoveryCode = randomCode(RECOVERY_LENGTH);
+      const kind: ClassKind = input.trial === true ? "test" : "real";
+      const armStart = random() < 0.5 ? "A" : "B"; // once per class; then each class level alternates from it
+      for (let i = 0; i < 20; i++) {
+        const at = iso();
+        const cls: NewClass = {
+          id: randomUUID(),
+          code: `CH-${randomSuffix()}`,
+          grade: CHALLENGE_CLASS_GRADE,
+          section: "",
+          aiAllowed: false,
+          proofWindowRequired: false,
+          proofWindowOpenUntil: null,
+          kind,
+          expiresAt: null,
+          consentRecordedAt: at,
+          consentSlips: null,
+          proofCooldownHours: 0,
+          mode: "challenge",
+          joinToken: randomCode(12),
+          title,
+          armStart,
+        };
+        if (!(await store.insertClass(cls, hashPin(pin), hashPin(recoveryCode)))) continue; // the code or token was taken
+        await log(null, "class_created", { classId: cls.id, mode: "challenge", kind, aiAllowed: false });
+        await log(null, "consent_recorded", { classId: cls.id, online: true });
+        return { classId: cls.id, classCode: cls.code, pin, recoveryCode, joinToken: cls.joinToken! };
+      }
+      throw new Error("Could not make a challenge link. Try again.");
+    },
+
+    /** The challenge a join link opens (undefined for a wrong token). Read by the public /join/<token> page. */
+    async challengeByToken(token: string) {
+      const t = normaliseCode(token);
+      if (!JOIN_TOKEN.test(t)) return undefined;
+      const cls = await store.getClassByJoinToken(t);
+      return cls && { classId: cls.id, classCode: cls.code, title: cls.title ?? "", kind: cls.kind };
+    },
+
+    /**
+     * A student joins a challenge with its link, saying which class they are in (7–10). They get a random code like
+     * 8C-K7QM (shown once, big, to write down) and a group (A or B, never shown to them), and every skill opens.
+     * At most CHALLENGE_MAX_STUDENTS per class, and at most CHALLENGE_MAX_JOINS per CHALLENGE_JOIN_MINUTES, counted
+     * in the database. All or nothing: a student is never left half made.
+     */
+    async joinChallenge(token: string, selfGrade: number): Promise<{ ok: true; studentId: string; code: string; classCode: string } | Fail> {
+      const t = normaliseCode(token);
+      const cls = JOIN_TOKEN.test(t) ? await store.getClassByJoinToken(t) : undefined;
+      if (!cls) return fail("This link does not open a challenge.", "none");
+      if (!(CHALLENGE_GRADES as readonly number[]).includes(selfGrade)) return fail("Choose your class: 7, 8, 9 or 10.", "bad_request");
+      const recentSince = minutesAgo(CHALLENGE_JOIN_MINUTES);
+      const out = await store.transaction(async () => {
+        for (let i = 0; i < 20; i++) {
+          const student = { id: randomUUID(), classId: cls.id, code: `${selfGrade}C-${randomSuffix()}`, selfGrade, joinedAt: iso() };
+          const arm = await store.insertChallengeStudent(student, { maxStudents: CHALLENGE_MAX_STUDENTS, maxRecent: CHALLENGE_MAX_JOINS, recentSince });
+          if (arm === "code_taken") continue;
+          if (arm === "refused") return null;
+          await mastery.openForChallenge(store, student.id, [], Object.values(registry), now());
+          await log(student.id, "challenge_joined", { classId: cls.id, selfGrade });
+          return student;
+        }
+        throw new Error("Could not make a student code. Try again.");
+      });
+      if (!out) {
+        const { students } = await store.countJoins(cls.id, recentSince);
+        const full = students >= CHALLENGE_MAX_STUDENTS;
+        await log(null, "challenge_join_refused", { classId: cls.id, reason: full ? "full" : "busy" });
+        return full ? fail("This challenge is full.", "full") : fail("Too many people are joining right now. Try again in a few minutes.", "busy");
+      }
+      return { ok: true, studentId: out.id, code: out.code, classCode: cls.code };
+    },
+
     /** "Forgot the PIN?": the class code and the recovery code give a new PIN and a new recovery code (both shown once). */
     async recoverTeacherPin(
       classCode: string,
@@ -1016,7 +1120,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     async setProofCooldown(classId: string, hours: CooldownChoice) {
       const cls = await requireClass(classId);
       if (!(COOLDOWN_CHOICES as readonly number[]).includes(hours)) throw new Error("Choose 24, 1 or 0 hours.");
-      if (cls.kind === "sandbox") return; // a tour never waits between proofs
+      if (cls.kind === "sandbox" || cls.mode === "challenge") return; // a tour or a challenge never waits between proofs
       await store.setProofCooldown(classId, hours, { studentId: null, type: "cooldown_set", payload: { classId, hours }, at: iso() });
     },
 
@@ -1072,6 +1176,8 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     /** Replaces every student's code in the class with a new random one. Ids, mastery and history stay. Returns the new codes. */
     async reissueStudentCodes(classId: string): Promise<string[]> {
       const cls = await requireClass(classId);
+      // challenge students wrote their own code down at home: nobody could hand them a new one
+      if (cls.mode === "challenge") throw new Error("A challenge class keeps its codes: its students could not be given new ones.");
       const students = await store.listStudents(classId);
       // never one of the old codes, so no child can log in as another during or after the change
       const codes = randomStudentCodes(`${cls.grade}${cls.section}`, students.length, new Set(students.map((s) => s.code)));
@@ -1096,7 +1202,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     },
 
     async getStudentContext(studentId: string) {
-      const student = await store.getStudent(studentId);
+      const student = await store.getChallengeStudent(studentId);
       const cls = student && (await store.getClass(student.classId));
       if (!student || !cls) return undefined;
       return {
@@ -1110,6 +1216,11 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         classKind: cls.kind,
         /** Hours after a missed proof until the next try opens (for the words on the skill map). */
         proofCooldownHours: cooldownFor(cls),
+        /** 'challenge': this student joined a Shishya Challenge through its link (their group is never given here). */
+        classMode: cls.mode,
+        /** The class the student said they are in (challenge only). */
+        selfGrade: student.selfGrade,
+        challengeTitle: cls.title,
       };
     },
 

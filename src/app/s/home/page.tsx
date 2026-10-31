@@ -28,8 +28,13 @@ function SkillMap() {
     return (
       <>
         <p className="text-lg text-gray-700">{student.code}</p>
+        {student.classMode === "challenge" && (
+          <Link href="/s/challenge" className="btn btn-primary self-start text-xl">
+            {t("challenge.continue")}
+          </Link>
+        )}
         {/* once, before the first skill; it never blocks the skills below */}
-        {ready.state !== "done" && (
+        {ready.state !== "done" && student.classMode !== "challenge" && (
           <Link href="/s/ready" className="btn btn-primary self-start text-xl">
             {t("ready.link")}
           </Link>

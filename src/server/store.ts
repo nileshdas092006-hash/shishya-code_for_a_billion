@@ -25,6 +25,10 @@ export type ItemSource = "app" | "paper" | "recheck";
 const ITEM_SOURCES: readonly string[] = ["app", "paper", "recheck"];
 /** real: a school class. test: our own test classes (all 8Q-…). sandbox: a Judge Tour class, deleted when it expires. */
 export type ClassKind = "real" | "test" | "sandbox";
+/** classroom: a teacher hands out codes in class. challenge: students join alone through one public link (F11). */
+export type ClassMode = "classroom" | "challenge";
+/** Shishya Challenge groups: A practises only, B practises and teaches the Shishya. Never shown to a student. */
+export type StudyArm = "A" | "B";
 
 export type ClassRow = {
   id: string;
@@ -49,10 +53,18 @@ export type ClassRow = {
   consentSlips: number | null;
   /** Hours between a failed proof and the next try, chosen by the teacher (null: the server default). */
   proofCooldownHours: number | null;
+  /** 'classroom' for every class made before challenge links. */
+  mode: ClassMode;
+  /** A challenge class's public join link token (12 characters; null for a classroom class). */
+  joinToken: string | null;
+  /** The challenge name shown to students (null for a classroom class). */
+  title: string | null;
+  /** A challenge class's first group, chosen at random once when it is made (null for a classroom class). */
+  armStart: StudyArm | null;
 };
-/** A new class: real, with no expiry and no consent recorded yet, unless it says otherwise. */
-export type NewClass = Omit<ClassRow, "kind" | "expiresAt" | "consentRecordedAt" | "consentSlips" | "proofCooldownHours"> &
-  Partial<Pick<ClassRow, "kind" | "expiresAt" | "consentRecordedAt" | "consentSlips" | "proofCooldownHours">>;
+type OptionalClassFields = "kind" | "expiresAt" | "consentRecordedAt" | "consentSlips" | "proofCooldownHours" | "mode" | "joinToken" | "title" | "armStart";
+/** A new class: a real classroom class, with no expiry and no consent recorded yet, unless it says otherwise. */
+export type NewClass = Omit<ClassRow, OptionalClassFields> & Partial<Pick<ClassRow, OptionalClassFields>>;
 /** How many rows deleteClassCascade removed, per table. */
 export type DeletedCounts = {
   students: number;
@@ -67,6 +79,8 @@ export type DeletedCounts = {
   readyChecks: number;
 };
 export type StudentRow = { id: string; classId: string; code: string };
+/** What a challenge student said and was given at join (all null for a classroom student). */
+export type ChallengeStudentRow = StudentRow & { selfGrade: number | null; studyArm: StudyArm | null; joinedAt: string | null };
 export type ItemRow = {
   id: string;
   studentId: string;
@@ -244,12 +258,21 @@ CREATE TABLE IF NOT EXISTS classes (
   consentSlips INTEGER,
   proofCooldownHours INTEGER,
   -- salted scrypt hash of the teacher's PIN recovery code; the code itself is never stored
-  recoveryHash TEXT
+  recoveryHash TEXT,
+  -- 'challenge': students join alone through a public link (joinToken); title is the name they see
+  mode TEXT NOT NULL DEFAULT 'classroom' CHECK (mode IN ('classroom', 'challenge')),
+  joinToken TEXT,
+  title TEXT,
+  armStart TEXT CHECK (armStart IN ('A', 'B'))
 );
 CREATE TABLE IF NOT EXISTS students (
   id TEXT PRIMARY KEY,
   classId TEXT NOT NULL REFERENCES classes(id),
   code TEXT NOT NULL,
+  -- a challenge student's class level (7–10, said by the student), group and join time; null in a classroom class
+  selfGrade INTEGER,
+  studyArm TEXT CHECK (studyArm IN ('A', 'B')),
+  joinedAt TEXT,
   UNIQUE (classId, code)
 );
 CREATE TABLE IF NOT EXISTS items (
@@ -415,9 +438,14 @@ const toClass = (r: Row): ClassRow => ({
   consentRecordedAt: (r.consentRecordedAt as string | null) ?? null,
   consentSlips: r.consentSlips === null || r.consentSlips === undefined ? null : Number(r.consentSlips),
   proofCooldownHours: r.proofCooldownHours === null || r.proofCooldownHours === undefined ? null : Number(r.proofCooldownHours),
+  mode: r.mode === "challenge" ? "challenge" : "classroom",
+  joinToken: (r.joinToken as string | null) ?? null,
+  title: (r.title as string | null) ?? null,
+  armStart: r.armStart === "A" || r.armStart === "B" ? r.armStart : null,
 });
 const CLASS_COLUMNS =
-  "id, code, grade, section, aiAllowed, proofWindowRequired, proofWindowOpenUntil, kind, expiresAt, consentRecordedAt, consentSlips, proofCooldownHours";
+  "id, code, grade, section, aiAllowed, proofWindowRequired, proofWindowOpenUntil, kind, expiresAt, consentRecordedAt, consentSlips, proofCooldownHours, " +
+  "mode, joinToken, title, armStart";
 const CLASS_COLUMNS_OF_C = CLASS_COLUMNS.split(", ").map((c) => `c.${c}`).join(", ");
 /**
  * How many failed logins (or PIN recoveries) of this type the class c has had since a time, as a subquery (it uses
@@ -534,6 +562,12 @@ const agentRunArgs = (a: AgentRunRow): InValue[] => [
   a.id, a.agent, a.skillId, a.startedAt, a.finishedAt, a.status, a.turns, a.provider, a.model, a.attemptsJson, a.draftId, a.error, a.recorded ? 1 : 0,
 ];
 const toStudent = (r: Row): StudentRow => ({ id: r.id as string, classId: r.classId as string, code: r.code as string });
+const toChallengeStudent = (r: Row): ChallengeStudentRow => ({
+  ...toStudent(r),
+  selfGrade: r.selfGrade === null || r.selfGrade === undefined ? null : Number(r.selfGrade),
+  studyArm: r.studyArm === "A" || r.studyArm === "B" ? r.studyArm : null,
+  joinedAt: (r.joinedAt as string | null) ?? null,
+});
 const toMastery = (r: Row): MasteryRow => ({
   studentId: r.studentId as string,
   skillId: r.skillId as string,
@@ -591,6 +625,19 @@ async function migrate(client: Client) {
   if (!classColumns.includes("consentSlips")) await client.execute("ALTER TABLE classes ADD COLUMN consentSlips INTEGER");
   if (!classColumns.includes("proofCooldownHours")) await client.execute("ALTER TABLE classes ADD COLUMN proofCooldownHours INTEGER");
   if (!classColumns.includes("recoveryHash")) await client.execute("ALTER TABLE classes ADD COLUMN recoveryHash TEXT");
+  // Challenge classes (F11): every class that already exists is a classroom class.
+  if (!classColumns.includes("mode")) {
+    await client.execute("ALTER TABLE classes ADD COLUMN mode TEXT NOT NULL DEFAULT 'classroom' CHECK (mode IN ('classroom', 'challenge'))");
+  }
+  if (!classColumns.includes("joinToken")) await client.execute("ALTER TABLE classes ADD COLUMN joinToken TEXT");
+  if (!classColumns.includes("title")) await client.execute("ALTER TABLE classes ADD COLUMN title TEXT");
+  if (!classColumns.includes("armStart")) await client.execute("ALTER TABLE classes ADD COLUMN armStart TEXT CHECK (armStart IN ('A', 'B'))");
+  // a join link opens exactly one class
+  await client.execute("CREATE UNIQUE INDEX IF NOT EXISTS classes_join_token ON classes (joinToken) WHERE joinToken IS NOT NULL");
+  const studentColumns = (await client.execute("PRAGMA table_info(students)")).rows.map((r) => r.name);
+  if (!studentColumns.includes("selfGrade")) await client.execute("ALTER TABLE students ADD COLUMN selfGrade INTEGER");
+  if (!studentColumns.includes("studyArm")) await client.execute("ALTER TABLE students ADD COLUMN studyArm TEXT CHECK (studyArm IN ('A', 'B'))");
+  if (!studentColumns.includes("joinedAt")) await client.execute("ALTER TABLE students ADD COLUMN joinedAt TEXT");
 
   // Mined mistake statuses were draft/approved/rejected; now DRAFT_TESTED/APPROVED/REJECTED.
   const mined = await client.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'minedMistakes'");
@@ -805,10 +852,11 @@ export async function openStore(config: StoreConfig | string = {}) {
     insertClass(c: NewClass, teacherPinHash: string | null = null, recoveryHash: string | null = null): Promise<boolean> {
       return tryInsert(
         `INSERT INTO classes (id, code, grade, section, aiAllowed, teacherPinHash, proofWindowRequired, proofWindowOpenUntil, kind, expiresAt,
-                              consentRecordedAt, consentSlips, proofCooldownHours, recoveryHash)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                              consentRecordedAt, consentSlips, proofCooldownHours, recoveryHash, mode, joinToken, title, armStart)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         c.id, c.code, c.grade, c.section, c.aiAllowed ? 1 : 0, teacherPinHash, c.proofWindowRequired ? 1 : 0, c.proofWindowOpenUntil,
         c.kind ?? "real", c.expiresAt ?? null, c.consentRecordedAt ?? null, c.consentSlips ?? null, c.proofCooldownHours ?? null, recoveryHash,
+        c.mode ?? "classroom", c.joinToken ?? null, c.title ?? null, c.armStart ?? null,
       );
     },
     /**
@@ -891,6 +939,52 @@ export async function openStore(config: StoreConfig | string = {}) {
     async getClassByCode(code: string): Promise<ClassRow | undefined> {
       const r = await one(`SELECT ${CLASS_COLUMNS} FROM classes WHERE code = ?`, code);
       return r && toClass(r);
+    },
+    /** The challenge class this join link opens (a classroom class has no link). */
+    async getClassByJoinToken(token: string): Promise<ClassRow | undefined> {
+      const r = await one(`SELECT ${CLASS_COLUMNS} FROM classes WHERE joinToken = ? AND mode = 'challenge'`, token);
+      return r && toClass(r);
+    },
+    /**
+     * A student joining a challenge class, in ONE statement, so two joins at the same moment can never both pass a
+     * limit or get the same group. Refused unless the class has fewer than maxStudents students and fewer than
+     * maxRecent joined since recentSince. The group alternates within the student's class level from the class's
+     * armStart: the k-th student of a level (k = 0, 1, …) gets armStart when k is even, the other group when k is
+     * odd. Returns the group, "refused" (a limit), or "code_taken" (try another code).
+     */
+    async insertChallengeStudent(
+      s: { id: string; classId: string; code: string; selfGrade: number; joinedAt: string },
+      limits: { maxStudents: number; maxRecent: number; recentSince: string },
+    ): Promise<StudyArm | "refused" | "code_taken"> {
+      try {
+        const out = await write(
+          `INSERT INTO students (id, classId, code, selfGrade, studyArm, joinedAt)
+           SELECT ?, c.id, ?, ?,
+                  CASE ((SELECT COUNT(*) FROM students WHERE classId = c.id AND selfGrade = ?) + (c.armStart = 'B')) % 2 WHEN 0 THEN 'A' ELSE 'B' END,
+                  ?
+           FROM classes c
+           WHERE c.id = ? AND c.mode = 'challenge' AND c.armStart IS NOT NULL
+             AND (SELECT COUNT(*) FROM students WHERE classId = c.id) < ?
+             AND (SELECT COUNT(*) FROM students WHERE classId = c.id AND joinedAt >= ?) < ?
+           RETURNING studyArm`,
+          s.id, s.code, s.selfGrade, s.selfGrade, s.joinedAt, s.classId, limits.maxStudents, limits.recentSince, limits.maxRecent,
+        );
+        const arm = out.rows[0]?.studyArm;
+        return arm === "A" || arm === "B" ? arm : "refused";
+      } catch (e) {
+        if (isUniqueViolation(e)) return "code_taken";
+        throw e;
+      }
+    },
+    /** How many students a class has, and how many joined since a time, in one read. */
+    async countJoins(classId: string, since: string): Promise<{ students: number; recent: number }> {
+      const r = (await one("SELECT COUNT(*) AS n, COALESCE(SUM(joinedAt >= ?), 0) AS recent FROM students WHERE classId = ?", since, classId))!;
+      return { students: Number(r.n), recent: Number(r.recent) };
+    },
+    /** A student with their challenge class level, group and join time (all null for a classroom student). */
+    async getChallengeStudent(id: string): Promise<ChallengeStudentRow | undefined> {
+      const r = await one("SELECT id, classId, code, selfGrade, studyArm, joinedAt FROM students WHERE id = ?", id);
+      return r && toChallengeStudent(r);
     },
     /** The class, its teacher PIN hash and its failed PIN checks since a time, in one read (for the PIN check). */
     async getClassWithPinHashByCode(

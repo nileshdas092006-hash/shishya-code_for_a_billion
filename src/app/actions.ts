@@ -8,6 +8,7 @@ import { getServices, isSetupError, requireSetup } from "@/server/instance";
 import { COOLDOWN_CHOICES, type CooldownChoice } from "@/server/services";
 import { logServerError } from "@/server/setup";
 import { SETUP_MISSING_TEACHER } from "./_lib/page-guard";
+import { joinLink, siteOrigin } from "./_lib/site";
 import {
   addTeacherClass,
   currentStudent,
@@ -68,7 +69,25 @@ export async function loginStudent(_prev: { error?: MessageKey }, form: FormData
     return { error: result.code === "locked_out" ? "login.tooMany" : result.code === "consent_needed" ? "login.consentNeeded" : "login.wrong" };
   }
   await startStudentSession(result.studentId);
-  redirect("/s/home");
+  // a Shishya Challenge student comes back to their challenge, not the skill map
+  const ctx = await (await getServices()).getStudentContext(result.studentId);
+  redirect(ctx?.classMode === "challenge" ? "/s/challenge" : "/s/home");
+}
+
+// ---------------- the Shishya Challenge: join with the public link (works before the page is ready) ----------------
+
+/** "I understand, start": a new student with a random code, logged in on this phone, then the challenge page. */
+export async function joinChallengeAction(token: string, form: FormData) {
+  const back = `/join/${encodeURIComponent(str(token, 20))}`;
+  if (notSetUp("challenge join")) redirect(`${back}?e=setup`);
+  const grade = Number(str(form.get("grade"), 3));
+  const result = await (await getServices()).joinChallenge(str(token, 20), grade);
+  if (!result.ok) {
+    if (result.code === "none") redirect(back);
+    redirect(`${back}?e=${result.code === "bad_request" ? "grade" : result.code === "full" ? "full" : "busy"}#join`);
+  }
+  await startStudentSession(result.studentId);
+  redirect("/s/challenge");
 }
 
 export async function logoutStudent() {
@@ -228,6 +247,32 @@ export async function createClassAction(_prev: CreateClassState, form: FormData)
       return { status: "error", message: SETUP_MISSING_TEACHER };
     }
     return { status: "error", message: e instanceof Error ? e.message : "Could not create the class." };
+  }
+}
+
+export type CreateChallengeState =
+  | { status: "idle" }
+  | { status: "error"; error: MessageKey | null; message?: string; title: string; trial: boolean }
+  | { status: "created"; title: string; trial: boolean; classCode: string; pin: string; recoveryCode: string; link: string };
+
+/** "Create a challenge link (online, no classroom)": the class, its PIN and recovery code (shown once) and its join link. */
+export async function createChallengeAction(_prev: CreateChallengeState, form: FormData): Promise<CreateChallengeState> {
+  const title = str(form.get("title"), 200).trim();
+  const trial = form.get("trial") === "on";
+  const again = (error: MessageKey | null, message?: string): CreateChallengeState => ({ status: "error", error, message, title, trial });
+  if (form.get("online") !== "on") return again("create.challenge.needOnline");
+  if (title.length < 1 || title.length > 60) return again("create.challenge.needName");
+  try {
+    const ch = await (await getServices()).createChallenge({ title, trial, online: true });
+    await addTeacherClass(ch.classId);
+    return { status: "created", title, trial, classCode: ch.classCode, pin: ch.pin, recoveryCode: ch.recoveryCode, link: joinLink(await siteOrigin(), ch.joinToken) };
+  } catch (e) {
+    if (isSetupError(e)) {
+      logServerError("create challenge", e);
+      return again(null, SETUP_MISSING_TEACHER);
+    }
+    logServerError("create challenge", e);
+    return again("common.error");
   }
 }
 

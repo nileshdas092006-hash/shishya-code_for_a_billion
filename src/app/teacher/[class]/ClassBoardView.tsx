@@ -10,6 +10,8 @@ import { PatternGrid, SlipList } from "./PatternGrid";
 import { StudentCodeSheet } from "../CreateClassForm";
 import { PrintButton } from "../PrintButton";
 import { stateWord } from "../../_lib/state-words";
+import { joinLink, siteOrigin } from "../../_lib/site";
+import { CopyButton } from "../../_components/CopyButton";
 
 // The teacher's class board itself (the page checks the PIN first). Also shown, unchanged, as stop 5 of the Judge
 // Tour for the tour's made-up class. Shows student CODES only, never names.
@@ -23,13 +25,21 @@ export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Que
   const { stuck, progress, mined, codes, proofWindow, proofCooldown, numberBasics } = await (await getServices()).getClassBoard(cls.id);
   const base = `/teacher/${encodeURIComponent(cls.code)}`;
   const tour = cls.kind === "sandbox";
+  const challenge = cls.mode === "challenge";
 
   return (
     <div className="flex flex-col gap-8">
       <div className="flex flex-wrap items-center justify-between gap-3 no-print">
-        <h1 className="text-3xl font-extrabold">
-          Class {cls.grade}
-          {cls.section} <span className="math text-2xl text-gray-700">({cls.code})</span>
+        <h1 className="text-3xl font-extrabold break-words min-w-0">
+          {challenge ? (
+            t("board.challenge.heading", { title: cls.title ?? "" })
+          ) : (
+            <>
+              Class {cls.grade}
+              {cls.section}
+            </>
+          )}{" "}
+          <span className="math text-2xl text-gray-700">({cls.code})</span>
         </h1>
         <div className="flex flex-wrap gap-3">
           <Link href={`${base}/project`} className="btn btn-primary">
@@ -44,12 +54,27 @@ export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Que
         </div>
       </div>
       <p className="text-base text-gray-700 no-print">{t("board.export.impact")}</p>
-      {!cls.aiAllowed && <p className="msg-note no-print">Class 7: AI chat is switched off for this class, always.</p>}
+      {challenge ? (
+        <p className="msg-note no-print">{t("board.challenge.noAi")}</p>
+      ) : (
+        !cls.aiAllowed && <p className="msg-note no-print">Class 7: AI chat is switched off for this class, always.</p>
+      )}
+
+      {challenge && cls.joinToken && <ChallengeLink token={cls.joinToken} trial={cls.kind === "test"} />}
 
       {!cls.consentRecordedAt && <ConsentForm classCode={cls.code} showCheck={query.consent === "check"} />}
 
-      <ProofWindow classCode={cls.code} proof={proofWindow} tour={tour} />
-      {!tour && <Cooldown classCode={cls.code} cooldown={proofCooldown} />}
+      {challenge ? (
+        <section className="card flex flex-col gap-3 no-print" aria-labelledby="proofs">
+          <h2 id="proofs" className="text-2xl font-bold">
+            {t("board.proofs.title")}
+          </h2>
+          <p>{t("board.challenge.proofs")}</p>
+        </section>
+      ) : (
+        <ProofWindow classCode={cls.code} proof={proofWindow} tour={tour} />
+      )}
+      {!tour && !challenge && <Cooldown classCode={cls.code} cooldown={proofCooldown} />}
 
       <section className="flex flex-col gap-3 no-print" aria-labelledby="stuck">
         <h2 id="stuck" className="text-2xl font-bold">
@@ -201,13 +226,14 @@ export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Que
         )}
         <div className="flex flex-wrap gap-3 no-print">
           <PrintButton label="Print student codes" />
-          {query.confirm !== "codes" && (
+          {!challenge && query.confirm !== "codes" && (
             <Link href={`${base}?confirm=codes#codes`} className="btn">
               {t("board.codes.give")}
             </Link>
           )}
         </div>
-        {query.confirm === "codes" && (
+        {challenge && <p className="text-base text-gray-700 no-print">{t("board.challenge.codesKept")}</p>}
+        {!challenge && query.confirm === "codes" && (
           <div className="card flex flex-col gap-3 border-amber-700 no-print">
             <p className="text-xl">{t("board.codes.confirm")}</p>
             <form action={giveNewCodes.bind(null, cls.code)} className="flex flex-wrap gap-3">
@@ -227,9 +253,11 @@ export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Que
         <section className="flex flex-col gap-3 no-print" aria-label={t("board.delete.link")}>
           {cls.consentRecordedAt && (
             <p className="text-base text-gray-700">
-              {cls.consentSlips === null
-                ? t("board.consent.doneOld", { date: cls.consentRecordedAt.slice(0, 10) })
-                : t("board.consent.done", { date: cls.consentRecordedAt.slice(0, 10), n: cls.consentSlips })}
+              {challenge
+                ? t("board.challenge.consent", { date: cls.consentRecordedAt.slice(0, 10) })
+                : cls.consentSlips === null
+                  ? t("board.consent.doneOld", { date: cls.consentRecordedAt.slice(0, 10) })
+                  : t("board.consent.done", { date: cls.consentRecordedAt.slice(0, 10), n: cls.consentSlips })}
             </p>
           )}
           <Link href={`${base}/delete`} className="btn self-start text-red-800">
@@ -238,6 +266,19 @@ export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Que
         </section>
       )}
     </div>
+  );
+}
+
+/** A challenge's one public join link, to share again (with Copy). */
+async function ChallengeLink({ token, trial }: { token: string; trial: boolean }) {
+  const link = joinLink(await siteOrigin(), token);
+  return (
+    <section className="card flex flex-col gap-2 no-print" aria-label={t("board.challenge.link")}>
+      <p className="text-lg font-semibold">{t("board.challenge.link")}</p>
+      <p className="math text-lg font-bold break-all">{link}</p>
+      <CopyButton text={link} />
+      {trial && <p className="msg-note">{t("board.challenge.trial")}</p>}
+    </section>
   );
 }
 

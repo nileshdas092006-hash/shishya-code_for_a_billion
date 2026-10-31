@@ -24,7 +24,7 @@ export const RECHECK_QUESTIONS = 2;
 export const RECHECK_TIME_LIMIT_MINUTES = 15;
 
 type Evidence = {
-  unlock?: { by: "teacher" } | { by: "prerequisites"; prerequisites: string[] };
+  unlock?: { by: "teacher" } | { by: "prerequisites"; prerequisites: string[] } | { by: "challenge" };
   key1?: { sessionId: string; itemIds: string[]; traceIds: string[]; version: string };
   proof?: { runId: string; itemIds: string[]; version: string };
   failedProofs?: { runId: string; version: string; reasons: string[] }[];
@@ -122,6 +122,20 @@ export async function teacherUnlockMany(store: Store, studentIds: string[], rows
     .map((id) => ({ id, row: byKey.get(key(id, entry.spec.id)) }))
     .filter(({ row }) => stateOf(row, entry) === "LOCKED")
     .map(({ id, row }) => change(id, entry, "LOCKED", "OPEN", { ...evidenceOf(row), unlock: { by: "teacher" } }, now));
+  await write(store, changes);
+  return changes.length;
+}
+
+/**
+ * LOCKED → OPEN for every skill, for a student who just joined a Shishya Challenge class (no teacher is there to
+ * open skills; the organiser chose "every skill open" when making the link). `rows`: the student's mastery rows
+ * (none for a student who has just joined). One batch. Returns how many opened.
+ */
+export async function openForChallenge(store: Store, studentId: string, rows: MasteryRow[], entries: SkillEntry[], now: Date): Promise<number> {
+  const byKey = new Map(rows.filter((r) => r.studentId === studentId).map((r) => [r.skillId, r]));
+  const changes = entries
+    .filter((e) => stateOf(byKey.get(e.spec.id), e) === "LOCKED")
+    .map((e) => change(studentId, e, "LOCKED", "OPEN", { ...evidenceOf(byKey.get(e.spec.id)), unlock: { by: "challenge" } }, now));
   await write(store, changes);
   return changes.length;
 }

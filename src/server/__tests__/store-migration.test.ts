@@ -84,3 +84,36 @@ describe("store migration: item source (P1a Paper Mode)", () => {
     again.close();
   });
 });
+
+describe("store migration: challenge classes (F11)", () => {
+  it("adds classes.mode/joinToken/title and students.selfGrade/studyArm/joinedAt; old rows keep working; running twice is safe", async () => {
+    const tmp = tempDbUrl();
+    cleanup = tmp.cleanup;
+    const old = createClient({ url: tmp.url });
+    await old.executeMultiple(`
+      CREATE TABLE classes (
+        id TEXT PRIMARY KEY, code TEXT NOT NULL UNIQUE, grade INTEGER NOT NULL CHECK (grade BETWEEN 1 AND 12),
+        section TEXT NOT NULL DEFAULT '', aiAllowed INTEGER NOT NULL CHECK (aiAllowed IN (0, 1)), teacherPinHash TEXT);
+      INSERT INTO classes VALUES ('c1', '8B-OLD1', 8, 'B', 1, NULL);
+      CREATE TABLE students (id TEXT PRIMARY KEY, classId TEXT NOT NULL REFERENCES classes(id), code TEXT NOT NULL, UNIQUE (classId, code));
+      INSERT INTO students VALUES ('s1', 'c1', '8B-17');
+    `);
+    old.close();
+
+    const store = await openStore({ url: tmp.url });
+    expect(await store.getClass("c1")).toMatchObject({ code: "8B-OLD1", mode: "classroom", joinToken: null, title: null });
+    expect(await store.getStudent("s1")).toMatchObject({ id: "s1", code: "8B-17" });
+    expect(await store.getChallengeStudent("s1")).toMatchObject({ selfGrade: null, studyArm: null, joinedAt: null });
+    // a challenge class can be made on the upgraded database, and its token is unique
+    const challenge = { grade: 7, section: "", aiAllowed: false, proofWindowRequired: false, proofWindowOpenUntil: null, mode: "challenge" as const };
+    expect(await store.insertClass({ ...challenge, id: "c2", code: "CH-NEW1", joinToken: "ABCDEFGHJKMN", title: "T", armStart: "A" })).toBe(true);
+    expect(await store.insertClass({ ...challenge, id: "c3", code: "CH-NEW2", joinToken: "ABCDEFGHJKMN", title: "T", armStart: "A" })).toBe(false);
+    expect((await store.getClassByJoinToken("ABCDEFGHJKMN"))?.id).toBe("c2");
+    store.close();
+
+    const again = await openStore({ url: tmp.url });
+    expect(await again.getClass("c1")).toMatchObject({ mode: "classroom" });
+    expect(await again.getClass("c2")).toMatchObject({ mode: "challenge", joinToken: "ABCDEFGHJKMN" });
+    again.close();
+  });
+});
