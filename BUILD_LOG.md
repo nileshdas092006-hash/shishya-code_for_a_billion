@@ -494,3 +494,13 @@
 - No new dependency. Mastery untouched.
 - Files: `src/server/{impact,stats,impact-route,challenge,store,services}.ts`, `src/app/api/impact/route.ts`, `src/app/impact/page.tsx`, `src/app/page.tsx`, `src/app/actions.ts`, `src/app/teacher/[class]/ClassBoardView.tsx`, `src/i18n/{en,hi}.ts` (Hindi marked `// HINDI-REVIEW`), tests above, `BUILD_LOG.md`.
 - Built in AgentFoundry with Claude Code.
+
+## 2026-11-01: F11 Part 4. Honesty fixes in the README
+- The README said the Skill Author "drafts new skills". It has never produced a merged skill. Now: the intro says the Skill Author "is experimental, tries to draft new skills (it has not yet produced a skill that was merged)", and its section is "Skills and the Skill Author (AI agent, experimental)" with "it has not yet produced a skill that was merged into Shishya, and none of the five skills above came from it." The Misconception Miner claims are unchanged.
+- New README section **Shishya Challenge**: what it is (one link, Classes 7–10, alone on a phone, a random code, before check → practice → after check → feedback, groups A and B, a later check 3 to 21 days on, checks scored by code and never changing progress), the link to `/impact` (and `/api/impact`), that only real challenge classes count and averages over fewer than 5 are not shown, and the honesty note word for word.
+- Test fix: one F11 test (the impact page from 12 students) passed alone in about 1 s but hit Vitest's 5 s limit once while all 71 test files ran at the same time. The seven F11 tests that make many students (6 to 300) now have a 30 s limit (`HEAVY`); nothing they check changed. Two full runs in a row: 682 of 682 pass.
+- Checks: 682 tests pass, lint clean, type check clean, `npm run build` passes (DATABASE_URL pointed at a scratch file).
+- Still not done from F11: the 360 px browser check of Part 3 (board panel, approving a quote, /impact numbers with groups under 5 hidden). Its driver is written and kept in the session scratchpad (`e2e.mjs part3`, `e2e-part3.mjs`, `seed-more.mjs`); it was not run. Parts 1–2 passed 39 of 39 browser checks.
+- No new dependency. No code change outside tests.
+- Files: `README.md`, `src/server/__tests__/{challenge-impact,challenge-join}.test.ts`, `BUILD_LOG.md`.
+- Built in AgentFoundry with Claude Code.

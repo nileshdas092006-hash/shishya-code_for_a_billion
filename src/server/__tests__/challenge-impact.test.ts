@@ -14,6 +14,9 @@ import { makeClock, SKILL, tempDbUrl } from "./helpers";
 // approve or hide), the pilot CSV's challenge columns, and the public numbers at /api/impact: worked out from REAL
 // challenge classes only, with every check scored again from its seeds, and only approved comments.
 
+/** Tests that make many students: fine alone (about 1 s), slower while every test file runs at once. */
+const HEAVY = 30_000;
+
 let cleanup: (() => void) | undefined;
 afterEach(() => {
   cleanup?.();
@@ -97,7 +100,7 @@ describe("/api/impact", () => {
     expect(JSON.stringify(out)).not.toContain("TRIAL-COMMENT");
     expect(kids.map((k) => k.arm)).toEqual(["A", "B", "A", "B", "A"]); // groups of 3 and 2: not shown
     expect(out.scores.byGroup.A).toEqual({ shown: false, n: 3 });
-  });
+  }, HEAVY);
 
   it("scores are worked out again from the seeds: a changed stored score changes nothing", async () => {
     const c = await fresh();
@@ -175,7 +178,7 @@ describe("/api/impact", () => {
     const failed = await impactResponse(async () => c.svc);
     expect(failed.status).toBe(503);
     expect(await failed.text()).toBe(JSON.stringify({ ok: false }));
-  });
+  }, HEAVY);
 
   it("is set-based: the same number of database round trips for 2 students or 14", async () => {
     const c = await fresh();
@@ -187,7 +190,7 @@ describe("/api/impact", () => {
     expect(many.out.reached.joined).toBe(14);
     expect(many.n).toBe(few.n);
     expect(many.n).toBeLessThanOrEqual(6);
-  });
+  }, HEAVY);
 
   it("wrong answers explained by known mistakes come from the challenge's real answers", async () => {
     const c = await fresh();
@@ -273,7 +276,7 @@ describe("the class board's Challenge panel", () => {
     await c.svc.getClassBoard(real.classId);
     const { n } = await c.trips(() => c.svc.getClassBoard(real.classId));
     expect(n).toBeLessThanOrEqual(9);
-  });
+  }, HEAVY);
 });
 
 describe("the pilot CSV of a challenge class", () => {

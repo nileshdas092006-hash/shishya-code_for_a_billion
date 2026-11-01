@@ -12,6 +12,9 @@ import { answerProof, makeClock, SKILL, teachPerfectly, tempDbUrl } from "./help
 // no wait after a missed proof. Each student is put in group A (practise only) or B (practise + teach the Shishya),
 // alternating within each class level from a random start, once, and never changed.
 
+/** Tests that make many students: fine alone (about 1 s), slower while every test file runs at once. */
+const HEAVY = 30_000;
+
 let cleanup: (() => void) | undefined;
 afterEach(() => {
   cleanup?.();
@@ -135,7 +138,7 @@ describe("joining with the link", () => {
       codes.add((await joined(svc, ch.joinToken, 7 + (i % 4))).code);
     }
     expect(codes.size).toBe(120);
-  });
+  }, HEAVY);
 
   it("is impossible with a wrong token, an old classroom class, or a deleted challenge", async () => {
     const { svc, store } = await fresh();
@@ -162,7 +165,7 @@ describe("joining with the link", () => {
     clock.advanceMinutes(10);
     clock.advanceMinutes(1);
     expect(await svc.joinChallenge(ch.joinToken, 9)).toMatchObject({ ok: true });
-  });
+  }, HEAVY);
 
   it("at most 300 students per challenge class", async () => {
     const { svc, store, clock } = await fresh();
@@ -174,7 +177,7 @@ describe("joining with the link", () => {
     clock.advanceMinutes(11);
     expect(await svc.joinChallenge(ch.joinToken, 8)).toMatchObject({ ok: false, code: "full" });
     expect(await store.countStudents(ch.classId)).toBe(300);
-  });
+  }, HEAVY);
 
   it("a challenge class never needs the teacher: proofs start without a window, a missed proof can be tried again at once", async () => {
     const { svc, store } = await fresh();

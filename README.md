@@ -7,7 +7,8 @@ exact step of an equation each child gets wrong, lets the child fix it by "teach
 whose working has a mistake), and then asks for proof. No AI help inside the proof. It opens only when the teacher
 opens it in class. Code, not AI, decides when a child has truly learned a skill. Two AI agents help behind the scenes,
 always checked by code and approved by a teacher: the Misconception Miner turns unexplained wrong answers into new
-mistake patterns, and the Skill Author drafts new skills.
+mistake patterns, and the Skill Author, which is experimental, tries to draft new skills (it has not yet produced a
+skill that was merged).
 No names are stored, children under 13 never see an AI chat, and every child-facing word follows the NCERT textbook,
 in English and Hindi.
 
@@ -49,6 +50,22 @@ library explains is shown as **Not matched to a known mistake**. When there are 
 on the board as a **New mistake found in your class**, with the real wrong answers it explains and 4 ticks from the
 code checks, and approves or rejects it. Children never see the AI's words: they see a fixed message written by
 people, or the teacher's own words. The page **How the agent worked** lists the agent's last runs and each verdict.
+
+## Shishya Challenge
+
+An online trial of Shishya for school students (Classes 7–10) who join alone on their own phones through one link, with
+no teacher in the room. The organiser makes the link on the teacher page ("Create a challenge link (online, no
+classroom)"). A student says which class they are in, gets a random code (never a name, phone or email), and does a
+guided session of about 20 minutes: a 6-question check, practice on "x on both sides", a new 6-question check of the
+same kind, and feedback. Each student is put in group A (practise only) or group B (practise and teach the Shishya),
+alternating within each class level. A 4-question check opens 3 to 21 days later. Checks are scored by code from each
+question's seed, and they never change a child's progress.
+
+The results are public at **[/impact](https://shishya-codeforabillion.vercel.app/impact)** (and as JSON at
+`/api/impact`), worked out from real challenge classes only; trial runs and test classes are never counted, and any
+average over fewer than 5 students is not shown. Honesty note, as the page says it: *An online trial: students chose
+to join, did one session on their own phones, and there was no classroom teacher. Small numbers. Not a classroom
+study.*
 
 ## Features
 
@@ -136,12 +153,14 @@ version), the authored mistakes and the mistakes found by the Miner that a teach
 type, first wrong line, and for found ones the line templates and answer formula), each with a worked example. It
 holds no child data at all. The format is in [docs/SKILL_SPEC.md](docs/SKILL_SPEC.md#use-our-mistakes-in-your-own-tutor-get-apimistakes).
 
-## Skills and the Skill Author (AI agent)
+## Skills and the Skill Author (AI agent, experimental)
 
 Five skills form a chain: integers → like terms → one-step equations → two-step equations → variables on both sides
 (`src/core/skills/`, notes in `docs/skills/`). Every skill passes the same property tests over 1,000 generated questions.
 
-The Skill Author drafts a new skill and its tests on a separate branch, never touching your working folder:
+The Skill Author is experimental: it has not yet produced a skill that was merged into Shishya, and none of the five
+skills above came from it. When run, it tries to draft a new skill and its tests on a separate branch, never touching
+your working folder:
 
 ```bash
 npm run author -- alg.integers.multiply "Multiply and divide integers, like −3 × 4 = −12"
