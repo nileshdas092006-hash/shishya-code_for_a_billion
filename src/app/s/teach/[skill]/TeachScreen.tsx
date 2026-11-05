@@ -114,13 +114,13 @@ export function TeachScreen({ skillId, challenge }: { skillId: string; challenge
     <div className="flex flex-col gap-1" aria-live="polite">
       <span className="font-bold">{t("teach.progress", { n: fixed, total })}</span>
       <div
-        className="h-6 w-full rounded-full bg-gray-200 border-2 border-gray-400 overflow-hidden"
+        className="h-6 w-full rounded-full bg-(--rule) border-2 border-(--rule) overflow-hidden"
         role="progressbar"
         aria-valuemin={0}
         aria-valuemax={total}
         aria-valuenow={fixed}
       >
-        <div className="h-full bg-green-600" style={{ width: `${(fixed / total) * 100}%` }} />
+        <div className="h-full bg-(--good)" style={{ width: `${(fixed / total) * 100}%` }} />
       </div>
     </div>
   );
@@ -189,7 +189,7 @@ export function TeachScreen({ skillId, challenge }: { skillId: string; challenge
               value={typed}
               onChange={(e) => setTyped(e.target.value)}
               autoComplete="off"
-              className="field math text-3xl"
+              className={`field math text-3xl ${result && !result.ok ? "field-bad" : ""}`}
               aria-describedby="type-hint"
             />
           </label>

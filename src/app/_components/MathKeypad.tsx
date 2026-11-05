@@ -55,7 +55,7 @@ export function MathKeypad({
   };
 
   return (
-    <div role="group" aria-label={t("keypad.label")} className="grid grid-cols-3 gap-2 w-full max-w-xs">
+    <div role="group" aria-label={t("keypad.label")} className="grid grid-cols-3 gap-[0.4rem] w-full max-w-xs">
       {KEYPAD_KEYS.map((key) => {
         const label = LABELS[key];
         return (
@@ -67,7 +67,7 @@ export function MathKeypad({
             // keep the focus (and the cursor) in the answer box
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => tap(key)}
-            className={`btn min-h-12 min-w-12 px-2 text-2xl font-bold math justify-center${key === "clear" ? " col-span-2" : ""}`}
+            className={`btn key min-h-12 min-w-12 px-2 text-2xl font-bold math justify-center${key === "clear" ? " col-span-2" : ""}`}
           >
             {key === "clear" ? t("keypad.clear") : (FACES[key] ?? key)}
           </ReadyButton>

@@ -109,6 +109,19 @@ body {
 .field:focus {
   border-color: var(--brand);
 }
+.field-bad {
+  border-color: var(--bad);
+}
+.field-bad:focus {
+  border-color: var(--bad);
+}
+
+/* the maths keypad's keys: min-height stays 3rem, from .btn */
+.key {
+  border: 2px solid var(--rule);
+  border-radius: 0.6rem;
+  color: var(--brand-dark);
+}
 
 .math {
   font-family: "Cambria Math", "Segoe UI", "Noto Sans", Arial, sans-serif;

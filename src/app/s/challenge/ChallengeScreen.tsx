@@ -141,7 +141,7 @@ function StepBar({ current }: { current: number }) {
             key={s}
             aria-current={state === "now" ? "step" : undefined}
             className={`rounded-full border-2 px-3 py-1 text-lg font-bold ${
-              state === "now" ? "border-blue-800 bg-blue-800 text-white" : state === "done" ? "border-green-700 text-green-800" : "border-gray-400 text-gray-700"
+              state === "now" ? "border-(--brand) bg-(--brand) text-white" : state === "done" ? "border-(--good) bg-(--good-bg) text-(--good)" : "border-(--rule) text-(--muted)"
             }`}
           >
             {n} {t(`challenge.step.${s}`)}

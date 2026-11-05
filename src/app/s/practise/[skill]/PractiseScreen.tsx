@@ -115,7 +115,7 @@ export function PractiseScreen({ skillId, answerKind, challenge }: { skillId: st
               disabled={answered}
               inputMode="text"
               autoComplete="off"
-              className="field math text-3xl max-w-xs"
+              className={`field math text-3xl max-w-xs ${feedback?.kind === "bad" ? "field-bad" : ""}`}
               aria-describedby="answer-hint"
             />
           </label>
