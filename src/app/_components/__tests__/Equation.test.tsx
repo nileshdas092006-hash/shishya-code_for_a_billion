@@ -37,6 +37,7 @@ describe("<Equation>", () => {
     expect(text(html)).toBe("3 −2 4 5");
     expect(html).toContain('aria-label="[[3, −2], [4, 5]]"');
     expect(html).toMatch(/grid-cols-2/);
+    expect(html).toMatch(/w-fit/); // never stretched across a card: its bars stay next to its numbers
     expect(html).not.toContain("nowrap");
   });
 

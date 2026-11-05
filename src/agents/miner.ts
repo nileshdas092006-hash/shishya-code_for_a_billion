@@ -2,7 +2,7 @@ import { asFraction, parseAnswer } from "../core/answer";
 import { formatEquation, fracText } from "../core/format";
 import { validateMinedMistake, type MinedMistakeSpec, type UnknownError, type ValidationResult } from "../core/minedMistake";
 import { createRng } from "../core/rng";
-import { getSkillEntry } from "../core/skills";
+import { getSkillEntry, packOf } from "../core/skills";
 import type { Mistake, SkillSpec } from "../core/types";
 import type { ChatModel } from "./llm";
 import { runAgent, type AgentTool } from "./loop";
@@ -149,6 +149,10 @@ export async function runMiner(opts: {
   const entry = getSkillEntry(opts.skillId);
   if (!entry) throw new Error(`Unknown skill: ${opts.skillId}`);
   const skill = entry.spec;
+  // The college pack (F12) stays out for now: a determinant also has a, b, c, d, so the check below would not stop it.
+  if (packOf(entry) === "college") {
+    throw new Error(`The Misconception Miner only works on school algebra for now: its formulas use a, b, c, d of a·x + b = c·x + d (${opts.skillId} is a college skill). Wrong answers nobody can explain are still logged for this skill.`);
+  }
   // Mined mistakes are formulas over a, b, c, d for a·x + b = c·x + d with a number answer.
   if (skill.answerKind !== "number" || !["a", "b", "c", "d"].every((k) => k in skill.generate(createRng(1)).params)) {
     throw new Error(`The Misconception Miner only supports equations a·x + b = c·x + d for now (${opts.skillId} is a different kind of skill).`);

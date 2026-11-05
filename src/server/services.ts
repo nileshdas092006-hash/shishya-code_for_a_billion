@@ -1520,8 +1520,8 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     },
 
     /**
-     * /impact and /api/impact: the Shishya Challenge's numbers from REAL challenge classes only, worked out by the
-     * pure computeImpact (src/server/impact.ts). Every check is scored again from its seeds here; a comment's text
+     * /impact and /api/impact: the Shishya Challenge's numbers from REAL challenge classes only, each pack in its own
+     * block, worked out by the pure computeImpact (src/server/impact.ts). Every check is scored again from its seeds here; a comment's text
      * is read only when it may be quoted AND was approved. Set-based: the same few reads however many students.
      */
     async impact() {
@@ -2190,15 +2190,18 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         "proofsPassed",
         "studentsKey1",
         "studentsMastered",
+        // which pack this class is (F12); a college class has no school grade
+        "pack",
         // a challenge class (F11): one row per student (skillId "challenge-student"), never a code
         ...CHALLENGE_CSV_COLUMNS,
         "note",
       ];
       const note = cls.kind !== "real" ? NOT_COUNTED[cls.kind] : students < SMALL_SAMPLE ? "small sample" : "";
       const blank = CHALLENGE_CSV_COLUMNS.map(() => "");
+      const grade = cls.pack === "college" ? "" : cls.grade;
       const rows = (await store.exportCounts(classId)).map((c) =>
         [
-          cls.grade,
+          grade,
           c.skillId,
           students,
           c.practiceAnswers,
@@ -2212,6 +2215,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
           c.proofsPassed,
           c.studentsKey1,
           c.studentsMastered,
+          cls.pack,
           ...blank,
           note,
         ].join(","),
@@ -2232,7 +2236,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
           })
           // sorted by the values themselves, so the order says nothing about who joined when
           .sort((p, q) => p.join(",").localeCompare(q.join(","), "en", { numeric: true }));
-        for (const values of perStudent) rows.push([cls.grade, "challenge-student", ...Array(header.length - 3 - CHALLENGE_CSV_COLUMNS.length).fill(""), ...values, note].join(","));
+        for (const values of perStudent) rows.push([grade, "challenge-student", ...Array(header.length - 4 - CHALLENGE_CSV_COLUMNS.length).fill(""), cls.pack, ...values, note].join(","));
       }
       await log(null, "pilot_export", { classId, rows: rows.length });
       return [header.join(","), ...rows].join("\n") + "\n";

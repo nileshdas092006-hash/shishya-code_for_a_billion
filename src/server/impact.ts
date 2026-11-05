@@ -1,3 +1,4 @@
+import type { Pack } from "../core/types";
 import { paired, welch } from "./stats";
 import type { CheckPhase, ClassKind, ClassMode, StudyArm } from "./store";
 
@@ -5,7 +6,8 @@ import type { CheckPhase, ClassKind, ClassMode, StudyArm } from "./store";
 // the service reads. Only REAL challenge classes count: never a trial run, a test class, a Judge Tour class or a
 // classroom class. Any average over fewer than MIN_GROUP students is not shown, and nothing that names a student
 // (a code, an id) or a class ever goes into the result. A comment appears only if the student allowed it to be
-// quoted AND the organiser approved it.
+// quoted AND the organiser approved it. Each pack is its own block (F12): the school numbers are the top level of
+// the result, as they were before there was a college pack, and college students are never mixed into them.
 
 export const MIN_GROUP = 5;
 export const CLASS_LEVELS = [7, 8, 9, 10] as const;
@@ -16,9 +18,15 @@ export const HONESTY_NOTE =
 export const SCOPE_NOTE = "Real Shishya Challenge classes only. Trial runs, test classes, Judge Tour classes and classroom classes are never counted.";
 export const METHOD_NOTE =
   "Every check is scored again by code from its questions' seeds. Before → after uses only students who finished both checks, with a paired 95% t-interval. Groups were given at join (alternating within each class level from a random start) and are compared as given; the difference between groups uses Welch's 95% t-interval. Any average over fewer than 5 students is not shown.";
+export const SCHOOL_HEADING = "School students (Classes 7–10)";
+export const COLLEGE_HEADING = "College pack (first-year college students, 2×2 determinants and two-dice probability)";
+export const COLLEGE_NOTE = "The same engine and the same checks, on two college topics, to test that Shishya's Skill Specification works beyond school algebra.";
+export const COLLEGE_METHOD =
+  "Every check is scored again by code from its questions' seeds. Before → after uses only students who finished both checks, with a paired 95% t-interval. Groups were given at join (alternating within each class from a random start) and are compared as given; the difference between groups uses Welch's 95% t-interval. Any average over fewer than 5 students is not shown.";
 
 export type ImpactRows = {
-  classes: { id: string; kind: ClassKind; mode: ClassMode }[];
+  /** pack: a class with none is a school class. */
+  classes: { id: string; kind: ClassKind; mode: ClassMode; pack?: Pack }[];
   students: { id: string; classId: string; code: string; selfGrade: number | null; studyArm: StudyArm | null }[];
   /** Finished checks only matter: a check with no score is not finished. Scores are already re-checked from the seeds. */
   checks: { studentId: string; phase: CheckPhase; score: number | null }[];
@@ -44,6 +52,7 @@ const r2 = (x: number) => {
 };
 
 type Scored = { before: number; after: number };
+type Student = ImpactRows["students"][number];
 
 function pairedResult(rows: Scored[]): PairedResult {
   if (rows.length < MIN_GROUP) return { shown: false, n: rows.length };
@@ -59,22 +68,20 @@ function average(values: number[]): Average {
   return { n: values.length, shown: true, average: r2(values.reduce((s, v) => s + v, 0) / values.length) };
 }
 
-export function computeImpact(rows: ImpactRows, now: Date) {
-  const counted = new Set(rows.classes.filter((c) => c.kind === "real" && c.mode === "challenge").map((c) => c.id));
-  const students = rows.students.filter((s) => counted.has(s.classId) && s.selfGrade !== null && s.studyArm !== null);
+/** The numbers every block has, from one pack's students and nobody else's. */
+function packNumbers(rows: ImpactRows, students: Student[]) {
   const ids = new Set(students.map((s) => s.id));
   const score = new Map<string, number>();
   for (const c of rows.checks) if (ids.has(c.studentId) && c.score !== null) score.set(`${c.studentId}|${c.phase}`, c.score);
   const of = (id: string, phase: CheckPhase) => score.get(`${id}|${phase}`);
-  const withBoth = (list: typeof students) =>
+  const withBoth = <T extends Student>(list: T[]) =>
     list.filter((s) => of(s.id, "pre") !== undefined && of(s.id, "post") !== undefined).map((s) => ({ ...s, before: of(s.id, "pre")!, after: of(s.id, "post")! }));
-
-  const reachedOf = (list: typeof students) => ({
+  const reachedOf = (list: Student[]) => ({
     joined: list.length,
     finishedBefore: list.filter((s) => of(s.id, "pre") !== undefined).length,
     finishedBoth: withBoth(list).length,
   });
-  const atLevel = (level: number) => students.filter((s) => s.selfGrade === level);
+
   const both = withBoth(students);
   const groupA = both.filter((s) => s.studyArm === "A");
   const groupB = both.filter((s) => s.studyArm === "B");
@@ -86,17 +93,11 @@ export function computeImpact(rows: ImpactRows, now: Date) {
   }
 
   const feedback = rows.feedback.filter((f) => ids.has(f.studentId));
-  const levelOf = new Map(students.map((s) => [s.id, s.selfGrade!]));
-  // a quote that holds any student's code (in any case) is left out: a code is a way to log in as that student
+  // a quote that holds any student's code (in any case, in any pack) is left out: a code is a way to log in as that student
   const codes = rows.students.map((s) => s.code.toUpperCase());
-  const quotes = feedback
+  const approved = feedback
     .filter((f) => f.approved === true && f.quoteOk === true && f.comment !== null && f.comment.trim() !== "")
-    .filter((f) => !codes.some((c) => f.comment!.toUpperCase().includes(c)))
-    .map((f) => {
-      const level = levelOf.get(f.studentId)!;
-      return { text: f.comment!.trim(), classLevel: atLevel(level).length >= MIN_GROUP ? level : null };
-    })
-    .sort((p, q) => p.text.localeCompare(q.text));
+    .filter((f) => !codes.some((c) => f.comment!.toUpperCase().includes(c)));
 
   const wrong = rows.wrongAnswers.filter((w) => ids.has(w.studentId));
   const explainedRows = wrong.filter((w) => w.mistakeId !== null && w.mistakeId !== "unknown");
@@ -109,9 +110,44 @@ export function computeImpact(rows: ImpactRows, now: Date) {
     .map(([key, count]) => ({ label: rows.mistakeLabels[key], count }))
     .sort((p, q) => q.count - p.count || p.label.localeCompare(q.label))
     .slice(0, 3);
-
-  const mined = rows.mined.filter((m) => m.realWrongAnswers >= 1).sort((p, q) => q.realWrongAnswers - p.realWrongAnswers || p.label.localeCompare(q.label));
   const delayed = students.map((s) => of(s.id, "delayed")).filter((v): v is number => v !== undefined);
+
+  return {
+    both,
+    withBoth,
+    reachedOf,
+    approved,
+    all: pairedResult(both),
+    byGroup: { A: pairedResult(groupA), B: pairedResult(groupB), difference },
+    delayed: { outOf: DELAYED_OUT_OF, ...average(delayed) },
+    mistakes: { wrongAnswers: total, explained, share: total === 0 ? null : r2(explained / total), top },
+    ratings: {
+      useful: average(feedback.map((f) => f.useful)),
+      teachHelped: average(feedback.map((f) => f.teachHelped).filter((v): v is number => v !== null)),
+    },
+  };
+}
+
+export function computeImpact(rows: ImpactRows, now: Date) {
+  const realChallenge = rows.classes.filter((c) => c.kind === "real" && c.mode === "challenge");
+  const schoolClasses = new Set(realChallenge.filter((c) => c.pack !== "college").map((c) => c.id));
+  const collegeClasses = new Set(realChallenge.filter((c) => c.pack === "college").map((c) => c.id));
+
+  // School: a student says a class level at join. A college student has none (and a college class is not in schoolClasses).
+  const students = rows.students.filter((s) => schoolClasses.has(s.classId) && s.selfGrade !== null && s.studyArm !== null);
+  const school = packNumbers(rows, students);
+  const atLevel = (level: number) => students.filter((s) => s.selfGrade === level);
+  const levelOf = new Map(students.map((s) => [s.id, s.selfGrade!]));
+  const quotes = school.approved
+    .map((f) => {
+      const level = levelOf.get(f.studentId)!;
+      return { text: f.comment!.trim(), classLevel: atLevel(level).length >= MIN_GROUP ? level : null };
+    })
+    .sort((p, q) => p.text.localeCompare(q.text));
+  const mined = rows.mined.filter((m) => m.realWrongAnswers >= 1).sort((p, q) => q.realWrongAnswers - p.realWrongAnswers || p.label.localeCompare(q.label));
+
+  const collegeStudents = rows.students.filter((s) => collegeClasses.has(s.classId) && s.studyArm !== null);
+  const college = packNumbers(rows, collegeStudents);
 
   return {
     title: "Shishya Challenge: results",
@@ -119,21 +155,30 @@ export function computeImpact(rows: ImpactRows, now: Date) {
     scope: SCOPE_NOTE,
     honesty: HONESTY_NOTE,
     method: METHOD_NOTE,
-    reached: { ...reachedOf(students), byClassLevel: CLASS_LEVELS.map((level) => ({ level, ...reachedOf(atLevel(level)) })) },
+    heading: SCHOOL_HEADING,
+    reached: { ...school.reachedOf(students), byClassLevel: CLASS_LEVELS.map((level) => ({ level, ...school.reachedOf(atLevel(level)) })) },
     scores: {
       outOf: CHECK_OUT_OF,
-      all: pairedResult(both),
-      byClassLevel: CLASS_LEVELS.map((level) => ({ level, result: pairedResult(both.filter((s) => s.selfGrade === level)) })),
-      byGroup: { A: pairedResult(groupA), B: pairedResult(groupB), difference },
+      all: school.all,
+      byClassLevel: CLASS_LEVELS.map((level) => ({ level, result: pairedResult(school.both.filter((s) => s.selfGrade === level)) })),
+      byGroup: school.byGroup,
     },
-    delayed: { outOf: DELAYED_OUT_OF, ...average(delayed) },
-    mistakes: { wrongAnswers: total, explained, share: total === 0 ? null : r2(explained / total), top },
+    delayed: school.delayed,
+    mistakes: school.mistakes,
     miner: { count: mined.length, mistakes: mined.map((m) => ({ label: m.label, realWrongAnswers: m.realWrongAnswers })) },
-    ratings: {
-      useful: average(feedback.map((f) => f.useful)),
-      teachHelped: average(feedback.map((f) => f.teachHelped).filter((v): v is number => v !== null)),
-    },
+    ratings: school.ratings,
     quotes,
+    college: {
+      heading: COLLEGE_HEADING,
+      note: COLLEGE_NOTE,
+      method: COLLEGE_METHOD,
+      reached: college.reachedOf(collegeStudents),
+      scores: { outOf: CHECK_OUT_OF, all: college.all, byGroup: college.byGroup },
+      delayed: college.delayed,
+      mistakes: college.mistakes,
+      ratings: college.ratings,
+      quotes: college.approved.map((f) => ({ text: f.comment!.trim() })).sort((p, q) => p.text.localeCompare(q.text)),
+    },
   };
 }
 

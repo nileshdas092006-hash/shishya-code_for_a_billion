@@ -1540,15 +1540,15 @@ export async function openStore(config: StoreConfig | string = {}) {
 
     // ----- the Shishya Challenge's numbers: one class (board, CSV), or every REAL challenge class (/impact) -----
     /** The classes in scope with their students (a class with no students has one row with student fields null), in one read. */
-    async listChallengeStudents(scope: ChallengeScope): Promise<{ classes: { id: string; kind: ClassKind; mode: ClassMode }[]; students: ChallengeStudentRow[] }> {
+    async listChallengeStudents(scope: ChallengeScope): Promise<{ classes: { id: string; kind: ClassKind; mode: ClassMode; pack: Pack }[]; students: ChallengeStudentRow[] }> {
       const s = scopeSql(scope);
       const rows = await all(
-        `SELECT c.id AS cid, c.kind, c.mode, s.id, s.classId, s.code, s.selfGrade, s.studyArm, s.joinedAt
+        `SELECT c.id AS cid, c.kind, c.mode, c.pack, s.id, s.classId, s.code, s.selfGrade, s.studyArm, s.joinedAt
          FROM classes c LEFT JOIN students s ON s.classId = c.id WHERE ${s.where}`,
         ...s.args,
       );
-      const classes = new Map<string, { id: string; kind: ClassKind; mode: ClassMode }>();
-      for (const r of rows) classes.set(r.cid as string, { id: r.cid as string, kind: r.kind as ClassKind, mode: r.mode === "challenge" ? "challenge" : "classroom" });
+      const classes = new Map<string, { id: string; kind: ClassKind; mode: ClassMode; pack: Pack }>();
+      for (const r of rows) classes.set(r.cid as string, { id: r.cid as string, kind: r.kind as ClassKind, mode: r.mode === "challenge" ? "challenge" : "classroom", pack: toPack(r.pack) });
       return { classes: [...classes.values()], students: rows.filter((r) => r.id).map(toChallengeStudent) };
     },
     /** Every FINISHED check in scope with its questions (skill, seed, numbers) and the student's own answers, in one read. */

@@ -24,7 +24,7 @@ export function Equation({
         role="img"
         aria-label={text}
         style={{ fontSize: `${MAX_REM[size]}rem` }}
-        className={`math inline-grid grid-cols-2 gap-x-4 border-x-4 border-current px-3 text-right font-bold leading-snug ${className}`}
+        className={`math inline-grid w-fit self-start grid-cols-2 gap-x-4 border-x-4 border-current px-3 text-right font-bold leading-snug ${className}`}
       >
         {rows.flat().map((cell, i) => (
           <span key={i}>{cell}</span>

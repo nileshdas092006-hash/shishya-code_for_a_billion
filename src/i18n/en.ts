@@ -496,6 +496,7 @@ export const ui = {
   "board.challenge.trial": "Trial run: this challenge is never counted for impact.",
   "board.challenge.noAi": "No AI chat in a challenge, ever: some students may be under 13.",
   "board.challenge.noAi.college": "No AI chat in a challenge, ever.",
+  "board.challenge.consent.college": "Recorded on {date}: this challenge runs online, and students are told never to write their name.",
 
   // F11 Part 2: the guided challenge (1 Before · 2 Practise · 3 After · 4 Feedback)
   "challenge.steps": "Challenge steps",
@@ -584,6 +585,11 @@ export const ui = {
     "An online trial: students chose to join, did one session on their own phones, and there was no classroom teacher. Small numbers. Not a classroom study.",
   "impact.method":
     "Every check is scored again by code from its questions' seeds. Before → after uses only students who finished both checks, with a paired 95% t-interval. Groups were given at join (alternating within each class level from a random start) and are compared as given; the difference between groups uses Welch's 95% t-interval. Any average over fewer than 5 students is not shown.",
+  "impact.school.heading": "School students (Classes 7–10)",
+  "impact.college.heading": "College pack (first-year college students, 2×2 determinants and two-dice probability)",
+  "impact.college.note": "The same engine and the same checks, on two college topics, to test that Shishya's Skill Specification works beyond school algebra.",
+  "impact.college.method":
+    "Every check is scored again by code from its questions' seeds. Before → after uses only students who finished both checks, with a paired 95% t-interval. Groups were given at join (alternating within each class from a random start) and are compared as given; the difference between groups uses Welch's 95% t-interval. Any average over fewer than 5 students is not shown.",
   "impact.reached.title": "Students reached",
   "impact.reached.joined": "Joined",
   "impact.reached.before": "Finished the before check",

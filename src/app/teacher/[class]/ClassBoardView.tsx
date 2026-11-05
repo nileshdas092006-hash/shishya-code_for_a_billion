@@ -263,7 +263,7 @@ export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Que
           {cls.consentRecordedAt && (
             <p className="text-base text-gray-700">
               {challenge
-                ? t("board.challenge.consent", { date: cls.consentRecordedAt.slice(0, 10) })
+                ? t(cls.pack === "college" ? "board.challenge.consent.college" : "board.challenge.consent", { date: cls.consentRecordedAt.slice(0, 10) })
                 : cls.consentSlips === null
                   ? t("board.consent.doneOld", { date: cls.consentRecordedAt.slice(0, 10) })
                   : t("board.consent.done", { date: cls.consentRecordedAt.slice(0, 10), n: cls.consentSlips })}
