@@ -13,5 +13,20 @@ export function fitFontPx(text: string, boxPx: number, minPx: number, maxPx: num
   return Math.min(maxPx, Math.max(minPx, fit));
 }
 
+/** The longest line that fits the narrowest box on a 360px phone at the minimum size (see equation-fit.test.ts). */
+const PHONE_MAX_CHARS = 21;
+
+/** What to show for a line: a product line too long for a phone closes up the spaces round ×. Other lines stay as they are. */
+export const fitText = (text: string) => (text.length > PHONE_MAX_CHARS ? text.replace(/ × /g, "×") : text);
+
+/** The rows of a 2×2 matrix written [[3, −2], [4, 5]], or null if this text is not one. */
+export function matrixRows(text: string): [[string, string], [string, string]] | null {
+  const m = /^\[\[([^,\]]+), ([^,\]]+)\], \[([^,\]]+), ([^,\]]+)\]\]$/.exec(text);
+  return m ? [[m[1], m[2]], [m[3], m[4]]] : null;
+}
+
+/** Words, not maths: a question that is a sentence (a dice question) wraps like any sentence. */
+export const isSentence = (text: string) => /[a-z]{2,} [a-z]{2,}/i.test(text);
+
 /** Equations inside sentences: t() applies this to all child-facing text. */
 export { keepMathTogether } from "../../i18n";

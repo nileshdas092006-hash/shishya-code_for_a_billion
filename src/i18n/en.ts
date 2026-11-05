@@ -1,7 +1,7 @@
 import { ANSWER_MESSAGES } from "../core/answer";
 import { PARSE_MESSAGES } from "../core/equation";
 import { CHILD_MESSAGES_EN, type ChildMessageKey } from "../core/childMessages";
-import { SKILLS } from "../core/skills";
+import { ALL_SKILLS } from "../core/skills";
 import { TEACH_MESSAGES } from "../core/teach";
 
 // Every child-facing string, in English. src/i18n/hi.ts has the same keys in Hindi (a test checks this).
@@ -237,6 +237,19 @@ export const ui = {
   "receipt.line.notSameValue": "Line {n} gives {above}, your line gives {line}, so they do not have the same value.",
   "receipt.line.sumSame": "Your line has the same value as line {n}: {value}.",
   "receipt.line.sumNotSame": "Your line does not have the same value as line {n}.",
+  "receipt.det.answer": "Your answer is {value}. The determinant is the main diagonal's product minus the second diagonal's product.",
+  "receipt.det.main": "Main diagonal (top-left × bottom-right):",
+  "receipt.det.second": "Second diagonal (top-right × bottom-left):",
+  "receipt.det.check": "Your answer + the second diagonal's product:",
+  "receipt.det.holds": "This gives {start}, the main diagonal's product, so your answer is right.",
+  "receipt.det.notHolds": "This gives {back}, but the main diagonal's product is {start}, so this is not the determinant.",
+  "receipt.dice.intro": "Your answer is {value}. Multiply it by all the {total} outcomes to see how many outcomes it says fit the question:",
+  "receipt.dice.holds": "{n} of the {total} outcomes fit the question, so your answer is right.",
+  "receipt.dice.notHolds": "This would mean {n} of the {total} outcomes fit the question, but that is not how many fit. List them and count again.",
+  "receipt.dice.all.holds": "Your line gives {value}: all the outcomes of the two dice.",
+  "receipt.dice.all.notHolds": "Your line gives {value}, but that is not all the outcomes of the two dice.",
+  "receipt.dice.fit.holds": "Your line gives {value}: the outcomes that fit the question.",
+  "receipt.dice.fit.notHolds": "Your line gives {value}, but that is not how many outcomes fit the question.",
   "prove.receipts": "How we checked each answer",
   "prove.notAnswered": "Not answered in time.",
 
@@ -613,6 +626,14 @@ export const ui = {
   "skill.alg.linear.both-sides.example": "like 4x − 3 = 2x + 7",
   "skill.alg.linear.both-sides.task": "Solve for x.",
   "skill.alg.linear.both-sides.answerLabel": "x =",
+  "skill.col.matrix.det2.title": "2×2 determinants",
+  "skill.col.matrix.det2.example": "like the determinant of [[3, −2], [4, 5]]",
+  "skill.col.matrix.det2.task": "Find the determinant.",
+  "skill.col.matrix.det2.answerLabel": "Determinant =",
+  "skill.col.prob.two-dice.title": "Probability with two dice",
+  "skill.col.prob.two-dice.example": "like the sum of two dice being 7",
+  "skill.col.prob.two-dice.task": "Find the probability.",
+  "skill.col.prob.two-dice.answerLabel": "Probability =",
 } as const;
 
 type SkillTextKey = `skill.${string}.${"title" | "example" | "task" | "answerLabel"}`;
@@ -629,7 +650,7 @@ export type MessageKey =
   | ChildMessageKey;
 
 const fromSkills = Object.fromEntries(
-  SKILLS.flatMap(({ spec }) => [
+  ALL_SKILLS.flatMap(({ spec }) => [
     ...spec.hintLadder.map((h, i) => [`hint.${spec.id}.${i + 1}`, h]),
     ...spec.mistakes.map((m) => [`mistake.${spec.id}.${m.id}`, m.childLabel]),
   ]),

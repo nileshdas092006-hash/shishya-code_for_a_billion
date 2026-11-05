@@ -24,6 +24,13 @@ export const LINE_MESSAGES = {
   "teach.fix.oneNumber": "On the last line, write just one number.",
   "teach.fix.simplest": "On the last line, write the simplest form: one x-term and one number.",
   "teach.fix.xEquals": "On the last line, write x = a number.",
+  // the college pack (F12): lines that are worked out, not equations
+  "teach.fix.okValue": "Well done! You found the Shishya's mistake and fixed it.",
+  "teach.fix.collegeArith": "Use only whole numbers, fractions like 5/36, brackets, +, − and ×.",
+  "teach.fix.allOutcomes": "This line should count all the outcomes of rolling the two dice. The first die and the second die are different dice.",
+  "teach.fix.favourable": "This line should count the outcomes that fit the question. (1, 2) and (2, 1) are two different outcomes.",
+  "teach.fix.sameFraction": "This line should be the outcomes that fit the question, out of all the outcomes.",
+  "teach.fix.simplestFraction": "On the last line, write the fraction in its simplest form.",
 } as const;
 export type LineMessageKey = keyof typeof LINE_MESSAGES;
 
@@ -66,6 +73,21 @@ export function checkArithLine(value: Fraction, prevLine: string, typedRaw: stri
   if (!equals(v, value)) return lineResult(false, "teach.fix.sameValue");
   if (isLast && !/^\(?[-−]?\d+\)?$/.test(typed.replace(/\s+/g, ""))) return lineResult(false, "teach.fix.oneNumber");
   return lineResult(true, "teach.fix.ok");
+}
+
+/** "3 x 5" and "3x5" mean 3 × 5 in a line that has no variable in it (the keypad's x key, a phone keyboard). */
+export const timesFromX = (typed: string) => normaliseInput(typed).replace(/([0-9)])\s*x\s*(?=[(0-9-])/g, "$1×");
+
+/**
+ * The college pack's lines (F12): checkArithLine on a line that must have this value, with its own words. wrongValue:
+ * what to say when the value is wrong, for a line that means something other than "the same value as the question".
+ */
+export function checkCollegeLine(value: Fraction, prevLine: string, typed: string, isLast: boolean, wrongValue?: LineMessageKey): LineCheck {
+  const r = checkArithLine(value, prevLine, timesFromX(typed), isLast);
+  if (r.ok) return lineResult(true, "teach.fix.okValue");
+  if (r.feedbackKey === "parse.arith") return lineResult(false, "teach.fix.collegeArith");
+  if (wrongValue && r.feedbackKey === "teach.fix.sameValue") return lineResult(false, wrongValue);
+  return r;
 }
 
 /** alg.like-terms: the same expression as the question; the last line is the simplest form. */

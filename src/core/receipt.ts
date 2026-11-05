@@ -2,8 +2,10 @@ import { answerText, isExpr } from "./answer";
 import { parseEquation, parseExpression, root, type Equation, type Term } from "./equation";
 import { formatSide, fracText, MINUS } from "./format";
 import { add, equals, frac, mul, sub, type Fraction } from "./fraction";
-import { evaluateArithmetic } from "./lineCheck";
+import { evaluateArithmetic, timesFromX } from "./lineCheck";
 import { normaliseInput } from "./normalise";
+import { DET_SKILL_ID, products } from "./skills/col-matrix-det2";
+import { ALL_OUTCOMES, DICE_SKILL_ID, diceCounts } from "./skills/col-prob-two-dice";
 import type { Answer, Instance, Mistake } from "./types";
 
 // Receipts: the short proof under every verdict, the way NCERT teaches checking ("put the answer back in").
@@ -25,13 +27,19 @@ export type AnswerReceipt =
   /** Like terms, a right answer: the x-terms added, the numbers added. */
   | { kind: "collect"; xTerms: string; numbers: string; result: string; holds: true }
   /** Like terms, a wrong answer: the question and the answer worked out for one x where they differ. */
-  | ({ kind: "compare" } & Comparison<"question", "answer">);
+  | ({ kind: "compare" } & Comparison<"question", "answer">)
+  /** A 2×2 determinant: the two diagonals' products, and a check that undoes the subtraction (answer + second product = main product). */
+  | { kind: "determinant"; value: string; main: string; second: string; check: string; back: string; start: string; holds: boolean }
+  /** Two dice: answer × all the outcomes is how many outcomes fit the question (it never says how many do, unless it is right). */
+  | { kind: "dice"; value: string; check: string; outcomes: string; total: string; holds: boolean };
 
 export type LineReceipt =
   /** Equation skills: the typed line's solution, put back into the line above. */
   | { kind: "line"; sameSolution: boolean; solution: string | null; check: Substitution | null }
   /** Expression skills: the line above and the typed line worked out for one x (sums: just their values). */
-  | { kind: "line"; sameValue: boolean; value: string | null; check: Comparison<"above", "line"> | null };
+  | { kind: "line"; sameValue: boolean; value: string | null; check: Comparison<"above", "line"> | null }
+  /** Two dice: each line counts something, so a line is not "the same value" as the one above. sameValue: it counts the right thing. */
+  | { kind: "line"; sameValue: boolean; value: string; check: null; count: "all" | "favourable" };
 
 /** A value inside a worked-out line: brackets round a negative number or a fraction, (−2) and (5/3). */
 const br = (v: Fraction) => (v.num < 0 || v.den !== 1 ? `(${fracText(v)})` : fracText(v));
@@ -115,6 +123,33 @@ function integerReceipt(inst: Instance, v: Fraction): AnswerReceipt | null {
   };
 }
 
+function determinantReceipt(inst: Instance, v: Fraction): AnswerReceipt {
+  const { main, second, mainValue, secondValue } = products(inst);
+  const back = add(v, frac(secondValue));
+  return {
+    kind: "determinant",
+    value: fracText(v),
+    main: `${main} = ${fracText(frac(mainValue))}`,
+    second: `${second} = ${fracText(frac(secondValue))}`,
+    check: `${br(v)} + ${br(frac(secondValue))} = ${fracText(back)}`,
+    back: fracText(back),
+    start: fracText(frac(mainValue)),
+    holds: equals(back, frac(mainValue)),
+  };
+}
+
+function diceReceipt(inst: Instance, v: Fraction): AnswerReceipt {
+  const outcomes = mul(v, frac(ALL_OUTCOMES));
+  return {
+    kind: "dice",
+    value: fracText(v),
+    check: `${fracText(v)} × ${ALL_OUTCOMES} = ${fracText(outcomes)}`,
+    outcomes: fracText(outcomes),
+    total: `${ALL_OUTCOMES}`,
+    holds: equals(outcomes, frac(diceCounts(inst.params.t, inst.params.k).favourable)),
+  };
+}
+
 /** The receipt for a final answer (the child's, or the correct one). Null if this kind of question has none. */
 export function answerReceipt(inst: Instance, answer: Answer): AnswerReceipt | null {
   if (isExpr(inst.answer)) {
@@ -127,6 +162,8 @@ export function answerReceipt(inst: Instance, answer: Answer): AnswerReceipt | n
     return { kind: "compare", ...compareAt("question", q.side.terms, "answer", answerTerms(answer)) };
   }
   if (isExpr(answer)) return null;
+  if (inst.skillId === DET_SKILL_ID) return determinantReceipt(inst, answer);
+  if (inst.skillId === DICE_SKILL_ID) return diceReceipt(inst, answer);
   const eq = parseEquation(inst.text);
   if (eq.ok) return { kind: "substitute", ...substitution(eq.equation, answer) };
   return integerReceipt(inst, answer);
@@ -138,6 +175,19 @@ function arithmetic(text: string): Fraction | null {
   } catch {
     return null;
   }
+}
+
+/** The college pack's typed lines: a determinant line has the question's value; a dice line counts something. */
+function collegeLineReceipt(inst: Instance, lineAbove: string, typed: string): LineReceipt | null {
+  const given = arithmetic(timesFromX(typed));
+  if (!given) return null;
+  if (inst.skillId === DET_SKILL_ID) {
+    const same = equals(given, inst.answer as Fraction);
+    return { kind: "line", sameValue: same, value: same ? fracText(given) : null, check: null };
+  }
+  const count = lineAbove === inst.text ? ("all" as const) : ("favourable" as const);
+  const expected = count === "all" ? ALL_OUTCOMES : diceCounts(inst.params.t, inst.params.k).favourable;
+  return { kind: "line", sameValue: equals(given, frac(expected)), value: fracText(given), check: null, count };
 }
 
 /**
@@ -152,6 +202,7 @@ export function lineReceipt(inst: Instance, lineAbove: string, typed: string): L
     const same = equals(above.side.expr.xCoef, line.side.expr.xCoef) && equals(above.side.expr.constant, line.side.expr.constant);
     return { kind: "line", sameValue: same, value: null, check: compareAt("above", above.side.terms, "line", line.side.terms) };
   }
+  if (inst.skillId === DET_SKILL_ID || inst.skillId === DICE_SKILL_ID) return collegeLineReceipt(inst, lineAbove, typed);
   const above = parseEquation(lineAbove);
   if (above.ok) {
     const line = parseEquation(typed);

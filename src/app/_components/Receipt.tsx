@@ -77,7 +77,34 @@ export function Receipt({ receipt, line = 1, open = false, big = false }: Props)
             </Verdict>
           </>
         );
+      case "determinant":
+        return (
+          <>
+            <p>{t("receipt.det.answer", { value: r.value })}</p>
+            <Worked label={t("receipt.det.main")} value={r.main} size={size} />
+            <Worked label={t("receipt.det.second")} value={r.second} size={size} />
+            <Worked label={t("receipt.det.check")} value={r.check} size={size} />
+            <Verdict holds={r.holds}>{r.holds ? t("receipt.det.holds", { start: r.start }) : t("receipt.det.notHolds", { back: r.back, start: r.start })}</Verdict>
+          </>
+        );
+      case "dice":
+        return (
+          <>
+            <p>{t("receipt.dice.intro", { value: r.value, total: r.total })}</p>
+            <Worked value={r.check} size={size} />
+            <Verdict holds={r.holds}>{r.holds ? t("receipt.dice.holds", { n: r.outcomes, total: r.total }) : t("receipt.dice.notHolds", { n: r.outcomes, total: r.total })}</Verdict>
+          </>
+        );
       case "line":
+        if ("count" in r) {
+          return (
+            <Verdict holds={r.sameValue}>
+              {r.count === "all"
+                ? t(r.sameValue ? "receipt.dice.all.holds" : "receipt.dice.all.notHolds", { value: r.value })
+                : t(r.sameValue ? "receipt.dice.fit.holds" : "receipt.dice.fit.notHolds", { value: r.value })}
+            </Verdict>
+          );
+        }
         if ("sameSolution" in r) {
           if (!r.check || !r.solution) return <Verdict holds={false}>{t("receipt.line.noSolution", { n: line })}</Verdict>;
           return (

@@ -22,6 +22,9 @@ export type Instance = {
 export type TraceLine = { text: string };
 export type Trace = TraceLine[];
 
+/** Which group of learners a skill is for. A class has one pack, and its students only ever see that pack's skills. */
+export type Pack = "school" | "college";
+
 export type StepType = "move-x" | "move-const" | "simplify" | "divide" | "sign" | "operation";
 
 export type Mistake = {
