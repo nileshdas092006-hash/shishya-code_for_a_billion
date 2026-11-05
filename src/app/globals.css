@@ -167,9 +167,18 @@ body {
 }
 .nb-line {
   display: grid;
-  grid-template-columns: 2.8rem 1fr;
+  grid-template-columns: 2.8rem minmax(0, 1fr);
   min-height: 3rem;
   border-bottom: 1px solid var(--rule);
+}
+.nb > li:last-child,
+.nb > li:last-child > .nb-line {
+  border-bottom: 0;
+}
+/* "Loading…" on a line that is not ready yet gets its own row. */
+.nb-line > :nth-child(3) {
+  grid-column: 1 / -1;
+  padding: 0 0.5rem;
 }
 .nb-no {
   display: flex;
@@ -179,6 +188,32 @@ body {
   color: var(--faint);
   font-size: 0.7rem;
   font-weight: 800;
+}
+.nb-text {
+  align-self: center;
+  min-width: 0;
+  padding: 0.35rem 0.5rem;
+}
+/* The board's example lines sit inside a card and only say "L1": on a 360 px phone a narrower number column keeps
+   the longest one (201 px at the minimum size) on one line, with no sideways scroll. */
+@media (max-width: 480px) {
+  .nb-tight .nb-line {
+    grid-template-columns: 2rem minmax(0, 1fr);
+  }
+}
+/* the projector: the same lines, for the back of the room */
+.nb-big .nb-line {
+  grid-template-columns: 6.5rem minmax(0, 1fr);
+}
+.nb-big .nb-no {
+  font-size: 1.875rem;
+}
+.nb-big .nb-text {
+  padding: 1rem 0.75rem;
+}
+button.nb-line:hover {
+  outline: 2px solid var(--brand);
+  outline-offset: -2px;
 }
 /* --faint is only 4.2:1 on --saffron-soft, so a selected line's number uses --ink. */
 .nb-line[aria-pressed="true"] {
@@ -196,28 +231,39 @@ body {
 .nb-line.is-wrong .nb-no {
   color: var(--bad);
 }
-/* (.eq is an inline-block, and an underline set on a parent does not reach inside one.) */
+/* (.eq is an inline-block, and an underline set on a parent does not reach inside one.
+   The padding keeps the wavy line inside .eq-box, which clips what is below it.) */
 .nb-line.is-wrong .eq {
+  padding-bottom: 0.3em;
   text-decoration: underline wavy var(--bad);
   text-underline-offset: 0.2em;
 }
 /* .nb clips what is outside it, so inside it the same 4px amber focus ring is drawn inwards. */
-.nb-line:focus-visible {
+button.nb-line:focus-visible {
   outline: 4px solid var(--focus);
   outline-offset: -4px;
 }
 
 .receipt {
+  padding: 0 0.9rem 0.6rem;
   border: 2px dashed #c9c2ae;
   background: #fffcf3;
   border-radius: 0.6rem;
   color: var(--muted);
 }
+/* small words, but still a 3rem tap target: this is the toggle */
 .receipt-title {
+  padding-block: calc((3rem - 1.5em) / 2);
   font-size: 0.65rem;
+  line-height: 1.5;
   font-weight: 800;
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+.receipt-big .receipt-title {
+  font-size: 1.875rem;
+  letter-spacing: normal;
+  text-transform: none;
 }
 
 .tag {

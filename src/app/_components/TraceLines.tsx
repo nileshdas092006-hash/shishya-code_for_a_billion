@@ -20,7 +20,7 @@ export function TraceLines({
   big?: boolean;
 }) {
   return (
-    <ol className="flex flex-col gap-2">
+    <ol className={big ? "nb nb-big" : "nb"}>
       {lines.map((text, i) => {
         const n = i + 1;
         const isSelected = selected === n;
@@ -31,15 +31,11 @@ export function TraceLines({
               onClick={() => onSelect(n)}
               disabled={disabled}
               aria-pressed={isSelected}
-              className={`w-full text-left flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 rounded-xl border-4 px-3 sm:px-4 ${
-                big ? "py-4" : "py-2"
-              } ${isSelected ? "border-amber-500 bg-amber-50" : "border-gray-300 bg-white hover:border-blue-700"}`}
+              className="nb-line w-full text-left"
             >
-              <span className={`shrink-0 font-bold text-gray-700 ${big ? "text-3xl" : "text-lg"} sm:min-w-[5.5rem]`}>
-                {t("teach.line", { n })}
-              </span>
-              {/* the equation keeps to one line and shrinks to fit (on a phone the "Line n" label sits above it) */}
-              <span className="flex-1 min-w-0 w-full">
+              <span className="nb-no">{t("teach.line", { n })}</span>
+              {/* the equation keeps to one line and shrinks to fit */}
+              <span className="nb-text">
                 <Equation text={text} size={big ? "xl" : "md"} />
               </span>
             </ReadyButton>

@@ -29,11 +29,11 @@ export function minedExample(skillId: string, spec: MinedMistakeSpec): MistakeEx
 
 export function MistakeExampleLines({ example }: { example: MistakeExample }) {
   return (
-    <ol className="flex flex-col gap-1">
+    <ol className="nb nb-tight">
       {example.trace.map((line, i) => (
-        <li key={i} className={`flex items-baseline gap-3 ${i + 1 === example.firstWrongLine ? "text-red-800" : ""}`}>
-          <span className="shrink-0 font-semibold">L{i + 1}</span>
-          <span className="flex-1 min-w-0">
+        <li key={i} className={`nb-line ${i + 1 === example.firstWrongLine ? "is-wrong" : ""}`}>
+          <span className="nb-no">L{i + 1}</span>
+          <span className="nb-text">
             <Equation text={line.text} size="sm" />
             {i + 1 === example.firstWrongLine && <span className="block text-base font-bold">← first wrong line</span>}
           </span>

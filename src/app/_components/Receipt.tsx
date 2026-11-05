@@ -143,8 +143,8 @@ export function Receipt({ receipt, line = 1, open = false, big = false }: Props)
   }
 
   return (
-    <details ref={box} open={open || undefined} className={`card ${text}`}>
-      <summary className="cursor-pointer font-bold py-2">{t("receipt.title")}</summary>
+    <details ref={box} open={open || undefined} className={`receipt ${big ? "receipt-big" : ""} ${text}`}>
+      <summary className="receipt-title cursor-pointer">{t("receipt.title")}</summary>
       <div className="flex flex-col gap-3 mt-3 min-w-0">{body()}</div>
     </details>
   );
