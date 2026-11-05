@@ -5,8 +5,8 @@ cheap, exact and impossible to copy. Full design and roadmap: [docs/VISION.md](d
 
 Judges: open the live link and press **Try it as a judge**. It takes 3 minutes and uses a made-up class.
 
-Shishya is a free, open-source algebra practice app for Class 7–10 children in India's crowded classrooms (a teacher
-can make a class for Class 7, 8 or 9 today; Class 10 students join through the [Shishya Challenge](#shishya-challenge)).
+Shishya is a free, open-source algebra practice app for Class 7–10 children in India's crowded classrooms (classroom
+mode is for Classes 7–9; the online [Shishya Challenge](#shishya-challenge) is for Classes 7–10).
 It finds the exact step of an equation each child gets wrong, lets the child fix it by "teaching the Shishya" (a
 classmate character whose working has a mistake), and then asks for proof. No AI help inside the proof. It opens only when the teacher
 opens it in class. Code, not AI, decides when a child has truly learned a skill. Two AI agents help behind the scenes,

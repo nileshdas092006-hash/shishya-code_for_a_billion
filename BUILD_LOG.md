@@ -568,3 +568,11 @@
 - No app code changed. No screen text changed, so nothing new in `en.ts` or `hi.ts`. Mastery untouched.
 - Files: `docs/VISION.md` (new), `.github/workflows/test.yml` (new), `README.md`, `package.json`, `BUILD_LOG.md`.
 - Built in AgentFoundry with Claude Code.
+
+## 2026-11-05: F13. Wording fixes
+- `docs/VISION.md`, as Das decided after F13. Section 6, Teacher row (still LIVE): "Children grouped by the exact mistake, so the teacher can run one short group session with projector mode instead of re-teaching everyone; Paper Mode for schools without devices". Section 7, college bullet: "(BUILT; live once this version is deployed)" in place of "(LIVE, from 7 Nov)".
+- The same two lines were changed in `../fortify/VISION_for_repo.md` and `../07_submission_master.md`, which are outside this repository, so this commit does not carry them. `docs/VISION.md` still differs from the fortify copy by one blank line, the Markdown fix from F13.
+- `README.md`: the first paragraph now says classroom mode is for Classes 7–9 and the online Shishya Challenge is for Classes 7–10. The classroom form stays at Class 9, as Das decided.
+- No app code changed. 813 tests pass, lint clean, type check clean, `npm run build` passes (DATABASE_URL pointed at a scratch file).
+- Files: `docs/VISION.md`, `README.md`, `BUILD_LOG.md`.
+- Built in AgentFoundry with Claude Code.

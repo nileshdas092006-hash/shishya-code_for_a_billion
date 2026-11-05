@@ -77,7 +77,7 @@ The AI proposes **data in a tiny formula language**, never code. A hand-written 
 | Layer | What changes | Status |
 |---|---|---|
 | **Child** | Practise → teach the Shishya (find the wrong line in a classmate's working, type the fix) → prove alone. At their own pace | **LIVE** |
-| **Teacher** | Children grouped by the exact mistake; a 10-minute group session instead of re-teaching everyone; projector mode; Paper Mode for schools without devices | **LIVE** |
+| **Teacher** | Children grouped by the exact mistake, so the teacher can run one short group session with projector mode instead of re-teaching everyone; Paper Mode for schools without devices | **LIVE** |
 | **School** | A record of verified skills (which skill, when, on which fresh questions) replaces one averaged mark; it feeds NEP's Holistic Progress Card | **BUILT** (the records exist); export to the progress card **DESIGNED** |
 | **System** | An open, growing library of Indian children's real misconceptions; the Skill Specification as an open standard for any subject with a code-checkable answer (arithmetic, algebra, physics numericals, chemistry balancing); a mode inside DIKSHA rather than a rival | **BUILT** for one chapter + an open mistake API; the rest is **VISION** |
 
@@ -98,7 +98,7 @@ numbers. It is five skills in teaching order: integers → like terms → one-st
   passed it; its suggested child message was wrong, which is exactly why the teacher gate exists.
 - **Shishya Challenge** (LIVE): a self-join link with a before check, practice, an after check and feedback,
   two random groups (practise only vs practise + teach), and a public /impact page computed by code.
-- **The engine beyond school** (LIVE, from 7 Nov): the same engine with a college pack (2×2 determinants,
+- **The engine beyond school** (BUILT; live once this version is deployed): the same engine with a college pack (2×2 determinants,
   two-dice probability) for first-year students, to test that the Skill Specification generalises.
 
 ## 8. Quality: proof, not claims
