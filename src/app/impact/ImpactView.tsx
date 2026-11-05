@@ -195,8 +195,8 @@ export function ImpactView({ impact }: { impact: Impact }) {
         <p className="text-base text-gray-700">{t("impact.scope")}</p>
       </header>
 
-      <section className="flex flex-col gap-8" aria-labelledby="school">
-        <h2 id="school" className="border-b-4 border-blue-800 pb-1 text-3xl font-extrabold">
+      <section className="card flex flex-col gap-8" aria-labelledby="school">
+        <h2 id="school" className="border-b-4 border-(--brand) pb-1 text-3xl font-extrabold">
           {t("impact.school.heading")}
         </h2>
         <ReachedSection id="school-reached" reached={impact.reached} levels={impact.reached.byClassLevel} />
@@ -239,9 +239,9 @@ export function ImpactView({ impact }: { impact: Impact }) {
         <QuotesSection id="school-quotes" quotes={impact.quotes} />
       </section>
 
-      <section className="flex flex-col gap-8" aria-labelledby="college">
+      <section className="card flex flex-col gap-8" aria-labelledby="college">
         <div className="flex flex-col gap-2">
-          <h2 id="college" className="border-b-4 border-blue-800 pb-1 text-3xl font-extrabold">
+          <h2 id="college" className="border-b-4 border-(--brand) pb-1 text-3xl font-extrabold">
             {t("impact.college.heading")}
           </h2>
           <p className="text-lg">{t("impact.college.note")}</p>
