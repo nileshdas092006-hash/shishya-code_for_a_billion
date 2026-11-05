@@ -11,8 +11,8 @@ import { PendingSubmit } from "../_components/PendingSubmit";
 export function StartTourForm() {
   const [state, action] = useActionState(startJudgeTour, {});
   return (
-    <form action={action} className="flex flex-col items-center gap-2 w-full max-w-xl">
-      <PendingSubmit className="btn w-full text-xl min-h-16 border-amber-700 bg-amber-100" pendingLabel={t("tour.starting")}>
+    <form action={action} className="flex flex-col gap-2 w-full max-w-xl">
+      <PendingSubmit className="btn btn-saffron w-full text-xl" pendingLabel={t("tour.starting")}>
         {t("home.tour")}
       </PendingSubmit>
       <p className="text-base text-gray-700">{t("home.tourNote")}</p>
