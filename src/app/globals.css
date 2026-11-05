@@ -12,6 +12,7 @@
   --soft: #f3f1ea;
   --line: #e3e0d6;
   --rule: #dce3f2;
+  --edge: #7c869a; /* the edge of an input or a key: at least 3:1 (WCAG 1.4.11) */
   --margin: #f2a7a0;
   --faint: #6b7487;
   --brand: #2f45c9;
@@ -100,7 +101,7 @@ body {
   width: 100%;
   min-height: 3rem;
   padding: 0.5rem 0.75rem;
-  border: 2px solid var(--rule);
+  border: 2px solid var(--edge);
   border-radius: 0.75rem;
   font-size: 1.2rem;
   background: var(--surface);
@@ -118,7 +119,7 @@ body {
 
 /* the maths keypad's keys: min-height stays 3rem, from .btn */
 .key {
-  border: 2px solid var(--rule);
+  border: 2px solid var(--edge);
   border-radius: 0.6rem;
   color: var(--brand-dark);
 }

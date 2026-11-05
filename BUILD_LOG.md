@@ -608,3 +608,11 @@
 - No database change. Mastery untouched.
 - Files: `src/app/globals.css`, `src/app/page.tsx`, `src/app/_components/{TraceLines,Receipt,MathKeypad}.tsx`, `src/app/tour/StartTourForm.tsx`, `src/app/s/practise/[skill]/PractiseScreen.tsx`, `src/app/s/teach/[skill]/TeachScreen.tsx`, `src/app/s/challenge/ChallengeScreen.tsx`, `src/app/teacher/[class]/{ClassBoardView,PatternGrid,MistakeExample}.tsx`, `src/app/impact/ImpactView.tsx`, `BUILD_LOG.md`.
 - Built in AgentFoundry with Claude Code.
+
+## 2026-11-06: F14. Visible input edges (style only)
+- Das's decision on the faint edges noted above: WCAG 1.4.11 needs 3:1 for the edge of an input or a button. New `--edge: #7C869A`, 3.66:1 on white and 3.60:1 on paper (worked out by the contrast script), now the border of `.field` and of the keypad keys. Answer boxes and keys were about 1.3:1.
+- Focus stays `--brand` and a wrong answer stays `--bad`; read from the browser on Practise, along with `--edge` on a resting field and a key. The 4px amber focus ring is unchanged. Card and `--line` borders are unchanged.
+- Not changed, for Das to decide if wanted: the tappable working lines (`.nb-line`) still have faint `--rule` and `--line` edges. Each one is marked by its number and margin rather than a box.
+- `npm test` (816 of 816), type check, lint and `npm run build` pass (DATABASE_URL pointed at a scratch file). The full browser check also passes on a scratch database; no routes or logic changed, and nothing ran against the live site. Screenshots: `../design/after/c7-edges/`.
+- Files: `src/app/globals.css`, `BUILD_LOG.md`.
+- Built in AgentFoundry with Claude Code.
