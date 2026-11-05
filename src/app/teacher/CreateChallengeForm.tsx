@@ -18,6 +18,7 @@ export function CreateChallengeForm() {
         <h2 className="text-2xl font-bold">{t("create.challenge.ready")}</h2>
         <p className="text-xl font-semibold break-words">{state.title}</p>
         {state.trial && <p className="msg-note">{t("create.challenge.trialNote")}</p>}
+        {state.pack === "college" && <p className="msg-note">{t("create.challenge.collegeReady")}</p>}
         <p className="text-xl">{t("create.challenge.link")}</p>
         <p className="math text-lg font-bold break-all">{state.link}</p>
         <CopyButton text={state.link} />
@@ -57,6 +58,18 @@ export function CreateChallengeForm() {
             className="field"
           />
         </label>
+        <fieldset className="flex flex-col gap-2">
+          <legend className="mb-1 font-semibold">{t("create.challenge.pack")}</legend>
+          <label className="flex items-start gap-3 text-lg">
+            <input type="radio" name="pack" value="school" defaultChecked={error?.pack !== "college"} className="mt-1 h-6 w-6 shrink-0" />
+            <span>{t("create.challenge.pack.school")}</span>
+          </label>
+          <label className="flex items-start gap-3 text-lg">
+            <input type="radio" name="pack" value="college" defaultChecked={error?.pack === "college"} className="mt-1 h-6 w-6 shrink-0" />
+            <span>{t("create.challenge.pack.college")}</span>
+          </label>
+          <p className="text-base text-gray-700">{t("create.challenge.pack.collegeNote")}</p>
+        </fieldset>
         <label className="flex items-start gap-3 text-lg">
           <input type="checkbox" name="trial" defaultChecked={error?.trial ?? false} className="mt-1 h-6 w-6 shrink-0" />
           <span>{t("create.challenge.trial")}</span>

@@ -3,6 +3,7 @@
 import { refresh } from "next/cache";
 import { redirect } from "next/navigation";
 import { getSkillEntry } from "@/core/skills";
+import type { Pack } from "@/core/types";
 import type { MessageKey } from "@/i18n";
 import { getServices, isSetupError, requireSetup } from "@/server/instance";
 import { COOLDOWN_CHOICES, type CooldownChoice } from "@/server/services";
@@ -285,20 +286,21 @@ export async function createClassAction(_prev: CreateClassState, form: FormData)
 
 export type CreateChallengeState =
   | { status: "idle" }
-  | { status: "error"; error: MessageKey | null; message?: string; title: string; trial: boolean }
-  | { status: "created"; title: string; trial: boolean; classCode: string; pin: string; recoveryCode: string; link: string };
+  | { status: "error"; error: MessageKey | null; message?: string; title: string; trial: boolean; pack: Pack }
+  | { status: "created"; title: string; trial: boolean; pack: Pack; classCode: string; pin: string; recoveryCode: string; link: string };
 
 /** "Create a challenge link (online, no classroom)": the class, its PIN and recovery code (shown once) and its join link. */
 export async function createChallengeAction(_prev: CreateChallengeState, form: FormData): Promise<CreateChallengeState> {
   const title = str(form.get("title"), 200).trim();
   const trial = form.get("trial") === "on";
-  const again = (error: MessageKey | null, message?: string): CreateChallengeState => ({ status: "error", error, message, title, trial });
+  const pack: Pack = form.get("pack") === "college" ? "college" : "school";
+  const again = (error: MessageKey | null, message?: string): CreateChallengeState => ({ status: "error", error, message, title, trial, pack });
   if (form.get("online") !== "on") return again("create.challenge.needOnline");
   if (title.length < 1 || title.length > 60) return again("create.challenge.needName");
   try {
-    const ch = await (await getServices()).createChallenge({ title, trial, online: true });
+    const ch = await (await getServices()).createChallenge({ title, trial, online: true, pack });
     await addTeacherClass(ch.classId);
-    return { status: "created", title, trial, classCode: ch.classCode, pin: ch.pin, recoveryCode: ch.recoveryCode, link: joinLink(await siteOrigin(), ch.joinToken) };
+    return { status: "created", title, trial, pack, classCode: ch.classCode, pin: ch.pin, recoveryCode: ch.recoveryCode, link: joinLink(await siteOrigin(), ch.joinToken) };
   } catch (e) {
     if (isSetupError(e)) {
       logServerError("create challenge", e);

@@ -1,23 +1,35 @@
 import { parseAnswerFor, sameAnswer } from "./answer";
 import { createRng, randInt, type Rng } from "./rng";
 import { getSkillEntry } from "./skills";
-import type { Instance } from "./types";
+import type { Instance, Pack } from "./types";
 
 // The Shishya Challenge's checks (F11): a before check and an after check of 6 questions each (2 one-step,
 // 2 two-step, 2 "x on both sides") and an optional later (delayed) check of 4. Every question is made by its
 // skill's own generator from one seed, so a check can always be re-created and scored again from its seeds.
 // Pure: the only randomness is the seeded generator passed in.
+// Each pack has its own plan (F12): the college pack checks 2×2 determinants and two-dice probability.
 
 export type CheckPhase = "pre" | "post" | "delayed";
 
 const ONE = "alg.linear.one-step";
 const TWO = "alg.linear.two-step";
 const BOTH = "alg.linear.both-sides";
+export const DET = "col.matrix.det2";
+export const DICE = "col.prob.two-dice";
 
 export const CHECK_PLANS: Readonly<Record<CheckPhase, readonly string[]>> = {
   pre: [ONE, ONE, TWO, TWO, BOTH, BOTH],
   post: [ONE, ONE, TWO, TWO, BOTH, BOTH],
   delayed: [ONE, TWO, BOTH, BOTH],
+};
+
+export const PACK_CHECK_PLANS: Readonly<Record<Pack, Readonly<Record<CheckPhase, readonly string[]>>>> = {
+  school: CHECK_PLANS,
+  college: {
+    pre: [DET, DET, DET, DICE, DICE, DICE],
+    post: [DET, DET, DET, DICE, DICE, DICE],
+    delayed: [DET, DET, DICE, DICE],
+  },
 };
 
 const MAX_SEED = 2 ** 31 - 2;
@@ -43,9 +55,9 @@ export function nextCheckSeed(rng: Rng, skillId: string, avoid: ReadonlySet<stri
 }
 
 /** The seeds of one check, in its plan's order: all different questions, and none of the questions in avoid. */
-export function checkSeeds(rng: Rng, phase: CheckPhase, avoid: ReadonlySet<string>): number[] {
+export function checkSeeds(rng: Rng, phase: CheckPhase, avoid: ReadonlySet<string>, pack: Pack = "school"): number[] {
   const used = new Set(avoid);
-  return CHECK_PLANS[phase].map((skillId) => {
+  return PACK_CHECK_PLANS[pack][phase].map((skillId) => {
     const seed = nextCheckSeed(rng, skillId, used);
     used.add(checkKey(skillId, checkQuestion(skillId, seed).params));
     return seed;

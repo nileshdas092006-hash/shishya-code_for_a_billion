@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createClient, type Client, type InValue, type Transaction } from "@libsql/client";
 import type { ChildLabelSource } from "../core/minedMistake";
+import type { Pack } from "../core/types";
 import { RECORDED_MINER_RUN } from "./recorded-runs";
 
 // The data store. ALL SQL lives in this file, behind plain async functions.
@@ -64,8 +65,10 @@ export type ClassRow = {
   title: string | null;
   /** A challenge class's first group, chosen at random once when it is made (null for a classroom class). */
   armStart: StudyArm | null;
+  /** Which skills this class's students see: 'school' (every class made before F12), or 'college' (a challenge's college pack). */
+  pack: Pack;
 };
-type OptionalClassFields = "kind" | "expiresAt" | "consentRecordedAt" | "consentSlips" | "proofCooldownHours" | "mode" | "joinToken" | "title" | "armStart";
+type OptionalClassFields = "kind" | "expiresAt" | "consentRecordedAt" | "consentSlips" | "proofCooldownHours" | "mode" | "joinToken" | "title" | "armStart" | "pack";
 /** A new class: a real classroom class, with no expiry and no consent recorded yet, unless it says otherwise. */
 export type NewClass = Omit<ClassRow, OptionalClassFields> & Partial<Pick<ClassRow, OptionalClassFields>>;
 /** How many rows deleteClassCascade removed, per table. */
@@ -291,7 +294,8 @@ CREATE TABLE IF NOT EXISTS classes (
   mode TEXT NOT NULL DEFAULT 'classroom' CHECK (mode IN ('classroom', 'challenge')),
   joinToken TEXT,
   title TEXT,
-  armStart TEXT CHECK (armStart IN ('A', 'B'))
+  armStart TEXT CHECK (armStart IN ('A', 'B')),
+  pack TEXT DEFAULT 'school'
 );
 CREATE TABLE IF NOT EXISTS students (
   id TEXT PRIMARY KEY,
@@ -479,6 +483,7 @@ type Row = Record<string, unknown>;
 const bool = (v: unknown) => Number(v) === 1;
 const isUniqueViolation = (e: unknown) => e instanceof Error && /UNIQUE constraint failed/i.test(e.message);
 
+const toPack = (v: unknown): Pack => (v === "college" ? "college" : "school");
 const toClass = (r: Row): ClassRow => ({
   id: r.id as string,
   code: r.code as string,
@@ -496,10 +501,11 @@ const toClass = (r: Row): ClassRow => ({
   joinToken: (r.joinToken as string | null) ?? null,
   title: (r.title as string | null) ?? null,
   armStart: r.armStart === "A" || r.armStart === "B" ? r.armStart : null,
+  pack: toPack(r.pack),
 });
 const CLASS_COLUMNS =
   "id, code, grade, section, aiAllowed, proofWindowRequired, proofWindowOpenUntil, kind, expiresAt, consentRecordedAt, consentSlips, proofCooldownHours, " +
-  "mode, joinToken, title, armStart";
+  "mode, joinToken, title, armStart, pack";
 const CLASS_COLUMNS_OF_C = CLASS_COLUMNS.split(", ").map((c) => `c.${c}`).join(", ");
 /**
  * How many failed logins (or PIN recoveries) of this type the class c has had since a time, as a subquery (it uses
@@ -711,6 +717,8 @@ async function migrate(client: Client) {
   if (!classColumns.includes("joinToken")) await client.execute("ALTER TABLE classes ADD COLUMN joinToken TEXT");
   if (!classColumns.includes("title")) await client.execute("ALTER TABLE classes ADD COLUMN title TEXT");
   if (!classColumns.includes("armStart")) await client.execute("ALTER TABLE classes ADD COLUMN armStart TEXT CHECK (armStart IN ('A', 'B'))");
+  // The college pack (F12): every class that already exists is a school class.
+  if (!classColumns.includes("pack")) await client.execute("ALTER TABLE classes ADD COLUMN pack TEXT DEFAULT 'school'");
   // a join link opens exactly one class
   await client.execute("CREATE UNIQUE INDEX IF NOT EXISTS classes_join_token ON classes (joinToken) WHERE joinToken IS NOT NULL");
   const studentColumns = (await client.execute("PRAGMA table_info(students)")).rows.map((r) => r.name);
@@ -941,11 +949,11 @@ export async function openStore(config: StoreConfig | string = {}) {
     insertClass(c: NewClass, teacherPinHash: string | null = null, recoveryHash: string | null = null): Promise<boolean> {
       return tryInsert(
         `INSERT INTO classes (id, code, grade, section, aiAllowed, teacherPinHash, proofWindowRequired, proofWindowOpenUntil, kind, expiresAt,
-                              consentRecordedAt, consentSlips, proofCooldownHours, recoveryHash, mode, joinToken, title, armStart)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                              consentRecordedAt, consentSlips, proofCooldownHours, recoveryHash, mode, joinToken, title, armStart, pack)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         c.id, c.code, c.grade, c.section, c.aiAllowed ? 1 : 0, teacherPinHash, c.proofWindowRequired ? 1 : 0, c.proofWindowOpenUntil,
         c.kind ?? "real", c.expiresAt ?? null, c.consentRecordedAt ?? null, c.consentSlips ?? null, c.proofCooldownHours ?? null, recoveryHash,
-        c.mode ?? "classroom", c.joinToken ?? null, c.title ?? null, c.armStart ?? null,
+        c.mode ?? "classroom", c.joinToken ?? null, c.title ?? null, c.armStart ?? null, c.pack ?? "school",
       );
     },
     /**
@@ -1039,17 +1047,18 @@ export async function openStore(config: StoreConfig | string = {}) {
      * limit or get the same group. Refused unless the class has fewer than maxStudents students and fewer than
      * maxRecent joined since recentSince. The group alternates within the student's class level from the class's
      * armStart: the k-th student of a level (k = 0, 1, …) gets armStart when k is even, the other group when k is
-     * odd. Returns the group, "refused" (a limit), or "code_taken" (try another code).
+     * odd. A college student has no level (NULL), so "IS" (not "="): the whole class alternates as one.
+     * Returns the group, "refused" (a limit), or "code_taken" (try another code).
      */
     async insertChallengeStudent(
-      s: { id: string; classId: string; code: string; selfGrade: number; joinedAt: string },
+      s: { id: string; classId: string; code: string; selfGrade: number | null; joinedAt: string },
       limits: { maxStudents: number; maxRecent: number; recentSince: string },
     ): Promise<StudyArm | "refused" | "code_taken"> {
       try {
         const out = await write(
           `INSERT INTO students (id, classId, code, selfGrade, studyArm, joinedAt)
            SELECT ?, c.id, ?, ?,
-                  CASE ((SELECT COUNT(*) FROM students WHERE classId = c.id AND selfGrade = ?) + (c.armStart = 'B')) % 2 WHEN 0 THEN 'A' ELSE 'B' END,
+                  CASE ((SELECT COUNT(*) FROM students WHERE classId = c.id AND selfGrade IS ?) + (c.armStart = 'B')) % 2 WHEN 0 THEN 'A' ELSE 'B' END,
                   ?
            FROM classes c
            WHERE c.id = ? AND c.mode = 'challenge' AND c.armStart IS NOT NULL
@@ -1141,6 +1150,11 @@ export async function openStore(config: StoreConfig | string = {}) {
     async getStudent(id: string): Promise<StudentRow | undefined> {
       const r = await one("SELECT id, classId, code FROM students WHERE id = ?", id);
       return r && toStudent(r);
+    },
+    /** A student and their class's pack, in one read. */
+    async getStudentWithPack(id: string): Promise<{ student: StudentRow; pack: Pack } | undefined> {
+      const r = await one("SELECT s.id, s.classId, s.code, c.pack FROM students s JOIN classes c ON c.id = s.classId WHERE s.id = ?", id);
+      return r && { student: toStudent(r), pack: toPack(r.pack) };
     },
     async findStudentByCode(classId: string, code: string): Promise<StudentRow | undefined> {
       const r = await one("SELECT id, classId, code FROM students WHERE classId = ? AND code = ?", classId, code);
@@ -1495,12 +1509,12 @@ export async function openStore(config: StoreConfig | string = {}) {
         )
       ).map(toItem);
     },
-    /** Every question (skill and numbers) a student has been given on these skills, in one read. */
-    async listStudentQuestions(studentId: string, skillIds: string[]): Promise<{ skillId: string; paramsJson: string }[]> {
+    /** Every question (skill and numbers) a student has been given on these skills, and where (source), in one read. */
+    async listStudentQuestions(studentId: string, skillIds: string[]): Promise<{ skillId: string; paramsJson: string; source: string }[]> {
       if (skillIds.length === 0) return [];
       return (
-        await all(`SELECT DISTINCT skillId, paramsJson FROM items WHERE studentId = ? AND skillId IN (${marks(skillIds.length)})`, studentId, ...skillIds)
-      ).map((r) => ({ skillId: r.skillId as string, paramsJson: r.paramsJson as string }));
+        await all(`SELECT DISTINCT skillId, paramsJson, source FROM items WHERE studentId = ? AND skillId IN (${marks(skillIds.length)})`, studentId, ...skillIds)
+      ).map((r) => ({ skillId: r.skillId as string, paramsJson: r.paramsJson as string, source: r.source as string }));
     },
     /** False if this student has already given feedback (once only). */
     insertFeedback(f: FeedbackRow): Promise<boolean> {

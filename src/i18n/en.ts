@@ -148,6 +148,7 @@ export const ui = {
   "practise.check": "Check my answer",
   "practise.next": "Next question",
   "practise.correct": "Correct! Both sides are equal for your answer.",
+  "practise.correct.value": "Correct!",
   "practise.wrongKnown": "Not quite. Look at this step:",
   "practise.wrongUnknown": "Not quite. Let's look at this step by step.",
   "practise.hint": "Show a hint",
@@ -167,6 +168,7 @@ export const ui = {
   "teach.tapped": "You chose line {n}. Now type what line {n} should be.",
   "teach.typeLabel": "Correct line {n}",
   "teach.typeHint": "Use numbers, x, +, − and =.",
+  "teach.typeHint.college": "Use numbers, fractions like 5/36, brackets, +, − and ×. You can type × as * or x.",
   "teach.check": "Check my line",
   "teach.triesLeft": "Tries left: {n}",
   "teach.noTries": "No tries left for this one. Let's go on to the next one.",
@@ -439,6 +441,12 @@ export const ui = {
     "One link for school students who join alone on their own phones, with no teacher in the room. Each student says which class they are in and gets a random code; no name, phone number or email is ever asked. Every skill is open, proofs are always open, there is no wait after a missed proof, and there is no AI chat.",
   "create.challenge.name": "Name shown to students",
   "create.challenge.namePlaceholder": "Udgam Shishya Challenge",
+  "create.challenge.pack": "Pack",
+  "create.challenge.pack.school": "School (Classes 7–10)",
+  "create.challenge.pack.college": "College pack",
+  "create.challenge.pack.collegeNote":
+    "College pack: for first-year college students, on 2×2 determinants and two-dice probability. They are not asked for a class, they get codes like UG-K7QM, and their results are reported apart from the school numbers. The line about under-13s below does not apply to them.",
+  "create.challenge.collegeReady": "College pack: students get codes like UG-K7QM, and their results are reported apart from the school numbers.",
   "create.challenge.trial": "Trial run: not counted for impact",
   "create.challenge.online":
     "I am running this online. Students are told never to write their name, and students under 13 are asked to check with a parent first.",
@@ -458,6 +466,8 @@ export const ui = {
 
   "join.notice":
     "Shishya is a free maths practice app made by a student at IIT Guwahati for a national hackathon. We never ask your name, phone or email. Your answers are saved with a random code only, and are used to improve Shishya and to report total results (never one person's). If you are under 13, please check with a parent first. You can stop at any time.",
+  "join.notice.college":
+    "Shishya is a free maths practice app made by a student at IIT Guwahati for a national hackathon. We never ask your name, phone or email. Your answers are saved with a random code only, and are used to improve Shishya and to report total results (never one person's). You can stop at any time.",
   "join.grade": "Which class are you in?",
   "join.gradeOption": "Class {n}",
   "join.start": "I understand, start",
@@ -468,6 +478,7 @@ export const ui = {
   "join.already": "You have already joined on this phone. Your code is {code}.",
   "join.continue": "Continue the challenge",
   "join.someoneElse": "Someone else on this phone? Choose your class below to join with a new code.",
+  "join.someoneElse.college": "Someone else on this phone? Tap the button below to join with a new code.",
 
   "challenge.yourCode": "Your code is",
   "challenge.writeDown": "Write it down: you need it to come back.",
@@ -484,6 +495,7 @@ export const ui = {
   "board.challenge.codesKept": "A challenge keeps its codes: students wrote their own code down at home, so nobody could give them new ones.",
   "board.challenge.trial": "Trial run: this challenge is never counted for impact.",
   "board.challenge.noAi": "No AI chat in a challenge, ever: some students may be under 13.",
+  "board.challenge.noAi.college": "No AI chat in a challenge, ever.",
 
   // F11 Part 2: the guided challenge (1 Before · 2 Practise · 3 After · 4 Feedback)
   "challenge.steps": "Challenge steps",
@@ -495,6 +507,8 @@ export const ui = {
   "challenge.stepDone": "done",
   "challenge.intro":
     "About 20 minutes: a short check, some practice on “x on both sides”, the same kind of check again, and then your feedback.",
+  "challenge.intro.college":
+    "About 20 minutes: a short check on 2×2 determinants and two-dice probability, some practice, the same kind of check again, and then your feedback.",
   "challenge.pre.title": "Before: a quick check",
   "challenge.pre.intro": "6 questions. No hints this time: just do your best. You will see how you did at the end.",
   "challenge.post.title": "After: the same kind of check",
@@ -502,11 +516,11 @@ export const ui = {
   "challenge.delayed.title": "Later check: 4 questions",
   "challenge.delayed.intro": "4 questions, to see what you remember. No hints.",
   "challenge.check.question": "Question {n} of {total}",
-  "challenge.check.task": "Solve for x.",
   "challenge.check.save": "Save my answer",
   "challenge.check.result": "{n} of {total} right.",
   "challenge.next": "Next",
   "challenge.practise.title": "Practise: x on both sides",
+  "challenge.practise.title.college": "Practise: determinants and two dice",
   "challenge.practise.count": "Practice questions done: {n} of {total}",
   "challenge.practise.finish": "Next",
   "challenge.practise.allDone": "Well done! You finished the practice.",
@@ -515,6 +529,7 @@ export const ui = {
   "challenge.practise.skipNote": "You can go on to the after check now, even if you have not finished.",
   "challenge.practise.skip": "Go on to the after check",
   "challenge.beforeAfter": "Before: {before}/{total} → After: {after}/{total}",
+  "challenge.timeTaken": "Time taken: {n} {n|minute|minutes}",
   "challenge.fb.title": "Your feedback",
   "challenge.fb.useful": "How useful was this for you?",
   "challenge.fb.teach": "Did teaching the Shishya help you understand?",
@@ -543,6 +558,7 @@ export const ui = {
 
   // F11 Part 3: the organiser's Challenge panel and the public impact page
   "board.challenge.panel": "Challenge",
+  "board.challenge.pack.college": "College pack: first-year college students, on 2×2 determinants and two-dice probability. Reported apart from the school numbers.",
   "board.challenge.level": "Class",
   "board.challenge.all": "All",
   "board.challenge.joined": "Joined",

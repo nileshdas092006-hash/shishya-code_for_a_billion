@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState, useTransition } from "react";
+import { getSkillEntry } from "@/core/skills";
 import { hasMessage, hintKey, keepMathTogether, mistakeKey, skillKey, t, type MessageKey } from "@/i18n";
 import { answerPractice, servePractice } from "../../../actions";
 import { Equation } from "../../../_components/Equation";
@@ -64,7 +65,8 @@ export function PractiseScreen({ skillId, answerKind, challenge }: { skillId: st
       challenge?.onAnswered();
       if (r.correct) {
         setStreak((s) => s + 1);
-        setFeedback({ kind: "good", text: t("practise.correct"), receipt: r.receipt });
+        // "both sides are equal" is about equations: a college question has no sides
+        setFeedback({ kind: "good", text: t(getSkillEntry(skillId)?.pack === "college" ? "practise.correct.value" : "practise.correct"), receipt: r.receipt });
       } else {
         setStreak(0);
         // the server decides: a first match gets only "Check line N again." (it may be a slip); a pattern is named

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { Suspense } from "react";
-import { SKILLS } from "@/core/skills";
+import { skillsForPack } from "@/core/skills";
 import { getServices } from "@/server/instance";
 import { teacherClass } from "../../../_lib/auth";
 import { guardPage } from "../../../_lib/page-guard";
@@ -39,7 +39,7 @@ function Projector({ params }: { params: Promise<{ class: string }> }) {
         <Link href={`/teacher/${encodeURIComponent(cls.code)}`} className="btn self-start no-print">
           Back to the class board
         </Link>
-        <ProjectorScreen classCode={cls.code} skillIds={SKILLS.map((s) => s.spec.id)} />
+        <ProjectorScreen classCode={cls.code} skillIds={skillsForPack(cls.pack).map((s) => s.spec.id)} />
       </div>
     );
   });

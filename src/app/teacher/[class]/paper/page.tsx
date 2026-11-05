@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { Suspense } from "react";
-import { SKILLS } from "@/core/skills";
+import { skillsForPack } from "@/core/skills";
 import { skillKey, t } from "@/i18n";
 import { getServices } from "@/server/instance";
 import { PAPER_DEFAULT_QUESTIONS, PAPER_MAX_QUESTIONS } from "@/server/services";
@@ -64,7 +64,7 @@ function Paper({ params, searchParams }: { params: Promise<{ class: string }>; s
             <label className="flex flex-col gap-1 font-semibold">
               {t("paper.skill")}
               <select name="skill" required className="field max-w-full">
-                {SKILLS.map(({ spec }) => (
+                {skillsForPack(cls.pack).map(({ spec }) => (
                   <option key={spec.id} value={spec.id}>
                     {t(skillKey(spec.id, "title"))}
                   </option>

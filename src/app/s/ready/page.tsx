@@ -2,7 +2,7 @@ import { Suspense } from "react";
 import { t } from "@/i18n";
 import { currentStudent } from "../../_lib/auth";
 import { LoggedOutNotice, guardPage } from "../../_lib/page-guard";
-import { Loading } from "../../_lib/student-pages";
+import { LockedNotice, Loading } from "../../_lib/student-pages";
 import { ReadyCheckScreen } from "./ReadyCheckScreen";
 
 // The Ready check: 6 quick whole-number questions, once, before the first skill. Not a skill: it never changes
@@ -21,7 +21,9 @@ export default function ReadyPage() {
 
 function Ready() {
   return guardPage("student", async () => {
-    if (!(await currentStudent())) return <LoggedOutNotice />;
+    const student = await currentStudent();
+    if (!student) return <LoggedOutNotice />;
+    if (student.classPack === "college") return <LockedNotice />; // whole-number sums, for school students
     return <ReadyCheckScreen />;
   });
 }

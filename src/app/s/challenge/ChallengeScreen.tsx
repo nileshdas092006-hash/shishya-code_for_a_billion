@@ -15,7 +15,8 @@ import { CodeCard } from "./CodeCard";
 
 // The guided Shishya Challenge (F11): 1 Before · 2 Practise · 3 After · 4 Feedback, then Done (and a later check
 // 3 to 21 days after). The server decides every step (challengeOverview); this screen only shows it. The practise
-// step is the normal Practise screen (and, for students who teach, the normal Teach screen).
+// step is the normal Practise screen (and, for students who teach, the normal Teach screen). A college-pack student
+// (F12) has its own words, and practises two sets of questions, one after the other.
 
 export type Overview = Extract<Awaited<ReturnType<typeof challengeOverviewAction>>, { step: string }>;
 type Check = NonNullable<Overview["check"]>;
@@ -74,7 +75,7 @@ export function ChallengeScreen({ initial }: { initial: Overview }) {
       body = (
         <>
           <CodeCard code={view.code} classCode={view.classCode} />
-          <p className="text-xl">{t("challenge.intro")}</p>
+          <p className="text-xl">{t(view.college ? "challenge.intro.college" : "challenge.intro")}</p>
           <ReadyButton type="button" className="btn btn-primary text-2xl self-start" onClick={() => startCheck("pre")} disabled={pending}>
             {t("challenge.start")}
           </ReadyButton>
@@ -181,7 +182,7 @@ function CheckRunner({ check, onFinished, onLost }: { check: Check; onFinished: 
       {position === 1 && <p className="text-xl">{t(intro)}</p>}
       <p className="text-xl font-bold">{t("challenge.check.question", { n: position, total: items.length })}</p>
       <div className="card flex flex-col gap-4">
-        <p className="text-xl font-semibold">{t("challenge.check.task")}</p>
+        <p className="text-xl font-semibold">{t(skillKey(current.skillId, "task"))}</p>
         <Equation text={current.text} size="lg" />
         <form onSubmit={save} className="flex flex-col gap-3">
           <label className="flex flex-wrap items-center gap-3 text-3xl font-bold math">
@@ -221,11 +222,14 @@ function CheckResult({ result }: { result: Finished }) {
       <h1 className="text-3xl font-extrabold">{t(title)}</h1>
       <div className="flex flex-wrap items-center gap-4">
         <Shishya mood="happy" size={110} />
-        <p className="text-2xl font-bold">
-          {result.phase === "post" && result.before !== null
-            ? t("challenge.beforeAfter", { before: result.before, after: result.score, total: result.total })
-            : t("challenge.check.result", { n: result.score, total: result.total })}
-        </p>
+        <div className="flex flex-col gap-1">
+          <p className="text-2xl font-bold">
+            {result.phase === "post" && result.before !== null
+              ? t("challenge.beforeAfter", { before: result.before, after: result.score, total: result.total })
+              : t("challenge.check.result", { n: result.score, total: result.total })}
+          </p>
+          {result.minutes !== undefined && <p className="text-xl">{t("challenge.timeTaken", { n: result.minutes })}</p>}
+        </div>
       </div>
       <section aria-label={t("prove.receipts")} className="flex flex-col gap-3">
         <h2 className="text-2xl font-bold">{t("prove.receipts")}</h2>
@@ -242,14 +246,20 @@ function CheckResult({ result }: { result: Finished }) {
 }
 
 /**
- * Practise: everyone answers the set on "x on both sides" (the normal Practise screen, hints allowed); students who
- * teach then teach the Shishya once (the normal Teach screen). After the set, or after 12 minutes in this step,
- * "Next" goes to the after check. The server checks both again before it starts the after check.
+ * Practise: everyone answers the pack's sets of questions, one set after the other (the normal Practise screen, hints
+ * allowed); students who teach then teach the Shishya once (the normal Teach screen). After that, or after 12 minutes
+ * in this step, "Next" goes to the after check. The server checks both again before it starts the after check.
  */
 function PractiseStep({ view, onPost, onTaught, pending }: { view: Overview; onPost: () => void; onTaught: () => void; pending: boolean }) {
   const p = view.practise!;
-  const [done, setDone] = useState(p.done);
-  const [leftPractice, setLeftPractice] = useState(p.done >= p.target);
+  // the school pack has one set on "x on both sides"; the server names the college pack's sets
+  const sets = p.sets ?? [{ skillId: PRACTISE_SKILL, target: p.target, done: p.done }];
+  const teachSkill = p.teachSkill ?? PRACTISE_SKILL;
+  const [counts, setCounts] = useState(sets.map((s) => s.done));
+  const firstOpen = sets.findIndex((s) => s.done < s.target);
+  const [setIndex, setSetIndex] = useState(firstOpen === -1 ? sets.length : firstOpen);
+  const leftPractice = setIndex >= sets.length;
+  const current = sets[setIndex];
   const [taught, setTaught] = useState(p.teachDone);
   const [canSkip, setCanSkip] = useState(p.skipInSeconds === 0);
 
@@ -268,9 +278,9 @@ function PractiseStep({ view, onPost, onTaught, pending }: { view: Overview; onP
 
   return (
     <div className="flex flex-col gap-5">
-      <h1 className="text-3xl font-extrabold">{t("challenge.practise.title")}</h1>
+      <h1 className="text-3xl font-extrabold">{t(view.college ? "challenge.practise.title.college" : "challenge.practise.title")}</h1>
       <p className="text-xl font-bold" aria-live="polite">
-        {t("challenge.practise.count", { n: Math.min(done, p.target), total: p.target })}
+        {t("challenge.practise.count", { n: sets.reduce((sum, s, i) => sum + Math.min(counts[i], s.target), 0), total: p.target })}
       </p>
       {setDoneAll ? (
         <>
@@ -288,17 +298,25 @@ function PractiseStep({ view, onPost, onTaught, pending }: { view: Overview; onP
               {toPost}
             </div>
           )}
-          {!leftPractice ? (
-            <PractiseScreen
-              skillId={PRACTISE_SKILL}
-              answerKind="number"
-              challenge={{ left: p.target - done, onAnswered: () => setDone((d) => d + 1), onDone: () => setLeftPractice(true) }}
-            />
+          {current ? (
+            <>
+              {view.college && <h2 className="text-2xl font-bold">{t(skillKey(current.skillId, "title"))}</h2>}
+              <PractiseScreen
+                key={current.skillId}
+                skillId={current.skillId}
+                answerKind="number"
+                challenge={{
+                  left: current.target - counts[setIndex],
+                  onAnswered: () => setCounts((c) => c.map((n, i) => (i === setIndex ? n + 1 : n))),
+                  onDone: () => setSetIndex((i) => i + 1),
+                }}
+              />
+            </>
           ) : (
             <>
               <p className="msg-good text-xl">{t("challenge.practise.teachNow")}</p>
               <TeachScreen
-                skillId={PRACTISE_SKILL}
+                skillId={teachSkill}
                 challenge={{
                   onDone: () => {
                     setTaught(true);
@@ -425,6 +443,7 @@ function Done({ view, onDelayed, pending }: { view: Overview; onDelayed: () => v
       {scores.pre !== null && scores.post !== null && (
         <p className="text-2xl font-bold">{t("challenge.beforeAfter", { before: scores.pre, after: scores.post, total: scores.total })}</p>
       )}
+      {view.minutesTaken !== undefined && <p className="text-xl">{t("challenge.timeTaken", { n: view.minutesTaken })}</p>}
       {scores.delayed !== null && <p className="text-2xl font-bold">{t("challenge.done.delayed", { n: scores.delayed, total: scores.delayedTotal })}</p>}
       {delayed?.state === "later" && (
         <p className="card text-xl font-semibold">{t("challenge.done.later", { classCode: view.classCode, code: view.code })}</p>

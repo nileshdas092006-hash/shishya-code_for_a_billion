@@ -64,7 +64,7 @@ export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Que
       </div>
       <p className="text-base text-gray-700 no-print">{t("board.export.impact")}</p>
       {challenge ? (
-        <p className="msg-note no-print">{t("board.challenge.noAi")}</p>
+        <p className="msg-note no-print">{t(cls.pack === "college" ? "board.challenge.noAi.college" : "board.challenge.noAi")}</p>
       ) : (
         !cls.aiAllowed && <p className="msg-note no-print">Class 7: AI chat is switched off for this class, always.</p>
       )}
@@ -302,11 +302,12 @@ async function ChallengePanel({ classCode, panel, trial }: { classCode: string; 
         </div>
       )}
       {trial && <p className="msg-note">{t("board.challenge.trial")}</p>}
+      {panel.pack === "college" && <p className="msg-note">{t("board.challenge.pack.college")}</p>}
       <div className="overflow-x-auto">
         <table className="w-full border-collapse text-lg">
           <thead>
             <tr className="border-b-2 border-gray-400 text-left">
-              <th className="py-2 pr-3">{t("board.challenge.level")}</th>
+              <th className="py-2 pr-3">{panel.levels.length > 0 && t("board.challenge.level")}</th>
               {columns.map((c) => (
                 <th key={c} className="py-2 pr-3">
                   {t(`board.challenge.${c}`)}

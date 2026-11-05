@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useRef, useState, useTransition } from "react";
+import { getSkillEntry } from "@/core/skills";
 import { t, type MessageKey } from "@/i18n";
 import { startTeachSession, submitTeach } from "../../../actions";
 import { Shishya, type Mood } from "../../../_components/Shishya";
@@ -194,7 +195,7 @@ export function TeachScreen({ skillId, challenge }: { skillId: string; challenge
           </label>
           <MathKeypad value={typed} onChange={setTyped} inputRef={typedBox} disabled={pending} />
           <p id="type-hint" className="text-base text-gray-700">
-            {t("teach.typeHint")}
+            {t(getSkillEntry(skillId)?.pack === "college" ? "teach.typeHint.college" : "teach.typeHint")}
           </p>
           <div className="flex flex-wrap items-center gap-4">
             <ReadyButton type="submit" className="btn btn-primary text-xl" disabled={pending || !typed.trim()}>

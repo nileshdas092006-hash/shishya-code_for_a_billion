@@ -6,25 +6,25 @@ import type { ApplyItem } from "../core/skills/linear-both-sides-apply";
 import { childMessage } from "../core/childMessages";
 import { READY_CHECK_PLAN, readyCheckPassed, readyCheckSeeds, readyQuestion, READY_CHECK_ID, READY_CHECK_VERSION } from "../core/readyCheck";
 import { explainedErrors, validateMinedMistake, validationChecks, type ChildLabelSource, type MinedMistakeSpec, type ReportNumbers } from "../core/minedMistake";import { answerReceipt, type AnswerReceipt } from "../core/receipt";
-import { CHECK_PLANS, checkKey, checkQuestion, nextCheckSeed, scoreCheck, type CheckItem } from "../core/challengeCheck";
+import { checkKey, checkQuestion, nextCheckSeed, PACK_CHECK_PLANS, scoreCheck, type CheckItem } from "../core/challengeCheck";
+import { packOf } from "../core/skills";
 import { computeImpact } from "./impact";
 import {
   commentProblem,
   DELAYED_FROM_DAYS,
   DELAYED_UNTIL_DAYS,
-  PRACTISE_SKILL,
-  PRACTISE_TARGET,
+  PRACTISE_PLANS,
   SKIP_AFTER_MINUTES,
   TEACHES,
 } from "./challenge";
 import { checkTeachStep, type TeachResult } from "../core/teach";
-import { applies, type Instance, type StepType } from "../core/types";
+import { applies, type Instance, type Pack, type StepType } from "../core/types";
 import { agentRunView, RECORDED_MINER_RUN } from "./agent-runs";
 import * as mastery from "./mastery";
 import { minedMistakes, mistakesFromRows, toUnknownError, unknownErrors } from "./miner-ports";
 import { buildOpenMistakes } from "./open-mistakes";
 import { logServerError } from "./setup";
-import { defaultRegistry, getEntry, instanceFor, type Registry, type SkillEntry } from "./skills";
+import { collegeRegistry, defaultRegistry, getEntry, instanceFor, type Registry, type SkillEntry } from "./skills";
 import type {
   AttemptRow,
   CheckPhase,
@@ -160,6 +160,9 @@ const CHALLENGE_CLASS_GRADE = 7;
 
 class NoFreshQuestion extends Error {}
 
+/** Whole minutes from one time to another, rounded up, at least 1 ("Time taken" on the end-of-challenge card). */
+const minutesBetween = (from: string, to: string) => Math.max(1, Math.ceil((Date.parse(to) - Date.parse(from)) / 60_000));
+
 const randomCode = (length: number) => Array.from({ length }, () => CODE_ALPHABET[randomInt(0, CODE_ALPHABET.length)]).join("");
 const randomSuffix = () => randomCode(4);
 
@@ -205,7 +208,11 @@ type ProofReceipt = { itemId: string; question: string; receipt: AnswerReceipt |
 export type WorksheetView = Omit<WorksheetRow, "classId"> & { questions: { n: number; text: string }[]; current: boolean };
 
 export function createServices(store: Store, opts: ServiceOptions = {}) {
+  // registry: the school pack, which every school list reads. known: every skill, for finding a skill by its id.
+  // A class's lists come from packRegistry(cls.pack), so a student only ever sees their own pack (F12).
   const registry = opts.registry ?? defaultRegistry;
+  const known: Registry = { ...collegeRegistry, ...registry };
+  const packRegistry = (pack: Pack): Registry => (pack === "college" ? collegeRegistry : registry);
   const now = opts.now ?? (() => new Date());
   const newSeed = opts.newSeed ?? (() => randomInt(1, 2 ** 31 - 1));
   const random = opts.random ?? (() => randomInt(0, 2 ** 32) / 2 ** 32);
@@ -218,6 +225,14 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     if (!s) throw new Error(`Unknown student: ${studentId}`);
     return s;
   }
+
+  /** The student, and whether this skill is in their class's pack (one read). A skill of another pack is never opened or written. */
+  async function requireStudentForSkill(studentId: string, skillId: string): Promise<{ student: StudentRow; allowed: boolean }> {
+    const found = await store.getStudentWithPack(studentId);
+    if (!found) throw new Error(`Unknown student: ${studentId}`);
+    return { student: found.student, allowed: packOf(getEntry(known, skillId)) === found.pack };
+  }
+  const notMyPack = () => fail("This skill is locked. Ask your teacher.", "locked");
 
   async function requireItem(itemId: string, kind: ItemKind): Promise<ItemRow> {
     const item = await store.getItem(itemId);
@@ -240,13 +255,16 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     extra: { runId?: string; mistakeId?: string; source?: "recheck"; accept?: (instance: Instance) => boolean } = {},
   ): Promise<{ item: ItemRow; instance: Instance; apply: ApplyItem | null } | null> {
     const seen = new Set((await store.listItems({ studentId, skillId: entry.spec.id })).map((i) => i.paramsJson));
-    const tries = extra.accept ? FRESH_TRIES * 6 : FRESH_TRIES; // a mistake may apply to only some questions
+    // A college skill can run out of new questions (only 27 dice questions exist): after a while, more practice may
+    // repeat one. A proof, a teach session and a check never repeat one this way.
+    const mayRepeat = kind === "practice" && packOf(entry) === "college";
+    const tries = extra.accept ? FRESH_TRIES * 6 : mayRepeat ? FRESH_TRIES * 2 : FRESH_TRIES; // a mistake may apply to only some questions
     for (let i = 0; i < tries; i++) {
       const seed = newSeed();
       const apply = format === "apply" ? entry.generateApply(createRng(seed)) : null;
       const instance = apply ? apply.instance : entry.spec.generate(createRng(seed));
       const paramsJson = JSON.stringify(instance.params);
-      if (seen.has(paramsJson) || (extra.accept && !extra.accept(instance))) continue;
+      if ((seen.has(paramsJson) && !(mayRepeat && i >= FRESH_TRIES)) || (extra.accept && !extra.accept(instance))) continue;
       const item: ItemRow = {
         id: randomUUID(),
         studentId,
@@ -352,9 +370,9 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
   }
 
   /** Each student's state for every skill, from one read of the class's mastery rows (opening skills whose prerequisites are mastered). */
-  async function classStates(classId: string, students: StudentRow[]) {
-    const rows = await store.listMastery({ classId });
-    return { rows, states: await mastery.refreshUnlockMany(store, students.map((s) => s.id), rows, Object.values(registry), now()) };
+  async function classStates(cls: ClassRow, students: StudentRow[]) {
+    const rows = await store.listMastery({ classId: cls.id });
+    return { rows, states: await mastery.refreshUnlockMany(store, students.map((s) => s.id), rows, Object.values(packRegistry(cls.pack)), now()) };
   }
 
   /**
@@ -364,11 +382,12 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
    * From states and mastery rows already read.
    */
   function progressFrom(
+    cls: ClassRow,
     students: StudentRow[],
     { states, rows }: { states: Map<string, Map<string, mastery.MasteryState>>; rows: MasteryRow[] },
   ) {
     const rowOf = new Map(rows.map((r) => [`${r.studentId}|${r.skillId}`, r]));
-    const entries = Object.values(registry);
+    const entries = Object.values(packRegistry(cls.pack));
     return entries.map((e) => {
       const counts = Object.fromEntries(MASTERY_STATES.map((s) => [s, 0])) as Record<(typeof MASTERY_STATES)[number], number>;
       for (const s of students) counts[states.get(s.id)!.get(e.spec.id)!]++;
@@ -388,7 +407,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
 
   /** The working line where this mistake first goes wrong on that question (L1 is the question), or null if unknown. */
   async function wrongLineOf(skillId: string, mistakeId: string, item: { seed: number; format: ItemFormat }): Promise<number | null> {
-    if (!registry[skillId]) return null;
+    if (!known[skillId]) return null;
     const entry = await entryOf(skillId);
     const mistake = entry.spec.mistakes.find((m) => m.id === mistakeId);
     return mistake ? mistake.apply(instanceFor(entry, item)).firstWrongLine : null;
@@ -402,7 +421,8 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
    * slips: children whose top known mistake matched only one question (watched, not labelled).
    * grid: per skill, how many children's patterns first go wrong at each working line.
    */
-  async function stuckGroups(classId: string) {
+  async function stuckGroups(cls: ClassRow) {
+    const classId = cls.id;
     const hits = await store.listClassMistakesSince(classId, windowStart());
 
     type Tally = { skillId: string; mistakeId: string; questions: Set<string>; last: number; lastHit: MistakeHitRow };
@@ -450,7 +470,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
           b.count - a.count ||
           `${a.skillId}|${a.mistakeId}`.localeCompare(`${b.skillId}|${b.mistakeId}`),
       );
-    const skillOrder = Object.keys(registry);
+    const skillOrder = Object.keys(packRegistry(cls.pack));
     const slipList = [...slips.entries()]
       .sort(([a], [b]) => skillOrder.indexOf(a) - skillOrder.indexOf(b) || a.localeCompare(b))
       .map(([skillId, students]) => ({ skillId, students: byCode(students) }));
@@ -528,21 +548,23 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     const student = await store.getChallengeStudent(studentId);
     const cls = student && (await store.getClass(student.classId));
     if (!student || !cls || cls.mode !== "challenge" || !student.studyArm) return null;
-    return { student, cls, arm: student.studyArm };
+    return { student, cls, arm: student.studyArm, pack: cls.pack };
   }
   const notChallenge = () => fail("This is only for the Shishya Challenge.", "none");
 
   /**
-   * The practise step (after the before check's last answer): the practice answers on "x on both sides", and for
-   * group B also its latest teach session (done when every trace is fixed or out of tries). ready: the set is done,
-   * or SKIP_AFTER_MINUTES have passed since the before check ended. The teach rule itself is never looked at here:
-   * KEY1 is mastery.ts's alone.
+   * The practise step (after the before check's last answer): the practice answers on the pack's sets of questions,
+   * and for group B also its latest teach session (done when every trace is fixed or out of tries). ready: every set
+   * is done, or SKIP_AFTER_MINUTES have passed since the before check ended. The teach rule itself is never looked at
+   * here: KEY1 is mastery.ts's alone. The college pack also says which sets there are (the school screen knows its one).
    */
-  async function practiseStatus(studentId: string, arm: StudyArm, pre: CheckRow) {
-    const entry = getEntry(registry, PRACTISE_SKILL);
-    const [done, teachItems] = await Promise.all([
-      store.countPracticeAnswersAfterCheck(studentId, PRACTISE_SKILL, pre.id),
-      TEACHES[arm] ? store.listTeachItemsAfterCheck(studentId, PRACTISE_SKILL, pre.id) : Promise.resolve([]),
+  async function practiseStatus(studentId: string, arm: StudyArm, pre: CheckRow, pack: Pack) {
+    const plan = PRACTISE_PLANS[pack];
+    const sets = plan.sets[arm];
+    const entry = getEntry(known, plan.teachSkill);
+    const [counts, teachItems] = await Promise.all([
+      Promise.all(sets.map((s) => store.countPracticeAnswersAfterCheck(studentId, s.skillId, pre.id))),
+      TEACHES[arm] ? store.listTeachItemsAfterCheck(studentId, plan.teachSkill, pre.id) : Promise.resolve([]),
     ]);
     const latest = teachItems.at(-1)?.runId ?? null;
     const session = teachItems.filter((i) => latest !== null && i.runId === latest);
@@ -557,11 +579,20 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
           return mine.some((t) => t.lineCorrect && t.fixAccepted) || mine.length >= triesMax;
         });
     }
-    const target = PRACTISE_TARGET[arm];
-    const setDone = done >= target && (!TEACHES[arm] || teachDone);
+    const target = sets.reduce((sum, s) => sum + s.target, 0);
+    const done = counts.reduce((sum, n) => sum + n, 0);
+    const setDone = sets.every((s, i) => counts[i] >= s.target) && (!TEACHES[arm] || teachDone);
     const skipAt = Date.parse(pre.finishedAt!) + SKIP_AFTER_MINUTES * 60_000;
     const skipInSeconds = Math.max(0, Math.ceil((skipAt - now().getTime()) / 1000));
-    return { target, done, teachStarted: session.length > 0, teachDone, ready: setDone || skipInSeconds === 0, skipInSeconds };
+    return {
+      target,
+      done,
+      teachStarted: session.length > 0,
+      teachDone,
+      ready: setDone || skipInSeconds === 0,
+      skipInSeconds,
+      ...(pack === "college" ? { sets: sets.map((s, i) => ({ ...s, done: counts[i] })), teachSkill: plan.teachSkill } : {}),
+    };
   }
 
   /** The later check's window: from DELAYED_FROM_DAYS to DELAYED_UNTIL_DAYS after the after check. */
@@ -582,7 +613,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       phase: check.phase,
       items: check.itemIds.map((id) => {
         const item = items.get(id)!;
-        return { itemId: id, skillId: item.skillId, text: instanceFor(getEntry(registry, item.skillId), item).text, answered: item.answeredAt !== null };
+        return { itemId: id, skillId: item.skillId, text: instanceFor(getEntry(known, item.skillId), item).text, answered: item.answeredAt !== null };
       }),
     };
   }
@@ -596,6 +627,21 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       byCheck.set(a.checkId, c);
     }
     return [...byCheck.values()].map((c) => ({ studentId: c.studentId, phase: c.phase, score: scoreCheck(c.items) }));
+  }
+
+  /**
+   * A new question for a check: never one this student has seen. A small pool can run out after free practice (only 27
+   * dice questions exist): then one they only practised, but never one from an earlier check.
+   */
+  function freshCheckSeed(rng: ReturnType<typeof createRng>, skillId: string, seen: ReadonlySet<string>, inChecks: ReadonlySet<string>): number {
+    for (const avoid of [seen, inChecks]) {
+      try {
+        return nextCheckSeed(rng, skillId, avoid);
+      } catch {
+        // none left to choose from: try the wider choice, or give up with the same message as any other no_fresh
+      }
+    }
+    throw new NoFreshQuestion();
   }
 
   /**
@@ -634,7 +680,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
   /** "skillId|mistakeId" → label, for every skill's authored mistakes and the approved mined ones (no extra read). */
   function mistakeLabels(approved: MinedMistakeRow[]): Record<string, string> {
     const out: Record<string, string> = {};
-    for (const e of Object.values(registry)) {
+    for (const e of Object.values(known)) {
       for (const m of [...e.spec.mistakes, ...mistakesFromRows(approved.filter((r) => r.skillId === e.spec.id), e.spec)]) out[`${e.spec.id}|${m.id}`] = m.label;
     }
     return out;
@@ -651,7 +697,9 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     });
     return {
       joinToken: cls.joinToken,
-      levels: CHALLENGE_GRADES.map((level) => ({ level, ...count(rows.filter((r) => r.selfGrade === level)) })),
+      pack: cls.pack,
+      // a college class has no class levels: only the "All" row
+      levels: cls.pack === "college" ? [] : CHALLENGE_GRADES.map((level) => ({ level, ...count(rows.filter((r) => r.selfGrade === level)) })),
       total: count(rows),
       groups: { A: rows.filter((r) => r.studyArm === "A").length, B: rows.filter((r) => r.studyArm === "B").length },
       // only comments the student allowed to be quoted; no code or class level beside them
@@ -669,7 +717,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
 
   /** A skill with its authored mistakes plus the teacher-approved mined ones. */
   async function entryOf(skillId: string): Promise<SkillEntry> {
-    const base = getEntry(registry, skillId);
+    const base = getEntry(known, skillId);
     const cached = minedCache.get(skillId);
     if (cached && Date.now() - cached.at < MINED_CACHE_MS) return cached.entry;
     const mined = await minedMistakes(store, base.spec, ["APPROVED"]);
@@ -679,7 +727,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
   }
 
   async function labelOf(skillId: string, mistakeId: string): Promise<string | undefined> {
-    if (!registry[skillId]) return undefined;
+    if (!known[skillId]) return undefined;
     return (await entryOf(skillId)).spec.mistakes.find((m) => m.id === mistakeId)?.label;
   }
 
@@ -706,7 +754,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
   }
 
   function worksheetView(ws: WorksheetRow): WorksheetView {
-    const entry = getEntry(registry, ws.skillId);
+    const entry = getEntry(known, ws.skillId);
     const { classId: _classId, ...rest } = ws;
     void _classId;
     return {
@@ -762,6 +810,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         joinToken: null,
         title: null,
         armStart: null,
+        pack: "school",
       };
       if (!(await store.insertClass(row))) throw new Error(`Class code ${code} is already taken.`);
       await log(null, "class_created", { classId: row.id, grade, aiAllowed: row.aiAllowed });
@@ -777,21 +826,21 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       return row;
     },
 
-    async teacherUnlock(studentId: string, skillId: string) {
-      await requireStudent(studentId);
-      const state = await mastery.teacherUnlock(store, studentId, getEntry(registry, skillId), now());
+    async teacherUnlock(studentId: string, skillId: string): Promise<mastery.MasteryState> {
+      if (!(await requireStudentForSkill(studentId, skillId)).allowed) return "LOCKED";
+      const state = await mastery.teacherUnlock(store, studentId, getEntry(known, skillId), now());
       await log(studentId, "teacher_unlock", { skillId });
       return state;
     },
 
-    async getState(studentId: string, skillId: string) {
-      await requireStudent(studentId);
-      return mastery.refreshUnlock(store, studentId, getEntry(registry, skillId), now());
+    async getState(studentId: string, skillId: string): Promise<mastery.MasteryState> {
+      if (!(await requireStudentForSkill(studentId, skillId)).allowed) return "LOCKED";
+      return mastery.refreshUnlock(store, studentId, getEntry(known, skillId), now());
     },
 
     // ----- practise -----
     async servePracticeItem(studentId: string, skillId: string): Promise<{ ok: true; itemId: string; text: string } | Fail> {
-      await requireStudent(studentId);
+      if (!(await requireStudentForSkill(studentId, skillId)).allowed) return notMyPack();
       const entry = await entryOf(skillId);
       if ((await mastery.refreshUnlock(store, studentId, entry, now())) === "LOCKED") {
         return fail("This skill is locked. Ask your teacher.", "locked");
@@ -873,7 +922,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       studentId: string,
       skillId: string,
     ): Promise<{ ok: true; sessionId: string; traces: { itemId: string; question: string; lines: string[] }[] } | Fail> {
-      await requireStudent(studentId);
+      if (!(await requireStudentForSkill(studentId, skillId)).allowed) return notMyPack();
       const entry = await entryOf(skillId);
       if ((await mastery.refreshUnlock(store, studentId, entry, now())) === "LOCKED") {
         return fail("This skill is locked. Ask your teacher.", "locked");
@@ -952,7 +1001,8 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       studentId: string,
       skillId: string,
     ): Promise<{ ok: true; runId: string; aiOff: true; deadline: string; items: ProofItemView[] } | Fail> {
-      const student = await requireStudent(studentId);
+      const { student, allowed } = await requireStudentForSkill(studentId, skillId);
+      if (!allowed) return notMyPack();
       const entry = await entryOf(skillId);
       try {
         return await store.transaction(async () => {
@@ -1091,7 +1141,8 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
 
     /** Can this child start a proof now? (An abandoned, expired proof is closed first.) */
     async proofStatus(studentId: string, skillId: string): Promise<{ canStart: true } | { canStart: false; code: FailCode; retryAt?: string }> {
-      const student = await requireStudent(studentId);
+      const { student, allowed } = await requireStudentForSkill(studentId, skillId);
+      if (!allowed) return { canStart: false, code: "locked" };
       const entry = await entryOf(skillId);
       return store.transaction(async () => {
         await mastery.refreshUnlock(store, studentId, entry, now());
@@ -1158,8 +1209,9 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
      * students under 13 are asked to check with a parent first; that tick is the class's consent record. No
      * students yet, every skill opens for anyone who joins, proofs are always open, no wait after a missed proof, and
      * no AI. A trial run is a test class (never counted for impact). The PIN and recovery code are shown once.
+     * pack: 'school' (Classes 7–10, the default) or 'college' (first-year college students, F12).
      */
-    async createChallenge(input: { title: string; trial: boolean; online: boolean; pin?: string }) {
+    async createChallenge(input: { title: string; trial: boolean; online: boolean; pin?: string; pack?: Pack }) {
       const title = String(input.title ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim();
       if (input.online !== true) throw new Error("Tick the box first: this runs online, students never write their name, and students under 13 check with a parent.");
       if (title.length < 1 || title.length > CHALLENGE_TITLE_MAX) throw new Error(`The name shown to students must be 1 to ${CHALLENGE_TITLE_MAX} characters.`);
@@ -1168,7 +1220,8 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       opts.checkSetup?.();
       const recoveryCode = randomCode(RECOVERY_LENGTH);
       const kind: ClassKind = input.trial === true ? "test" : "real";
-      const armStart = random() < 0.5 ? "A" : "B"; // once per class; then each class level alternates from it
+      const armStart = random() < 0.5 ? "A" : "B"; // once per class; then each class level (or a college class as one) alternates from it
+      const pack: Pack = input.pack === "college" ? "college" : "school";
       for (let i = 0; i < 20; i++) {
         const at = iso();
         const cls: NewClass = {
@@ -1188,9 +1241,10 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
           joinToken: randomCode(12),
           title,
           armStart,
+          pack,
         };
         if (!(await store.insertClass(cls, hashPin(pin), hashPin(recoveryCode)))) continue; // the code or token was taken
-        await log(null, "class_created", { classId: cls.id, mode: "challenge", kind, aiAllowed: false });
+        await log(null, "class_created", { classId: cls.id, mode: "challenge", kind, aiAllowed: false, pack });
         await log(null, "consent_recorded", { classId: cls.id, online: true });
         return { classId: cls.id, classCode: cls.code, pin, recoveryCode, joinToken: cls.joinToken! };
       }
@@ -1202,12 +1256,13 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       const t = normaliseCode(token);
       if (!JOIN_TOKEN.test(t)) return undefined;
       const cls = await store.getClassByJoinToken(t);
-      return cls && { classId: cls.id, classCode: cls.code, title: cls.title ?? "", kind: cls.kind };
+      return cls && { classId: cls.id, classCode: cls.code, title: cls.title ?? "", kind: cls.kind, pack: cls.pack };
     },
 
     /**
      * A student joins a challenge with its link, saying which class they are in (7–10). They get a random code like
-     * 8C-K7QM (shown once, big, to write down) and a group (A or B, never shown to them), and every skill opens.
+     * 8C-K7QM (shown once, big, to write down) and a group (A or B, never shown to them), and every skill of the pack
+     * opens. A college-pack student is asked no class: selfGrade is stored as NULL and the code looks like UG-K7QM.
      * At most CHALLENGE_MAX_STUDENTS per class, and at most CHALLENGE_MAX_JOINS per CHALLENGE_JOIN_MINUTES, counted
      * in the database. All or nothing: a student is never left half made.
      */
@@ -1215,16 +1270,19 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       const t = normaliseCode(token);
       const cls = JOIN_TOKEN.test(t) ? await store.getClassByJoinToken(t) : undefined;
       if (!cls) return fail("This link does not open a challenge.", "none");
-      if (!(CHALLENGE_GRADES as readonly number[]).includes(selfGrade)) return fail("Choose your class: 7, 8, 9 or 10.", "bad_request");
+      const college = cls.pack === "college";
+      if (!college && !(CHALLENGE_GRADES as readonly number[]).includes(selfGrade)) return fail("Choose your class: 7, 8, 9 or 10.", "bad_request");
+      const grade = college ? null : selfGrade;
+      const prefix = college ? "UG" : `${selfGrade}C`;
       const recentSince = minutesAgo(CHALLENGE_JOIN_MINUTES);
       const out = await store.transaction(async () => {
         for (let i = 0; i < 20; i++) {
-          const student = { id: randomUUID(), classId: cls.id, code: `${selfGrade}C-${randomSuffix()}`, selfGrade, joinedAt: iso() };
+          const student = { id: randomUUID(), classId: cls.id, code: `${prefix}-${randomSuffix()}`, selfGrade: grade, joinedAt: iso() };
           const arm = await store.insertChallengeStudent(student, { maxStudents: CHALLENGE_MAX_STUDENTS, maxRecent: CHALLENGE_MAX_JOINS, recentSince });
           if (arm === "code_taken") continue;
           if (arm === "refused") return null;
-          await mastery.openForChallenge(store, student.id, [], Object.values(registry), now());
-          await log(student.id, "challenge_joined", { classId: cls.id, selfGrade });
+          await mastery.openForChallenge(store, student.id, [], Object.values(packRegistry(cls.pack)), now());
+          await log(student.id, "challenge_joined", { classId: cls.id, selfGrade: grade });
           return student;
         }
         throw new Error("Could not make a student code. Try again.");
@@ -1271,17 +1329,21 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         classCode: me.cls.code,
         title: me.cls.title ?? "",
         teach: TEACHES[me.arm],
-        practise: step === "practise" ? await practiseStatus(studentId, me.arm, pre!) : null,
+        practise: step === "practise" ? await practiseStatus(studentId, me.arm, pre!, me.pack) : null,
         check: showCheck ? await checkView(running) : null,
         scores: {
           pre: pre?.score ?? null,
           post: post?.score ?? null,
           delayed: delayed?.score ?? null,
-          total: CHECK_PLANS.pre.length,
-          delayedTotal: CHECK_PLANS.delayed.length,
+          total: PACK_CHECK_PLANS[me.pack].pre.length,
+          delayedTotal: PACK_CHECK_PLANS[me.pack].delayed.length,
         },
         feedbackGiven: Boolean(feedback),
         delayed: post?.finishedAt ? delayedWindow(post, delayed) : null,
+        // the college pack's own words on the screens
+        ...(me.pack === "college" ? { college: true as const } : {}),
+        // from the start of the before check to the end of the after check, for the end-of-challenge card
+        ...(pre && post?.finishedAt ? { minutesTaken: minutesBetween(pre.startedAt, post.finishedAt) } : {}),
       };
     },
 
@@ -1305,7 +1367,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
           if (mine) return checkView(mine);
           if (phase === "post") {
             const pre = of("pre");
-            if (!pre?.finishedAt || !(await practiseStatus(studentId, me.arm, pre)).ready) return fail("Finish the practise step first.", "not_ready");
+            if (!pre?.finishedAt || !(await practiseStatus(studentId, me.arm, pre, me.pack)).ready) return fail("Finish the practise step first.", "not_ready");
           }
           if (phase === "delayed") {
             const post = of("post");
@@ -1316,17 +1378,21 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
           if (!(await store.insertCheck({ id: checkId, studentId, classId: me.cls.id, phase, itemIds: [], startedAt: iso() }))) {
             return fail("This check is already running.", "running");
           }
-          const plan = CHECK_PLANS[phase];
-          const seen = new Set((await store.listStudentQuestions(studentId, [...new Set(plan)])).map((q) => `${q.skillId}|${q.paramsJson}`));
+          const plan = PACK_CHECK_PLANS[me.pack][phase];
+          const asked = await store.listStudentQuestions(studentId, [...new Set(plan)]);
+          const keyOf = (q: { skillId: string; paramsJson: string }) => `${q.skillId}|${q.paramsJson}`;
+          const seen = new Set(asked.map(keyOf));
+          const inChecks = new Set(asked.filter((q) => ["pre", "post", "delayed"].includes(q.source)).map(keyOf));
           const rng = createRng(newSeed());
           const itemIds: string[] = [];
           for (const skillId of plan) {
-            const entry = getEntry(registry, skillId);
+            const entry = getEntry(known, skillId);
             let saved: string | null = null;
             for (let tries = 0; tries < FRESH_TRIES && !saved; tries++) {
-              const seed = nextCheckSeed(rng, skillId, seen);
+              const seed = freshCheckSeed(rng, skillId, seen, inChecks);
               const instance = checkQuestion(skillId, seed);
               seen.add(checkKey(skillId, instance.params));
+              inChecks.add(checkKey(skillId, instance.params));
               const item: Omit<ItemRow, "answeredAt"> = {
                 id: randomUUID(),
                 studentId,
@@ -1368,7 +1434,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       typedText: string,
     ): Promise<
       | { ok: true; finished: false }
-      | { ok: true; finished: true; phase: CheckPhase; score: number; total: number; before: number | null; receipts: ProofReceipt[] }
+      | { ok: true; finished: true; phase: CheckPhase; score: number; total: number; before: number | null; minutes?: number; receipts: ProofReceipt[] }
       | Fail
     > {
       const item = await store.getItem(itemId);
@@ -1400,13 +1466,15 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         if (!(await store.finishCheck(check.id, score, iso()))) return fail("This check is already done.", "finished");
         await log(item.studentId, "check_finished", { classId: check.classId, phase: check.phase, checkId: check.id, score });
         const receipts = ordered.map((i): ProofReceipt => {
-          const inst = instanceFor(getEntry(registry, i.skillId), i);
+          const inst = instanceFor(getEntry(known, i.skillId), i);
           const given = answerOf(i.id);
-          const parsed = given === null ? null : parseAnswerFor(getEntry(registry, i.skillId).spec.answerKind, given);
+          const parsed = given === null ? null : parseAnswerFor(getEntry(known, i.skillId).spec.answerKind, given);
           return { itemId: i.id, question: inst.text, receipt: parsed?.ok ? answerReceipt(inst, parsed.value) : null };
         });
-        const before = check.phase === "post" ? ((await store.listStudentChecks(item.studentId)).find((c) => c.phase === "pre")?.score ?? null) : null;
-        return { ok: true as const, finished: true as const, phase: check.phase, score, total: CHECK_PLANS[check.phase].length, before, receipts };
+        const pre = check.phase === "post" ? (await store.listStudentChecks(item.studentId)).find((c) => c.phase === "pre") : undefined;
+        const before = pre?.score ?? null;
+        const minutes = pre ? { minutes: minutesBetween(pre.startedAt, iso()) } : {};
+        return { ok: true as const, finished: true as const, phase: check.phase, score, total: check.itemIds.length, before, ...minutes, receipts };
       });
     },
 
@@ -1470,7 +1538,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
           students,
           checks: rescoredChecks(answers),
           feedback,
-          wrongAnswers: wrongAnswers.filter((w) => registry[w.skillId]), // the skills only (not the Ready check's sums)
+          wrongAnswers: wrongAnswers.filter((w) => known[w.skillId]), // the skills only (not the Ready check's sums)
           mistakeLabels: mistakeLabels(approved),
           mined: await minedFromRealAnswers(approved),
         },
@@ -1626,8 +1694,10 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         proofCooldownHours: cooldownFor(cls),
         /** 'challenge': this student joined a Shishya Challenge through its link (their group is never given here). */
         classMode: cls.mode,
-        /** The class the student said they are in (challenge only). */
+        /** The class the student said they are in (a school challenge only). */
         selfGrade: student.selfGrade,
+        /** 'college': a college-pack challenge's student, who only ever sees the college skills. */
+        classPack: cls.pack,
         challengeTitle: cls.title,
       };
     },
@@ -1642,8 +1712,9 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
      * (Quick check: 2 questions), "passed" (checked again), "again" (missed: practise, next check later) or null.
      */
     async getSkillMap(studentId: string) {
-      await requireStudent(studentId);
-      const entries = Object.values(registry);
+      const found = await store.getStudentWithPack(studentId);
+      if (!found) throw new Error(`Unknown student: ${studentId}`);
+      const entries = Object.values(packRegistry(found.pack));
       const rows = await store.listMastery({ studentId });
       const states = (await mastery.refreshUnlockMany(store, [studentId], rows, entries, now())).get(studentId)!;
       return entries.map((e) => {
@@ -1663,7 +1734,9 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
 
     /** Starts the child's one Ready check (or gives back the one that is running). */
     async startReadyCheck(studentId: string): Promise<{ ok: true; checkId: string; items: { itemId: string; text: string; answered: boolean }[] } | Fail> {
-      await requireStudent(studentId);
+      const found = await store.getStudentWithPack(studentId);
+      if (!found) throw new Error(`Unknown student: ${studentId}`);
+      if (found.pack === "college") return fail("The Ready check is for school students.", "locked"); // whole-number sums
       return store.transaction(async () => {
         const existing = await store.getStudentReadyCheck(studentId);
         if (existing?.finishedAt) return fail("The Ready check is already done.", "finished");
@@ -1804,8 +1877,9 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
 
     /** Opens a skill for every student in the class. Returns how many were newly opened. */
     async teacherUnlockClass(classId: string, skillId: string): Promise<number> {
-      await requireClass(classId);
+      const cls = await requireClass(classId);
       const entry = await entryOf(skillId);
+      if (packOf(entry) !== cls.pack) return 0; // a skill of another pack is never opened for this class
       const opened = await store.transaction(async () => {
         const students = await store.listStudents(classId);
         const rows = await store.listMastery({ classId });
@@ -1817,22 +1891,23 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
 
     /** How many students are in each state, per skill. */
     async getClassProgress(classId: string) {
-      await requireClass(classId);
+      const cls = await requireClass(classId);
       const students = await store.listStudents(classId);
-      return progressFrom(students, await classStates(classId, students));
+      return progressFrom(cls, students, await classStates(cls, students));
     },
 
     /** Everything the class board shows, reading the class and its students once (reads run side by side). */
     async getClassBoard(classId: string) {
       const cls = await requireClass(classId);
-      // a tour class never sees (or decides) the real mistake library's drafts
+      // a tour class never sees (or decides) the real mistake library's drafts; nor does a college class: they are
+      // about school algebra, and the mistake finder does not work on college skills
       const [students, mined, ready, challenge] = await Promise.all([
         store.listStudents(classId),
-        cls.kind === "sandbox" ? [] : pendingMined(),
+        cls.kind === "sandbox" || cls.pack === "college" ? [] : pendingMined(),
         store.listClassReadyChecks(classId),
         cls.mode === "challenge" ? challengePanel(cls) : null,
       ]);
-      const [read, stuck] = await Promise.all([classStates(classId, students), stuckGroups(classId)]);
+      const [read, stuck] = await Promise.all([classStates(cls, students), stuckGroups(cls)]);
       return {
         /** The Challenge panel (a challenge class only): counts by class level and the comments to approve or hide. */
         challenge,
@@ -1841,7 +1916,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
         numberBasics: ready
           .filter((r) => r.correct !== null && !readyCheckPassed(r.correct))
           .map((r) => ({ code: r.code, correct: r.correct!, total: READY_CHECK_PLAN.length, seen: r.seenAt !== null })),
-        progress: progressFrom(students, read),
+        progress: progressFrom(cls, students, read),
         mined,
         codes: students.map((s) => s.code),
         proofWindow: proofWindowOf(cls),
@@ -1851,7 +1926,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
 
     // ----- projector (class mode: no student accounts, never touches mastery) -----
     async projectorTrace(classId: string, skillId: string) {
-      await requireClass(classId);
+      getEntry(packRegistry((await requireClass(classId)).pack), skillId); // throws for a skill of another pack
       const { spec } = await entryOf(skillId);
       let seed = newSeed();
       let instance = spec.generate(createRng(seed));
@@ -1875,7 +1950,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
       tappedLine: number,
       typedLine: string,
     ): Promise<TeachResult> {
-      await requireClass(classId);
+      getEntry(packRegistry((await requireClass(classId)).pack), skillId); // throws for a skill of another pack
       const { spec } = await entryOf(skillId);
       if (!Number.isInteger(seed) || !spec.mistakes.some((m) => m.id === mistakeId)) throw new Error("Bad projector item");
       const result = checkTeachStep(spec.generate(createRng(seed)), mistakeId, tappedLine, String(typedLine ?? ""), spec.mistakes);
@@ -1899,6 +1974,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     ): Promise<{ ok: true } | { ok: false; reason: string }> {
       const cls = await requireClass(classId);
       if (cls.kind === "sandbox") return { ok: false, reason: "In the tour, nothing is saved." };
+      if (cls.pack === "college") return { ok: false, reason: "The mistake finder's drafts are for school classes." };
       const row = await store.getMinedMistake(id);
       if (!row || row.status !== "DRAFT_TESTED") return { ok: false, reason: "This is not a draft waiting for review." };
       let edited = false;
@@ -1960,8 +2036,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
      * sheet and it can always be printed again. A short code (P-K7QM) is printed on it.
      */
     async createWorksheet(classId: string, skillId: string, count = PAPER_DEFAULT_QUESTIONS): Promise<{ ok: true; worksheet: WorksheetView } | Fail> {
-      await requireClass(classId);
-      const entry = registry[skillId];
+      const entry = packRegistry((await requireClass(classId)).pack)[skillId];
       if (!entry) return fail("Unknown skill.", "bad_request");
       if (!Number.isInteger(count) || count < 1 || count > PAPER_MAX_QUESTIONS) {
         return fail(`A worksheet has 1 to ${PAPER_MAX_QUESTIONS} questions.`, "bad_request");
@@ -2029,7 +2104,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     > {
       const ws = await store.getWorksheet(classId, normaliseCode(code));
       if (!ws) return fail("This worksheet is not in this class.", "none");
-      const base = getEntry(registry, ws.skillId);
+      const base = getEntry(known, ws.skillId);
       if (ws.version !== base.spec.version) return fail("This worksheet was printed for an older version of the skill. Print a new one.", "old_version");
       const [students, cells, entry] = await Promise.all([store.listStudents(classId), store.listPaperCells(ws.id), entryOf(ws.skillId)]);
       const byCode = new Map(students.map((s) => [s.code, s]));
@@ -2093,8 +2168,7 @@ export function createServices(store: Store, opts: ServiceOptions = {}) {
     // ----- teacher -----
     /** Mistake patterns (2+ different questions), single slips and the line grid, for the last 7 days. */
     async getStuckBoard(classId: string) {
-      await requireClass(classId);
-      return stuckGroups(classId);
+      return stuckGroups(await requireClass(classId));
     },
 
     /** Anonymous counts only: no student codes, ids or class codes. */
