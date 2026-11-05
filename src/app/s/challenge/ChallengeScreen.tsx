@@ -36,12 +36,19 @@ export function ChallengeScreen({ initial }: { initial: Overview }) {
 
   async function reload() {
     const r = await challengeOverviewAction();
-    if (!("step" in r)) return setError(t("common.error"));
+    if (!("step" in r)) {
+      setError(t("common.error"));
+      return false;
+    }
     setError(null);
     setView(r);
     setRound((n) => n + 1);
+    return true;
   }
-  const refresh = () => startTransition(reload);
+  const refresh = () =>
+    startTransition(async () => {
+      await reload();
+    });
 
   function startCheck(phase: Phase) {
     startTransition(async () => {
@@ -51,11 +58,19 @@ export function ChallengeScreen({ initial }: { initial: Overview }) {
   }
 
   function next() {
-    setResult(null);
-    refresh();
+    // The result stays until the next step has arrived. `view` still holds the finished check until then, so clearing
+    // the result first would show that check's question again on a slow network, as if it had restarted.
+    startTransition(async () => {
+      if (await reload()) setResult(null);
+    });
   }
 
   const bar = <StepBar current={STEP_INDEX[view.step]} />;
+  const errorNote = error && (
+    <p role="alert" className="msg-bad text-xl">
+      {error}
+    </p>
+  );
 
   if (result) {
     return (
@@ -65,6 +80,7 @@ export function ChallengeScreen({ initial }: { initial: Overview }) {
         <ReadyButton type="button" className="btn btn-primary text-2xl self-start" onClick={next} disabled={pending}>
           {t("challenge.next")}
         </ReadyButton>
+        {errorNote}
       </div>
     );
   }
@@ -108,11 +124,7 @@ export function ChallengeScreen({ initial }: { initial: Overview }) {
     <div className="flex flex-col gap-6">
       {bar}
       {body}
-      {error && (
-        <p role="alert" className="msg-bad text-xl">
-          {error}
-        </p>
-      )}
+      {errorNote}
     </div>
   );
 }

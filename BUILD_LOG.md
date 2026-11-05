@@ -576,3 +576,17 @@
 - No app code changed. 813 tests pass, lint clean, type check clean, `npm run build` passes (DATABASE_URL pointed at a scratch file).
 - Files: `docs/VISION.md`, `README.md`, `BUILD_LOG.md`.
 - Built in AgentFoundry with Claude Code.
+
+## 2026-11-06: Challenge: no stale check after Next
+- Found in a live test of the college challenge; it affected the school challenge too. "Next" on a check's result cleared the result before the overview had come back from the server. The screen still held the finished check, so on a slow network its first question showed again with "Save my answer" for several seconds, as if the check had restarted.
+- Fix in `ChallengeScreen.tsx`: the result card stays, with Next disabled, until the overview has come back; only then does the result clear.
+- If the server refuses the overview: the result stays, the error now shows on the result card, and Next can be pressed again. Clearing the result there would have shown the same old question.
+- Teacher page: the challenge name field's placeholder is now "Shishya Challenge" (`en.ts` and `hi.ts`). The tests that create a challenge called "Udgam Shishya Challenge" are only test data, and were left alone.
+- Test first: `ChallengeScreen-next.test.tsx` failed before the change (the finished check came back) and passes now. Tests run in node with no DOM and no new dependency was allowed, so it runs the real `ChallengeScreen` function with small stand-ins for `useState` and `useTransition`, and looks at what it returns at each moment.
+- Browser check, because the test uses stand-ins for React (headless Edge at 360 px, local production build, scratch database, never the live one; the script is kept in the session scratchpad): one student finished the before check, then pressed Next with 3 s of added latency. The result stayed up for 3,010 ms, Next was disabled throughout, "Save my answer" and the answer box never showed again (86 samples), and the practise step followed. Control: the same check does see "Save my answer" on a running check. It was not run against the old code; the failing test above is the evidence for the old behaviour.
+- 816 tests pass (813 + 3), lint clean, type check clean, `npm run build` passes (DATABASE_URL pointed at a scratch file).
+- One test run needs explaining: the first full run had 9 failures across 9 files, and its details were lost because only the summary was kept. The next 4 runs on their own all passed 816 of 816. Running two suites at once brought back a `Test timed out in 5000ms` in `tour.test.ts`, the same kind of slow-under-load timeout F11 recorded, so that is the likely cause, but it is not proven for that first run. Not changed here.
+- Not changed, for Das to decide: with no network at all when Next is pressed, the student sees the browser-level "This page couldn't load" page with Reload (seen in the browser check; no old question shows). All the challenge's actions behave this way, and the app has no error page of its own for them.
+- No new dependency. No database change. Mastery untouched.
+- Files: `src/app/s/challenge/ChallengeScreen.tsx`, `src/app/s/challenge/__tests__/ChallengeScreen-next.test.tsx` (new), `src/i18n/{en,hi}.ts`, `BUILD_LOG.md`.
+- Built in AgentFoundry with Claude Code.

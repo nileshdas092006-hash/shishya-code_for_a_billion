@@ -440,7 +440,7 @@ export const ui = {
   "create.challenge.intro":
     "One link for school students who join alone on their own phones, with no teacher in the room. Each student says which class they are in and gets a random code; no name, phone number or email is ever asked. Every skill is open, proofs are always open, there is no wait after a missed proof, and there is no AI chat.",
   "create.challenge.name": "Name shown to students",
-  "create.challenge.namePlaceholder": "Udgam Shishya Challenge",
+  "create.challenge.namePlaceholder": "Shishya Challenge",
   "create.challenge.pack": "Pack",
   "create.challenge.pack.school": "School (Classes 7–10)",
   "create.challenge.pack.college": "College pack",
