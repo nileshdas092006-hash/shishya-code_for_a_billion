@@ -1,10 +1,14 @@
 # Shishya
 
+**Mission: time flexible, learning fixed.** Shishya makes mastery learning affordable by making the check
+cheap, exact and impossible to copy. Full design and roadmap: [docs/VISION.md](docs/VISION.md).
+
 Judges: open the live link and press **Try it as a judge**. It takes 3 minutes and uses a made-up class.
 
-Shishya is a free, open-source algebra practice app for Class 7–9 children in India's crowded classrooms. It finds the
-exact step of an equation each child gets wrong, lets the child fix it by "teaching the Shishya" (a classmate character
-whose working has a mistake), and then asks for proof. No AI help inside the proof. It opens only when the teacher
+Shishya is a free, open-source algebra practice app for Class 7–10 children in India's crowded classrooms (a teacher
+can make a class for Class 7, 8 or 9 today; Class 10 students join through the [Shishya Challenge](#shishya-challenge)).
+It finds the exact step of an equation each child gets wrong, lets the child fix it by "teaching the Shishya" (a
+classmate character whose working has a mistake), and then asks for proof. No AI help inside the proof. It opens only when the teacher
 opens it in class. Code, not AI, decides when a child has truly learned a skill. Two AI agents help behind the scenes,
 always checked by code and approved by a teacher: the Misconception Miner turns unexplained wrong answers into new
 mistake patterns, and the Skill Author, which is experimental, tries to draft new skills (it has not yet produced a
@@ -67,6 +71,17 @@ average over fewer than 5 students is not shown. Honesty note, as the page says 
 to join, did one session on their own phones, and there was no classroom teacher. Small numbers. Not a classroom
 study.*
 
+### College pack
+
+The same engine on 2×2 determinants and two-dice probability, for first-year college students, to test that Shishya's
+Skill Specification works beyond school algebra. It has its own link: choose **College pack** under "Pack" when
+creating a challenge link. Students are not asked for a class and get codes like `UG-K7QM`. The checks have the same
+shape (6 questions before, 6 after, 4 later), half on each topic; group A practises 4 + 4 questions, and group B
+practises 2 + 2 and then teaches the Shishya on determinants. Its results are reported separately on
+[/impact](https://shishya-codeforabillion.vercel.app/impact) and in `/api/impact`, and are never pooled with the school
+numbers. These numbers test the engine, not school learning. The Misconception Miner does not run on the college
+skills yet, and `/api/mistakes` does not list them.
+
 ## Features
 
 - **Judge Tour.** "Try it as a judge (3 minutes)" on the home page makes a made-up class with 30 made-up children and
@@ -117,10 +132,14 @@ npm run dev   # open http://localhost:3000
 ## Run the tests
 
 ```bash
-npm test        # unit, property and end-to-end server tests (Vitest)
-npm run lint    # ESLint, including the rule that keeps src/core pure
-npm run build   # production build
+npm test            # unit, property and end-to-end server tests (Vitest)
+npm run typecheck   # generates Next.js route types, then runs the TypeScript check (no build)
+npm run lint        # ESLint, including the rule that keeps src/core pure
+npm run build       # production build
 ```
+
+`.github/workflows/test.yml` runs the type check, lint and tests on every push and pull request to `main`. They use
+local temporary databases only, so they need no secrets and no network.
 
 Demo data (kept apart from pilot data, in `data/demo.db`, and shown with a DEMO banner):
 
@@ -148,7 +167,7 @@ without keys or messages, in `data/agent-runs.jsonl`.
 
 ## Use our mistakes in your own tutor
 
-`GET /api/mistakes` returns Shishya's mistake library as JSON, under the MIT licence: for every skill (with its id and
+`GET /api/mistakes` returns Shishya's mistake library as JSON, under the MIT licence: for every school skill (with its id and
 version), the authored mistakes and the mistakes found by the Miner that a teacher approved, as specs (id, label, step
 type, first wrong line, and for found ones the line templates and answer formula), each with a worked example. It
 holds no child data at all. The format is in [docs/SKILL_SPEC.md](docs/SKILL_SPEC.md#use-our-mistakes-in-your-own-tutor-get-apimistakes).
@@ -156,9 +175,10 @@ holds no child data at all. The format is in [docs/SKILL_SPEC.md](docs/SKILL_SPE
 ## Skills and the Skill Author (AI agent, experimental)
 
 Five skills form a chain: integers → like terms → one-step equations → two-step equations → variables on both sides
-(`src/core/skills/`, notes in `docs/skills/`). Every skill passes the same property tests over 1,000 generated questions.
+(`src/core/skills/`, notes in `docs/skills/`). The same folder holds the two skills of the [college pack](#college-pack).
+Every skill passes the same property tests over 1,000 generated questions.
 
-The Skill Author is experimental: it has not yet produced a skill that was merged into Shishya, and none of the five
+The Skill Author is experimental: it has not yet produced a skill that was merged into Shishya, and none of the seven
 skills above came from it. When run, it tries to draft a new skill and its tests on a separate branch, never touching
 your working folder:
 

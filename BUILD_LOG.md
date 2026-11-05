@@ -550,3 +550,21 @@
 - No new dependency. Mastery untouched.
 - Files: `src/server/{impact,services,store}.ts`, `src/agents/miner.ts`, `src/app/impact/{page,ImpactView (new)}.tsx`, `src/app/teacher/[class]/ClassBoardView.tsx`, `src/app/_components/Equation.tsx`, `src/i18n/{en,hi}.ts`, tests above, `BUILD_LOG.md`.
 - Built in AgentFoundry with Claude Code.
+
+## 2026-11-05: F13. Vision document, README and a CI test workflow (docs and config only)
+- `docs/VISION.md`: copied from `fortify/VISION_for_repo.md`, word for word. One Markdown fix: a blank line after the table in section 10, because GitHub would have shown the "Everything is open source" paragraph as a table row. Nothing else differs (checked with `diff`).
+- `README.md`: the mission sentence at the top, linking to the vision; "Class 7–10" in the first paragraph; a short **College pack** subsection under Shishya Challenge; `npm run typecheck` and the new workflow in the test section.
+- README claims checked against the code (screen words in `en.ts`, the numbers in `mastery.ts`, `services.ts`, `challenge.ts`, `tour.ts`, `readyCheck.ts`, `auth.ts`). Three corrections:
+  1. "Class 7–10" needed a qualifier: a teacher can only make a class for Class 7, 8 or 9 (`createClassroom` and the form); only the Challenge takes Class 10. The README now says so. The app is unchanged, as this task asks. Whether a teacher should be able to make a Class 10 class is a separate decision for Das.
+  2. "`/api/mistakes` … for every skill" now says "every school skill", since F12 keeps college skills out of it.
+  3. The Skill Author note now says none of the "seven" skills came from it, and the skills section points to the college pack.
+  The README has no test count, so there was no number to update; none was added, because it would go out of date with every task.
+- `package.json`: `"typecheck": "next typegen && tsc --noEmit"`, the form the Next.js docs in `node_modules` recommend for CI. No new dependency.
+- `.github/workflows/test.yml`: on push and pull request to `main`; ubuntu-latest; checkout@v4, setup-node@v4 with Node 24 and the npm cache; `npm ci`, `npm run typecheck`, `npm run lint`, `npm test`; `permissions: contents: read`; no secrets.
+- Do the tests need a secret or the network? No, so **no test is skipped in CI**. Read in the tests: databases are temporary files from `src/server/__tests__/helpers.ts`; `llm.test.ts` uses fake keys and a fake fetch; the `libsql://` strings in `instance-config` and `setup-check` are only text being checked. Then run to confirm, in a `node:24` Linux container (4 CPUs, non-root, UTC, `CI=true`, a fresh copy of what is being committed, no `.env.local`, no `data/` folder, no secret-like environment variables): `npm ci` with the network, then the network disconnected and shown to be off, then all three steps. Type check and lint clean; **813 of 813 tests pass, 0 skipped**; the slowest test took 1.6 s against the 5 s limit. `actionlint` passes the workflow. The container and images were removed afterwards.
+- This was a copy of GitHub's setup on this laptop, not GitHub itself: the workflow first really runs when Das pushes to `main`. The local branch is `master`, tracking `origin/main`; a push that lands on `main` triggers it.
+- In the local folder: `npm test`, lint, type check and `npm run build` all pass (DATABASE_URL pointed at a scratch file for all of them, never the live database).
+- For Das to check in `docs/VISION.md`, left word for word as asked: section 7 calls the college pack "LIVE, from 7 Nov", which is only true once F12 is pushed and deployed (today is 5 Nov, and `origin/main` is three F12 commits and this one behind); section 6 lists "a 10-minute group session" in a LIVE row, but the app has no such timed session, only the mistake groups a teacher can use for one.
+- No app code changed. No screen text changed, so nothing new in `en.ts` or `hi.ts`. Mastery untouched.
+- Files: `docs/VISION.md` (new), `.github/workflows/test.yml` (new), `README.md`, `package.json`, `BUILD_LOG.md`.
+- Built in AgentFoundry with Claude Code.
