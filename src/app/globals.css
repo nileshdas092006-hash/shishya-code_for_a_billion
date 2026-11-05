@@ -304,6 +304,29 @@ button.nb-line:focus-visible {
   color: var(--note);
 }
 
+/* the teacher's review card for an AI proposal */
+.card-ai {
+  border: 2px solid var(--brand);
+}
+
+/* The stuck board's grid: every count is printed, so colour is never the only signal. */
+.pg-0 {
+  background: var(--soft);
+  color: var(--ink);
+}
+.pg-1 {
+  background: #f5c6b8;
+  color: var(--ink);
+}
+.pg-2 {
+  background: #e9967f;
+  color: var(--ink);
+}
+.pg-5 {
+  background: var(--bad);
+  color: #ffffff;
+}
+
 .hero-panel {
   background: linear-gradient(160deg, var(--brand-soft), var(--saffron-soft));
   border-radius: 1.1rem;

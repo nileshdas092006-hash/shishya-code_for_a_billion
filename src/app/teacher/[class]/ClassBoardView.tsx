@@ -202,7 +202,7 @@ export async function ClassBoardView({ cls, query }: { cls: ClassRow; query: Que
         ) : (
           <ul className="flex flex-col gap-3">
             {mined.map((m) => (
-              <li key={m.id} className="card flex flex-col gap-3">
+              <li key={m.id} className="card card-ai flex flex-col gap-3">
                 <MinedDraft draft={m} agentHref={`${base}/agent${m.runId ? `#run-${m.runId}` : ""}`} />
                 {m.spec && m.childText ? (
                   <MinedDecision
@@ -485,7 +485,10 @@ function MinedDraft({ draft, agentHref }: { draft: Draft; agentHref: string }) {
   const example = minedExample(draft.skillId, spec);
   return (
     <div className="flex flex-col gap-2">
-      <h3 className="text-xl font-bold">{t("board.mined.draft", { label: spec.label })}</h3>
+      <div className="flex flex-wrap items-center gap-2">
+        <h3 className="min-w-0 text-xl font-bold">{t("board.mined.draft", { label: spec.label })}</h3>
+        <span className="tag tag-ai">{t("review.aiSuggestion")}</span>
+      </div>
       {draft.report && <p>{t("board.mined.explains", { n: draft.report.reproduced, checked: draft.report.checkedInstances })}</p>}
       {example && <MistakeExampleLines example={example} />}
       <h4 className="text-lg font-bold">{t("review.evidence.title")}</h4>
@@ -522,12 +525,10 @@ function MinedDraft({ draft, agentHref }: { draft: Draft; agentHref: string }) {
       {draft.checks.length > 0 && (
         <>
           <h4 className="text-lg font-bold">{t("review.checks.title")}</h4>
-          <ul className="flex flex-col gap-1">
+          <ul className="flex flex-col items-start gap-1">
             {draft.checks.map((c) => (
-              <li key={c.id} className={`flex gap-2 ${c.ok ? "text-green-800" : "text-red-800"}`}>
-                <span aria-hidden="true" className="font-bold">
-                  {c.ok ? "✓" : "✗"}
-                </span>
+              <li key={c.id} className={`tag ${c.ok ? "tag-good" : "tag-bad"}`}>
+                <span aria-hidden="true">{c.ok ? "✓" : "✗"}</span>
                 <span>{t(`review.check.${c.id}`, { n: c.n.toLocaleString("en-IN") })}</span>
               </li>
             ))}
@@ -561,7 +562,7 @@ function StuckGroup({ group }: { group: Group }) {
       <ul className="flex flex-col gap-1">
         {group.students.map((s) => (
           <li key={s.code}>
-            <span className="math font-semibold">{s.code}</span>:{" "}
+            <span className="tag tag-bad math">{s.code}</span>:{" "}
             {t(group.mistakeId === "unknown" ? "board.unknown.evidence" : "board.patterns.evidence", { n: s.questions })}
           </li>
         ))}

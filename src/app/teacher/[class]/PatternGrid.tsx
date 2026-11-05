@@ -8,11 +8,11 @@ type Slips = { skillId: string; students: { code: string; line: number | null }[
 
 /** Darker for more children; the text stays readable on every shade. */
 function shade(count: number): string {
-  if (count === 0) return "bg-white text-gray-700";
-  if (count === 1) return "bg-amber-100 text-gray-900";
-  if (count === 2) return "bg-amber-200 text-gray-900";
-  if (count <= 4) return "bg-amber-400 text-gray-900";
-  return "bg-amber-700 text-white";
+  if (count === 0) return "bg-white text-gray-700 pg-0";
+  if (count === 1) return "bg-amber-100 text-gray-900 pg-1";
+  if (count === 2) return "bg-amber-200 text-gray-900 pg-2";
+  if (count <= 4) return "bg-amber-400 text-gray-900 pg-2";
+  return "bg-amber-700 text-white pg-5";
 }
 
 export function PatternGrid({ grid }: { grid: Grid }) {
